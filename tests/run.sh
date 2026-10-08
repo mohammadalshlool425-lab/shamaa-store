@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # يشغّل الاختبار الشامل من قاعدة نظيفة تلقائياً
 set -e
-cd "$(dirname "$0")/.."
-PY=/home/user/build/.venv/bin/python
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO"
+PY="$REPO/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
 pkill -f "uvicorn server.main" 2>/dev/null || true
 sleep 1
 rm -f data/shamaa.db data/shamaa.db-shm data/shamaa.db-wal
