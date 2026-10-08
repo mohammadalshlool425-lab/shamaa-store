@@ -33,7 +33,9 @@ export SHAMAA_DB="$DB"
 rm -f "$DB" "$DB-shm" "$DB-wal"
 
 # ── إيقاف أي خادم اختبار سابق على هذا المنفذ فقط ──
-pkill -f "uvicorn server.main:app.*--port $PORT" 2>/dev/null || true
+# النمط يبدأ بـ "--port $PORT" حتى لا يطابق خادم التطوير على منفذ آخر
+# (النمط السابق "server.main:app.*--port 8001" كان يطابق سطر 8000 أيضاً)
+pkill -f -- "--port $PORT" 2>/dev/null || true
 sleep 1
 
 # ── تشغيل الخادم في الخلفية ──
