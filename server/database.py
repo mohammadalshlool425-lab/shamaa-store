@@ -107,7 +107,18 @@ CREATE TABLE IF NOT EXISTS link_hits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_active   ON listings(is_active, created_at DESC);
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL,
+    kind       TEXT    NOT NULL,      -- renew_reminder | renew_done | welcome
+    body       TEXT    NOT NULL,
+    status     TEXT    NOT NULL DEFAULT 'simulated',  -- simulated | sent | failed
+    created_at REAL    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_hits_listing      ON link_hits(listing_id, kind);
+CREATE INDEX IF NOT EXISTS idx_notif_user        ON notifications(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_listings_category ON listings(category);
 CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
 """

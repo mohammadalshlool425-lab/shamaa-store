@@ -33,7 +33,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import catalog, seed, share
+from . import catalog, notify, seed, share
 from .database import get_conn, init_db, now
 from .pricing import CATEGORY_BASE, CITY_FACTOR, estimate_price
 
@@ -155,6 +155,8 @@ def clean_featured(conn, t: float) -> None:
         (t,),
     )
     conn.commit()
+    # تذكيرات التجديد: الإيراد المتكرر يموت بصمت إن نسي البائع، فالكنس هنا
+    notify.sweep_expiring(conn, t)
 
 
 def serialize_listing(row: sqlite3.Row, t: float, viewer: Optional[dict] = None) -> dict:
@@ -358,6 +360,18 @@ def me(user=Depends(current_user)):
 # ─────────────────────────────────────────────────────────────
 # مسارات: الإعلانات (قلب المنصة)
 # ─────────────────────────────────────────────────────────────
+@app.get("/api/notifications")
+def my_notifications(user=Depends(require_user)):
+    """صندوق إشعارات البائع: تذكيرات التجديد وتأكيداتها (واتساب محاكاة)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, kind, body, status, created_at FROM notifications"
+        " WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+        (user["id"],),
+    ).fetchall()
+    return {"notifications": [dict(r) for r in rows]}
+
+
 @app.get("/api/listings")
 def list_listings(
     q: str = "",
@@ -561,6 +575,14 @@ def feature_listing(body: FeatureIn, user=Depends(require_user)):
         (user["id"], "renew" if already else "feature", price, row["id"], "paid", "simulated", t),
     )
     conn.commit()
+    if already:
+        # تأكيد التجديد يصل واتساب — إغلاق حلقة الإيراد المتكرر
+        notify.queue(
+            conn, user["id"], row["id"], notify.KIND_RENEWED,
+            f"✅ جدّدت تثبيت «{row['title']}» — إعلانك في الصدارة حتى "
+            f"{time.strftime('%Y/%m/%d', time.localtime(until))}. "
+            f"الإعلانات المثبّتة تُباع أسرع بأربعة أضعاف.",
+        )
     return {
         "ok": True,
         "charged_jd": price,

@@ -823,8 +823,30 @@ function renderAuthArea() {
       <span class="nm">${S.user.is_verified ? "🛡️ " : ""}${esc(S.user.name)}</span>
       ${S.user.pricing_credits > 0 ? `<span class="credits-pill">🤖 ${S.user.pricing_credits}</span>` : ""}
       <span class="avatar">${esc(initial)}</span>
+      <button class="btn btn-ghost btn-sm" style="padding:.2rem .4rem" onclick="openNotifications()" title="إشعاراتي">🔔</button>
       <button class="btn btn-ghost btn-sm" style="padding:.2rem .4rem" onclick="logout()" title="خروج">⏻</button>
     </div>`;
+}
+
+async function openNotifications() {
+  try {
+    const r = await api("/api/notifications");
+    const list = r.notifications || [];
+    const ico = { renew_reminder: "⏳", renew_done: "✅", welcome: "🌟" };
+    modal(`
+      <h3 class="form-title">🔔 إشعاراتي</h3>
+      <p class="form-sub">تذكيرات تجديد التثبيت وتأكيداتها — تصل واتساب عند الإطلاق الفعلي (محاكاة حالياً).</p>
+      ${list.length ? list.map(n => `
+        <div class="notif kind-${esc(n.kind)}">
+          <span class="notif-ico">${ico[n.kind] || "🔔"}</span>
+          <div>
+            <div class="notif-body">${esc(n.body)}</div>
+            <div class="notif-time">${new Date(n.created_at * 1000).toLocaleString("ar-JO")}</div>
+          </div>
+        </div>`).join("")
+        : `<p style="opacity:.6;text-align:center;padding:1.4rem 0">لا إشعارات بعد — سيصلك تذكير قبل انتهاء تثبيت أي إعلان لك بـ 24 ساعة.</p>`}
+    `, true);
+  } catch (e) { toast(e.message, "err"); }
 }
 
 async function refreshMe() {

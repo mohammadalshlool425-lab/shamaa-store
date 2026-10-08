@@ -634,6 +634,54 @@ def run_suite() -> None:
     print(f"     ✅ لوحة المدير: {adm['share_scans']} مسح/فتحة · {adm['share_pages']} زيارة")
 
     # ══════════════════════════════════════════════════════════════
+    section(19, "🔔 تذكيرات التجديد — حماية الإيراد المتكرر")
+    import sqlite3 as _sql
+    import time as _time
+
+    nb = call("POST", "/api/listings",
+              {"title": "ثلاجة نوفروست للبيع بسرعة", "price": 260,
+               "description": "مستعملة سنتين، تعمل بلا مشاكل.",
+               "category": "أجهزة كهربائية", "city": "الزرقاء",
+               "accepts_barter": False}, label="نشر إعلان للتثبيت")
+    fid = nb["listing"]["id"]
+    call("POST", "/api/feature", {"listing_id": fid, "renew": False},
+         label="تثبيت الإعلان")
+
+    # سفر زمني: ننهي التثبيت بعد ساعتين داخل قاعدة الاختبار وحدها
+    db_path = os.environ.get("SHAMAA_DB")
+    assert db_path, "الاختبار يحتاج SHAMAA_DB لسفر زمني آمن"
+    tconn = _sql.connect(db_path)
+    tconn.execute("UPDATE listings SET featured_until = ? WHERE id = ?",
+                  (_time.time() + 2 * 3600, fid))
+    tconn.commit()
+    tconn.close()
+    print("     ⏩ عُجّلت نهاية التثبيت إلى بعد ساعتين (قاعدة الاختبار فقط)")
+
+    call("GET", "/api/listings", label="طلب يشغّل كنس التذكيرات")
+    box = call("GET", "/api/notifications", label="صندوق الإشعارات")
+    rems = [n for n in box["notifications"] if n["kind"] == "renew_reminder"]
+    assert len(rems) == 1 and "ثلاجة" in rems[0]["body"] \
+        and "2" in rems[0]["body"], f"تذكير مفقود/خاطئ: {box['notifications']}"
+    assert rems[0]["status"] == "simulated"
+    PASS += 1
+    print(f"     ✅ تذكير واحد: {rems[0]['body'][:58]}…")
+
+    call("GET", "/api/listings", label="كنس ثانٍ — لا تكرار مزعج")
+    box = call("GET", "/api/notifications", label="صندوق الإشعارات بعد كنسين")
+    rems = [n for n in box["notifications"] if n["kind"] == "renew_reminder"]
+    assert len(rems) == 1, f"التذكير تكرّر: {len(rems)}"
+    PASS += 1
+    print("     ✅ إلغاء التكرار يعمل: تذكير واحد لكل دورة تثبيت")
+
+    call("POST", "/api/feature", {"listing_id": fid, "renew": True},
+         label="تجديد التثبيت (2 د.أ)")
+    box = call("GET", "/api/notifications", label="تأكيد التجديد وصل")
+    kinds = [n["kind"] for n in box["notifications"]]
+    assert kinds[0] == "renew_done" and kinds.count("renew_reminder") == 1, kinds
+    PASS += 1
+    print(f"     ✅ تأكيد التجديد: {box['notifications'][0]['body'][:52]}…")
+
+    # ══════════════════════════════════════════════════════════════
 
 
 # ══════════════════════════════════════════════════════════════

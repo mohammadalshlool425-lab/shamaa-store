@@ -486,3 +486,14 @@ table.data tr:hover td{background:#FAFBFD}
   border: 1px dashed var(--line, #E0DACE); border-radius: 12px;
   background: #fff; cursor: pointer;
 }
+
+/* ═══════════════ 🔔 صندوق الإشعارات ═══════════════ */
+.notif {
+  display: flex; gap: .7rem; align-items: flex-start;
+  background: #fff; border: 1px solid var(--line, #E0DACE);
+  border-radius: 12px; padding: .7rem .8rem; margin-bottom: .5rem;
+}
+.notif-ico { font-size: 1.25rem; line-height: 1.4; }
+.notif-body { font-size: .88rem; line-height: 1.7; }
+.notif-time { font-size: .72rem; opacity: .55; margin-top: .2rem; }
+.notif.kind-renew_reminder { border-color: #F6D9A5; background: var(--flame-soft, #FFF7E8); }
