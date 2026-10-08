@@ -414,7 +414,16 @@ def run_suite() -> None:
     section(15, "الصفحات والأصول")
     html = urllib.request.urlopen(BASE + "/").read().decode()
     assert "منصة الشامل" in html and 'dir="rtl"' in html
-    print("  ✅ الصفحة الرئيسية عربية RTL وتحتوي العنوان")
+    assert 'property="og:image"' in html and "brand-card.png" in html \
+        and 'rel="canonical"' in html and 'id="modalRoot"' in html
+    PASS += 1
+    print("  ✅ الصفحة الرئيسية عربية RTL وتحمل وسوم مشاركة وبطاقة هوية")
+    code, b1, ctype, _l = raw("/brand-card.png", label="بطاقة هوية المنصة")
+    assert "image/png" in ctype and b1[:8] == b"\x89PNG\r\n\x1a\n"
+    code, b2, _c, _l = raw("/brand-card.png", label="جلب ثانٍ (مخزون)")
+    assert b1 == b2, "بطاقة الهوية غير حتمية"
+    PASS += 1
+    print(f"  ✅ بطاقة الهوية {len(b1):,} بايت وثابتة بين الجلبات")
     for asset in ["/static/app.js", "/static/style.css"]:
         r = urllib.request.urlopen(BASE + asset)
         assert r.status == 200

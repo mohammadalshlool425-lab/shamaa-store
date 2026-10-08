@@ -480,6 +480,52 @@ def build_card(d: dict, url: str) -> bytes:
     return png
 
 
+def build_brand_card(base_url: str) -> bytes:
+    """
+    بطاقة Open Graph للصفحة الرئيسية — حتى مشاركة رابط المنصة نفسه
+    تظهر كبطاقة غنية بهوية بصرية ورمز QR يفتح السوق على الهاتف.
+
+    تُخزَّن مؤقتاً بمفتاح النطاق: تتغير فقط بتغيّر النطاق أو رفع إصدار
+    التصميم.
+    """
+    key = hashlib.sha256(f"brand|{base_url}|v1".encode()).hexdigest()
+    if key in _CARD_CACHE:
+        return _CARD_CACHE[key]
+
+    c = Canvas(CARD_W, CARD_H)
+    c.dgradient(NAVY, (44, 35, 20))
+    c.circle(150, 560, 190, GOLD, 26)
+    c.circle(1060, 70, 230, GOLD, 30)
+    c.fill_rect(0, 0, CARD_W, 8, GOLD)
+    c.fill_rect(0, CARD_H - 8, CARD_W, 8, GOLD)
+
+    # شمعة الهوية — أكبر هنا لأنها بطلة البطاقة
+    fx, fy = 90, 150
+    c.circle(fx + 26, fy + 52, 26, GOLD)
+    c.fill_rect(fx + 10, fy + 52, 33, 74, GOLD)
+    c.circle(fx + 26, fy + 20, 15, GOLD_LIGHT)
+    c.circle(fx + 26, fy + 22, 7, CREAM)
+
+    c.text("ALSHAMIL", fx + 90, fy + 30, scale=10, color=(255, 255, 255))
+    c.text("JORDAN MARKETPLACE", fx + 90, fy + 110, scale=4, color=GOLD_LIGHT)
+    c.text("BUY - SELL - BARTER", fx + 90, fy + 160, scale=4,
+           color=(190, 203, 216))
+    c.text("FAIR PRICES BY AI", fx + 90, fy + 210, scale=3, color=GREEN)
+
+    # رمز QR يفتح السوق على هاتف من يرى البطاقة
+    modules, size, mask = qr.make_matrix(base_url)
+    scale, border = 8, 3
+    panel_w = (size + border * 2) * scale
+    px, py = CARD_W - panel_w - 80, CARD_H - panel_w - 80
+    _rounded_panel(c, px - 14, py - 14, panel_w + 28, panel_w + 28, 18, CREAM)
+    draw_qr(c, modules, px, py, scale=scale, border=border,
+            dark=INK, light=(255, 255, 255))
+
+    png = c.to_png()
+    _cache_put(_CARD_CACHE, key, png)
+    return png
+
+
 # ─────────────────────────────────────────────────────────────
 # 5) رمز QR كـ SVG (قابل للتكبير والطباعة)
 # ─────────────────────────────────────────────────────────────

@@ -1011,9 +1011,51 @@ def listing_share_links(listing_id: int, request: Request):
 # ─────────────────────────────────────────────────────────────
 # الصفحات
 # ─────────────────────────────────────────────────────────────
+_INDEX_TEMPLATE: Optional[str] = None
+
+
 @app.get("/")
-def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+def index(request: Request):
+    """
+    الصفحة الرئيسية — تُحقن وسوم Open Graph عند الطلب لأن النطاق العام
+    لا يُعرف وقت الكتابة (معاينة/إنتاج)، وملف index.html ساكن.
+
+    بدون هذا الحقن تُشارك واجهة المنصة كرابط أعرم بلا صورة ولا وصف.
+    """
+    global _INDEX_TEMPLATE
+    if _INDEX_TEMPLATE is None:
+        _INDEX_TEMPLATE = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    base = share.public_base_url(request)
+    title = "منصة الشامل الذكية — بيع واشترِ وقايض في الأردن"
+    desc = ("المتجر والإعلانات المبوبة الأسرع في الأردن: تسعير عادل بالذكاء "
+            "الاصطناعي، تواصل واتساب مباشر، ومقايضة موثّقة.")
+    meta = (
+        f'<meta property="og:type" content="website">\n'
+        f'<meta property="og:site_name" content="{share.SITE_NAME}">\n'
+        f'<meta property="og:title" content="{title}">\n'
+        f'<meta property="og:description" content="{desc}">\n'
+        f'<meta property="og:url" content="{base}/">\n'
+        f'<meta property="og:image" content="{base}/brand-card.png">\n'
+        f'<meta property="og:image:type" content="image/png">\n'
+        f'<meta property="og:image:width" content="{share.CARD_W}">\n'
+        f'<meta property="og:image:height" content="{share.CARD_H}">\n'
+        f'<meta property="og:locale" content="ar_JO">\n'
+        f'<meta name="twitter:card" content="summary_large_image">\n'
+        f'<meta name="twitter:title" content="{title}">\n'
+        f'<meta name="twitter:description" content="{desc}">\n'
+        f'<meta name="twitter:image" content="{base}/brand-card.png">\n'
+        f'<meta name="description" content="{desc}">\n'
+        f'<link rel="canonical" href="{base}/">\n'
+    )
+    return HTMLResponse(_INDEX_TEMPLATE.replace("</head>", meta + "</head>", 1))
+
+
+@app.get("/brand-card.png")
+def brand_card(request: Request):
+    """بطاقة الهوية المشاركة للرئيسية — مولّدة ومخزّنة مؤقتاً."""
+    png = share.build_brand_card(share.public_base_url(request))
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/healthz")
