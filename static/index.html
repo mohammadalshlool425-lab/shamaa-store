@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌟 منصة الشامل الذكية — بيع واشترِ وقايض في الأردن</title>
+<meta name="description" content="المتجر والإعلانات المبوبة الأسرع في الأردن. بيع، اشترِ، قايض، واحسب السعر العادل بالذكاء الاصطناعي.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌟</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ══════════════ الشريط العلوي ══════════════ -->
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a href="#" class="brand" data-view="home">
+      <span class="brand-flame">🌟</span>
+      <span class="brand-text">
+        <strong>منصة الشامل</strong>
+        <small>الذكية · الأردن</small>
+      </span>
+    </a>
+
+    <div class="searchbox">
+      <span class="search-ico">🔍</span>
+      <input id="searchInput" type="search" placeholder="ابحث عن لابتوب، ثلاجة، سيارة، دراجة…" autocomplete="off">
+    </div>
+
+    <nav class="topnav">
+      <button class="btn btn-ghost" data-view="home">🏠 تصفّح</button>
+      <button class="btn btn-ghost" id="navPricing">🤖 التسعير الذكي</button>
+      <button class="btn btn-ghost" data-view="safety">🛡️ الأمان</button>
+      <button class="btn btn-primary" id="navNew">➕ أضف إعلانك</button>
+      <span id="authArea"></span>
+    </nav>
+  </div>
+</header>
+
+<!-- ══════════════ شريط الإحصاءات ══════════════ -->
+<div class="statsbar">
+  <div class="wrap statsbar-inner">
+    <div class="stat"><b id="statAds">—</b><span>إعلان نشط</span></div>
+    <div class="stat"><b id="statBarter">—</b><span>يقبل المقايضة 🔄</span></div>
+    <div class="stat"><b id="statSellers">—</b><span>بائع أردني</span></div>
+    <div class="stat"><b id="statPricing">—</b><span>عملية تسعير ذكي</span></div>
+    <div class="stat stat-wide">
+      <span class="pill-live">● مباشر</span>
+      <span>مجاني 100% · بدون رسوم على البائع العادي</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ المحتوى ══════════════ -->
+<main class="wrap main">
+  <section id="view-home"></section>
+  <section id="view-safety" hidden></section>
+  <section id="view-dashboard" hidden></section>
+  <section id="view-admin" hidden></section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div>
+      <strong>🌟 منصة الشامل الذكية</strong>
+      <p>المتجر والإعلانات المبوبة الأسرع والأذكى — بديل عصري وآمن ومجاني.</p>
+    </div>
+    <div class="footer-cols">
+      <div>
+        <h5>المنصة</h5>
+        <a href="#" data-view="home">تصفح الإعلانات</a>
+        <a href="#" id="footPricing">التسعير الذكي</a>
+        <a href="#" id="footNew">أضف إعلانك</a>
+      </div>
+      <div>
+        <h5>الثقة</h5>
+        <a href="#" data-view="safety">ضمان الحقوق</a>
+        <a href="#" data-view="safety">توثيق المقايضة</a>
+        <a href="#" id="footVerify">الحصول على وسم موثّق 🛡️</a>
+      </div>
+      <div>
+        <h5>للبائعين الجادين</h5>
+        <a href="#" id="footFeature">تثبيت إعلانك ⭐</a>
+        <a href="#" id="footDashboard">لوحة التحكم</a>
+        <a href="#" data-view="safety">الأسئلة الشائعة</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">© <span id="year"></span> منصة الشامل الذكية · جميع الأسعار بالدينار الأردني 🇯🇴</div>
+</footer>
+
+<!-- ══════════════ النوافذ المنبثقة ══════════════ -->
+<div class="modal-root" id="modalRoot" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal" role="dialog" aria-modal="true">
+    <button class="modal-x" data-close aria-label="إغلاق">✕</button>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

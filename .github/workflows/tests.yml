@@ -1,0 +1,123 @@
+# ══════════════════════════════════════════════════════════════
+#  منصة الشامل الذكية — الاختبار الآلي
+#
+#  يشغّل الاختبار الشامل (71 فحصاً) على كل Pull Request وكل دفع إلى main،
+#  فيحمي الفرع من الانحدار دون تدخل يدوي.
+#
+#  الترتيب: فحص الصياغة ← تشغيل الخادم ← انتظار الجاهزية ← الاختبار
+# ══════════════════════════════════════════════════════════════
+name: الاختبارات
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# إلغاء التشغيلات القديمة لنفس الفرع — توفير للوقت والدقائق
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: الاختبار الشامل (Ubuntu · Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 سحب الكود
+        uses: actions/checkout@v4
+
+      - name: 🐍 تجهيز Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          # تخزين مؤقت لحزم pip — يسرّع التشغيلات التالية
+          cache: pip
+
+      - name: 📦 تثبيت الاعتماديات
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔎 فحص صياغة Python
+        run: python -m compileall -q server tests
+
+      - name: 🔎 فحص صياغة JavaScript
+        run: |
+          node --version
+          node --check static/app.js
+          echo "✅ static/app.js سليم"
+
+      - name: 🧬 فحوصات وحدات المشاركة (QR + PNG)
+        run: |
+          python tests/test_qr.py
+          echo "✅ ثوابت QR وبنية المصفوفة ومرمّز PNG سليمة"
+
+      - name: 🔎 التحقق من سلامة YAML
+        run: |
+          pip install --quiet pyyaml
+          python - <<'PY'
+          import pathlib, sys, yaml
+          bad = 0
+          for f in sorted(pathlib.Path(".github/workflows").glob("*.y*ml")):
+              try:
+                  yaml.safe_load(f.read_text(encoding="utf-8"))
+                  print(f"  ✅ {f}")
+              except Exception as e:
+                  print(f"  ❌ {f}: {e}"); bad += 1
+          sys.exit(1 if bad else 0)
+          PY
+
+      # ── تشغيل الخادم على قاعدة بيانات نظيفة ──
+      # القاعدة لا تُلتزم إلى Git، فتُنشأ وتُملأ ببيانات البداية تلقائياً.
+      # المنفذ 8001 ليطابق الافتراضي في tests/test_e2e.py و tests/run.sh.
+      - name: 🚀 تشغيل الخادم
+        run: |
+          rm -f data/shamaa.db data/shamaa.db-shm data/shamaa.db-wal
+          nohup python -m uvicorn server.main:app \
+            --host 0.0.0.0 --port 8001 > server.log 2>&1 &
+          echo "الخادم يعمل بمعرف $!"
+
+      - name: ⏳ انتظار جاهزية الخادم
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8001/healthz > /dev/null; then
+              echo "✅ الخادم جاهز بعد $i محاولة"
+              curl -s http://127.0.0.1:8001/api/pricing/stats
+              echo ""
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ الخادم لم يستجب خلال 60 ثانية — سجل التشغيل:"
+          cat server.log
+          exit 1
+
+      # ── الاختبار الشامل ──
+      # يُشغَّل مباشرة بدون أنبوب: الأنبوب إلى tail يخفي رمز الخروج الحقيقي
+      # فيمرّر CI كوداً مكسوراً.
+      - name: ✅ تنفيذ الاختبار الشامل
+        run: python tests/test_e2e.py
+
+      - name: 🩺 عرض سجل الخادم عند الفشل
+        if: failure()
+        run: |
+          echo "──────── آخر 80 سطراً من server.log ────────"
+          tail -80 server.log || true
+
+      - name: 📤 حفظ سجل الخادم
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 🧹 إيقاف الخادم
+        if: always()
+        run: pkill -f "uvicorn server.main" || true
