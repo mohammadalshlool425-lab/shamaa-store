@@ -80,12 +80,12 @@ op_nr = urllib.request.build_opener(_NoRedirect,
                                     urllib.request.HTTPCookieProcessor(cj))
 
 
-def raw(path, expect=200, label="", follow=False):
+def raw(path, expect=200, label="", follow=False, headers=None):
     """طلب خام يعيد (رمز الاستجابة، البايتات، نوع المحتوى، ترويسة Location)."""
     global PASS, FAIL
     opener = op if follow else op_nr
     try:
-        r = opener.open(BASE + path)
+        r = opener.open(urllib.request.Request(BASE + path, headers=headers or {}))
         code, body = r.status, r.read()
         ctype, loc = r.headers.get("Content-Type", ""), r.headers.get("Location", "")
     except urllib.error.HTTPError as e:
@@ -604,6 +604,34 @@ def run_suite() -> None:
         in pbody.decode(), "بعد الإزالة يجب أن تعود بطاقة المنصة"
     PASS += 1
     print("     ✅ عند غياب الصورة تسدّ بطاقة المنصة الفراغ")
+
+    # ══════════════════════════════════════════════════════════════
+    section(18, "📊 عدّاد المشاركة — فتحات الرابط القصير وزيارات الصفحة")
+    # القسم 16 فتح /l/ والصفحة مرة لكل منهما — هذا الأساس: 1 و1
+    raw(f"/l/{share_id}", expect=302, label="فتحة رابط قصير (تُحتسب scan)")
+    raw(f"/listing/{share_id}", label="زيارة بشرية للصفحة (تُحتسب page)")
+    raw(f"/listing/{share_id}",
+        headers={"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"},
+        label="زاحف فيسبوك يبني معاينة (لا تُحتسب)")
+
+    mine_view = call("GET", f"/api/listings/{share_id}",
+                     label="غير المالك لا يرى العدّاد")
+    assert "hits" not in mine_view["listing"], "العدّاد يجب ألا يُكشف لغير المالك"
+    PASS += 1
+
+    call("POST", "/api/login",
+         {"phone": "0790000000", "password": "demo1234"}, label="دخول المدير")
+    own = call("GET", f"/api/listings/{share_id}", label="المالك يرى العدّاد")
+    hits = own["listing"]["hits"]
+    assert hits == {"scans": 2, "pages": 2}, f"عدّاد خاطئ: {hits}"
+    PASS += 1
+    print(f"     ✅ فتحتا رابط مشاركة + زيارتا صفحة — والزاحف لم يُحتسب")
+
+    adm = call("GET", "/api/admin/stats", label="إجماليات المشاركة عند المدير")
+    assert adm["share_scans"] >= 2 and adm["share_pages"] >= 4, \
+        f"إجماليات خاطئة: {adm.get('share_scans')}/{adm.get('share_pages')}"
+    PASS += 1
+    print(f"     ✅ لوحة المدير: {adm['share_scans']} مسح/فتحة · {adm['share_pages']} زيارة")
 
     # ══════════════════════════════════════════════════════════════
 

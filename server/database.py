@@ -99,7 +99,15 @@ CREATE TABLE IF NOT EXISTS pricing_uses (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS link_hits (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL,        -- scan: فتحة رابط قصير/QR · page: زيارة صفحة المشاركة
+    created_at REAL    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_listings_active   ON listings(is_active, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hits_listing      ON link_hits(listing_id, kind);
 CREATE INDEX IF NOT EXISTS idx_listings_category ON listings(category);
 CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
 """

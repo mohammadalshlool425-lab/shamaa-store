@@ -440,7 +440,11 @@ def get_listing(listing_id: int, user=Depends(current_user)):
         raise HTTPException(404, "الإعلان غير موجود أو تم حذفه")
     conn.execute("UPDATE listings SET views = views + 1 WHERE id = ?", (listing_id,))
     conn.commit()
-    return {"listing": serialize_listing(row, t, user)}
+    d = serialize_listing(row, t, user)
+    if user and (user["id"] == row["user_id"] or user.get("is_admin")):
+        # 📊 عدّاد المشاركة: يرى البائع أثر نشره فيرجع ينشر أكثر
+        d["hits"] = hit_counts(conn, listing_id)
+    return {"listing": d}
 
 
 @app.post("/api/listings")
@@ -751,6 +755,10 @@ def admin_stats(user=Depends(current_user)):
             (t,)).fetchone()["c"],
         "pricing_calls": conn.execute(
             "SELECT COUNT(*) AS c FROM pricing_uses").fetchone()["c"],
+        "share_scans": int(conn.execute(
+            "SELECT COUNT(*) AS c FROM link_hits WHERE kind='scan'").fetchone()["c"]),
+        "share_pages": int(conn.execute(
+            "SELECT COUNT(*) AS c FROM link_hits WHERE kind='page'").fetchone()["c"]),
         "top_sellers": [dict(r) for r in top],
     }
 
@@ -840,6 +848,34 @@ def delete_listing_image(listing_id: int, user=Depends(require_user)):
 # ─────────────────────────────────────────────────────────────
 # المشاركة والانتشار — صفحة إعلان مُصيَّرة على الخادم + بطاقة OG + QR
 # ─────────────────────────────────────────────────────────────
+#: بصمات الزواحف التي تجلب الرابط لبناء معاينة المشاركة — زياراتها ليست
+#: بشراً فلا تُحتسب على البائع، وإلا لصارت معاينة فيسبوك الواحدة «مشاهدة».
+CRAWLER_UA = ("facebookexternalhit", "whatsapp", "twitterbot", "telegrambot",
+              "googlebot", "slackbot", "discordbot", "linkedinbot", "applebot",
+              "bingbot", "embedly", "showyoubot", "quora")
+
+
+def _is_crawler(request: Request) -> bool:
+    ua = (request.headers.get("user-agent") or "").lower()
+    return any(k in ua for k in CRAWLER_UA)
+
+
+def record_hit(conn: sqlite3.Connection, listing_id: int, kind: str) -> None:
+    conn.execute(
+        "INSERT INTO link_hits(listing_id, kind, created_at) VALUES (?, ?, ?)",
+        (listing_id, kind, now()),
+    )
+    conn.commit()
+
+
+def hit_counts(conn: sqlite3.Connection, listing_id: int) -> dict:
+    row = conn.execute(
+        """SELECT SUM(kind = 'scan') AS scans, SUM(kind = 'page') AS pages
+           FROM link_hits WHERE listing_id = ?""", (listing_id,),
+    ).fetchone()
+    return {"scans": int(row["scans"] or 0), "pages": int(row["pages"] or 0)}
+
+
 def _listing_for_share(conn: sqlite3.Connection, listing_id: int,
                        t: float) -> Optional[dict]:
     """
@@ -872,6 +908,8 @@ def listing_page(listing_id: int, request: Request):
     if d is None:
         return HTMLResponse(share.render_missing_page(listing_id, request),
                             status_code=404)
+    if not _is_crawler(request):
+        record_hit(conn, listing_id, "page")
     seller = conn.execute(
         "SELECT name, is_verified FROM users WHERE id = ?",
         (d.get("user_id"),),
@@ -890,6 +928,11 @@ def listing_short(listing_id: int):
     302 لا 301: إن حُذف الإعلان فالصفحة القانونية تعرض البديل المناسب،
     ولا نريد للمتصفحات أن تخزّن تحويلاً دائماً نحو رابط ميت.
     """
+    conn = get_conn()
+    if conn.execute("SELECT 1 FROM listings WHERE id = ? AND is_active = 1",
+                    (listing_id,)).fetchone():
+        # كل فتحة للرابط القصير = نقرة من واتساب أو مسح QR: هذا ذهب المشاركة
+        record_hit(conn, listing_id, "scan")
     return RedirectResponse(url=f"/listing/{listing_id}", status_code=302)
 
 

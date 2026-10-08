@@ -318,6 +318,7 @@ async function openDetail(id) {
         <dt>عدد إعلاناته</dt><dd>${a.seller_ads}</dd>
         <dt>نُشر</dt><dd>${esc(a.age_label)} · ${a.views} مشاهدة</dd>
         ${a.is_featured ? `<dt>التثبيت</dt><dd>⭐ مثبّت — متبقٍ ${a.featured_hours_left} ساعة</dd>` : ""}
+        ${mine && a.hits ? `<dt>أثر المشاركة</dt><dd>🔗 ${a.hits.scans} فتحة رابط مشاركة · 📄 ${a.hits.pages} زيارة للصفحة — كل واحدة فرصة بيع</dd>` : ""}
       </dl>
       <div class="desc">${esc(a.description || "لم يضف البائع وصفاً تفصيلياً.")}</div>
       <div class="pay-note">
