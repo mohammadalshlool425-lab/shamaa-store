@@ -656,9 +656,12 @@ def run_suite() -> None:
     call("POST", "/api/feature", {"listing_id": fid, "renew": False},
          label="تثبيت الإعلان")
 
-    # سفر زمني: ننهي التثبيت بعد ساعتين داخل قاعدة الاختبار وحدها
-    db_path = os.environ.get("SHAMAA_DB")
-    assert db_path, "الاختبار يحتاج SHAMAA_DB لسفر زمني آمن"
+    # سفر زمني: ننهي التثبيت بعد ساعتين داخل قاعدة الاختبار وحدها.
+    # نفتح نفس القاعدة التي يعمل عليها الخادم: المتغيّر في الوضع المعزول
+    # (run.sh)، والمسار الافتراضي data/shamaa.db في وضع CI.
+    db_path = os.environ.get("SHAMAA_DB") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "shamaa.db")
     tconn = _sql.connect(db_path)
     tconn.execute("UPDATE listings SET featured_until = ? WHERE id = ?",
                   (_time.time() + 2 * 3600, fid))
