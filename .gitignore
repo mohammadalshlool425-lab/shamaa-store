@@ -1,0 +1,11 @@
+# بيئة التشغيل والبيانات المولّدة
+data/
+*.db
+*.db-wal
+*.db-shm
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
