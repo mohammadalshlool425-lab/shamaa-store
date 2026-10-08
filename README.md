@@ -2,7 +2,7 @@
 
 > متجر وإعلانات مبوبة أردنية مع **مقايضة** و**مساعد تسعير ذكي** — ونموذج ربح فعلي مفعَّل.
 
-[![الاختبارات](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/workflows/tests.yml/badge.svg)](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/workflows/tests.yml)
+[![الاختبارات](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/workflows/tests.yml/badge.svg?branch=arena%2F342e8696-shamaa-store)](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/workflows/tests.yml)
 
 منصة ويب عربية (RTL) كاملة تعمل على المتصفح، مبنية بـ **FastAPI + SQLite** في الخلفية
 وواجهة **SPA بدون أي اعتماديات خارجية** (لا CDN، لا مكتبات، لا إطار عمل).
@@ -31,6 +31,8 @@ python3 -m venv .venv
 هذا الحساب يملك صلاحية **مدير**، فيفتح لك لوحة أرباح المنصة.
 
 ### الاختبارات
+> الشارة مثبَّتة على فرع التطوير الحالي. بعد الدمج في `main` احذف `?branch=…` من رابطها لتقرأ حالة `main`.
+
 ```bash
 bash tests/run.sh          # يمسح القاعدة، يشغّل الخادم، ينفّذ الاختبار الشامل
                            # يستخدم .venv الخاص بالمستودع تلقائياً (أو python3 إن غاب)
