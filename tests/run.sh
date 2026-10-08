@@ -3,6 +3,10 @@
 #  يشغّل الاختبار الشامل من قاعدة بيانات نظيفة تلقائياً
 #
 #  الاستخدام:  bash tests/run.sh
+#              PORT=9000 DB=/tmp/x.db bash tests/run.sh   # تخصيص
+#
+#  يعمل على منفذ 8001 وقاعدة /tmp مستقلة، فلا يتعارض مع
+#  خادم التطوير الجاري على 8000.
 #
 #  ملاحظة: حدود الاستخدام المجاني تُحسب تراكمياً، لذلك يجب أن يبدأ
 #  الاختبار من قاعدة نظيفة وإلا فشلت فحوصات الـ Freemium.
@@ -16,18 +20,26 @@ cd "$REPO"
 PY="$REPO/.venv/bin/python"
 [ -x "$PY" ] || PY=python3
 
-PORT="${PORT:-8000}"
+# ══════════════════════════════════════════════════════════════
+#  العزل: الاختبار يستخدم منفذاً وقاعدة بيانات خاصَّين به،
+#  فلا يلمس خادم التطوير الجاري ولا يحذف قاعدة بياناته.
+#  (سابقاً كان pkill + rm يدمّران المعاينة الحيّة أثناء عملها.)
+# ══════════════════════════════════════════════════════════════
+PORT="${PORT:-8001}"
+DB="${DB:-/tmp/shamaa-test.db}"
 LOG="/tmp/shamaa-test.log"
 
-# ── إيقاف أي خادم سابق وتصفير القاعدة ──
-pkill -f "uvicorn server.main" 2>/dev/null || true
+export SHAMAA_DB="$DB"
+rm -f "$DB" "$DB-shm" "$DB-wal"
+
+# ── إيقاف أي خادم اختبار سابق على هذا المنفذ فقط ──
+pkill -f "uvicorn server.main:app.*--port $PORT" 2>/dev/null || true
 sleep 1
-rm -f data/shamaa.db data/shamaa.db-shm data/shamaa.db-wal
 
 # ── تشغيل الخادم في الخلفية ──
 "$PY" -m uvicorn server.main:app --host 0.0.0.0 --port "$PORT" >"$LOG" 2>&1 &
 SRV=$!
-trap 'kill "$SRV" 2>/dev/null || true' EXIT
+trap 'kill "$SRV" 2>/dev/null || true; rm -f "$DB" "$DB-shm" "$DB-wal"' EXIT
 
 # ── انتظار الجاهزية (حتى 20 ثانية) ──
 for _ in $(seq 1 40); do

@@ -15,12 +15,15 @@
 """
 import http.cookiejar
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:8000"
+# يمكن توجيه الاختبار إلى أي منفذ — الافتراضي 8001 (منفذ الاختبار المعزول).
+# خادم التطوير/المعاينة يعمل على 8000 ولا يلمسه الاختبار.
+BASE = os.environ.get("SHAMAA_TEST_BASE", "http://127.0.0.1:8001")
 cj = http.cookiejar.CookieJar()
 op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
 
@@ -32,8 +35,8 @@ def preflight():
     try:
         urllib.request.urlopen(BASE + "/healthz", timeout=4)
     except Exception:
-        sys.exit("❌ الخادم لا يعمل على " + BASE + " — شغّله أولاً:\n"
-                 "   python -m uvicorn server.main:app --host 0.0.0.0 --port 8000")
+        sys.exit("❌ الخادم لا يعمل على " + BASE + "\n"
+                 "   شغّله عبر:  bash tests/run.sh   (يفتح منفذ الاختبار تلقائياً)")
     r = json.loads(urllib.request.urlopen(BASE + "/api/pricing/stats", timeout=4).read())
     if r["total"] > 0:
         sys.exit(f"⚠️  القاعدة ليست نظيفة ({r['total']} عملية تسعير مسجّلة).\n"
