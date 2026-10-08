@@ -270,6 +270,25 @@ def _js(value) -> str:
 # 3) وسوم Open Graph / Twitter / JSON-LD
 # ─────────────────────────────────────────────────────────────
 
+_IMAGE_MIME = {"png": "image/png", "jpg": "image/jpeg",
+               "jpeg": "image/jpeg", "webp": "image/webp"}
+
+
+def share_image(d: dict, base: str, listing_id: int) -> tuple[str, str, bool]:
+    """
+    يعيد (رابط صورة المشاركة المطلق، نوع MIME، هل هي البطاقة المولّدة؟).
+
+    صورة البائع الحقيقية تتصدّر عند وجودها لأنها ما يجعل الإنسان ينقر —
+    الوجه المألوف للسلعة أثقـل وقـعاً من أي تصميم. وعند غيابها تسدّ بطاقة
+    المنصة (السعر + رمز QR) الفراغ فلا يظهر الرابط بلا صورة أبداً.
+    """
+    rel = str(d.get("image") or "").strip()
+    if rel.startswith("/uploads/"):
+        ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else ""
+        return (base + rel, _IMAGE_MIME.get(ext, "image/jpeg"), False)
+    return (f"{base}/listing/{listing_id}/card.png", "image/png", True)
+
+
 def og_meta(d: dict, request=None, listing_id: Optional[int] = None) -> str:
     """
     كتلة الوسوم الكاملة التي تجعل الرابط يُعرض كبطاقة غنية.
@@ -281,7 +300,7 @@ def og_meta(d: dict, request=None, listing_id: Optional[int] = None) -> str:
     lid = listing_id if listing_id is not None else int(d.get("id") or 0)
     base = public_base_url(request)
     url = f"{base}/listing/{lid}"
-    image = f"{base}/listing/{lid}/card.png"
+    image, mime, is_card = share_image(d, base, lid)
     title = og_title(d)
     desc = og_description(d)
 
@@ -294,10 +313,14 @@ def og_meta(d: dict, request=None, listing_id: Optional[int] = None) -> str:
         ("og:url", url),
         ("og:image", image),
         ("og:image:secure_url", image),
-        ("og:image:type", "image/png"),
-        ("og:image:width", str(CARD_W)),
-        ("og:image:height", str(CARD_H)),
-        ("og:image:alt", title),
+        ("og:image:type", mime),
+    ]
+    if is_card:
+        tags += [
+            ("og:image:width", str(CARD_W)),
+            ("og:image:height", str(CARD_H)),
+        ]
+    tags += [
         ("og:locale", "ar_JO"),
         # ── Twitter / X ──
         ("twitter:card", "summary_large_image"),
@@ -335,7 +358,7 @@ def json_ld(d: dict, request=None, listing_id: Optional[int] = None) -> str:
         "name": _clip(str(d.get("title", "")), 120) or f"إعلان رقم {lid}",
         "description": og_description(d),
         "url": f"{base}/listing/{lid}",
-        "image": f"{base}/listing/{lid}/card.png",
+        "image": share_image(d, base, lid)[0],
         "productID": str(lid),
         "category": str(d.get("category") or ""),
     }
@@ -497,7 +520,7 @@ def share_links(d: dict, request=None, listing_id: Optional[int] = None) -> dict
         "text": text,
         "title": og_title(d),
         "description": og_description(d),
-        "image": f"{public_base_url(request)}/listing/{lid}/card.png",
+        "image": share_image(d, public_base_url(request), lid)[0],
         "qr_svg": f"/api/qr/{lid}.svg",
         "networks": {
             # واتساب: النص الكامل المنسّق — أهم قناة في الأردن بفارق كبير
@@ -581,6 +604,10 @@ def render_listing_page(d: dict, request=None, listing_id: Optional[int] = None,
       <a class="chip" href="{_esc(net["telegram"])}" target="_blank" rel="noopener noreferrer">تيليجرام</a>
       <button class="chip" type="button" data-copy="{_esc(links["short_url"])}">نسخ الرابط</button>'''
 
+    hero, _mime, hero_is_card = share_image(d, base, lid)
+    hero_attrs = (f' width="{CARD_W}" height="{CARD_H}"' if hero_is_card else "")
+    hero_cls = "" if hero_is_card else ' class="photo"'
+
     return f'''<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -605,6 +632,7 @@ def render_listing_page(d: dict, request=None, listing_id: Optional[int] = None,
   .card {{ background:#fff; border-radius:18px; overflow:hidden;
            box-shadow:0 8px 30px rgba(18,33,46,.10); }}
   .card img {{ width:100%; display:block; }}
+  .card img.photo {{ max-height:420px; object-fit:cover; }}
   .pad {{ padding:20px; }}
   h1 {{ font-size:1.35rem; margin:0 0 6px; line-height:1.5; }}
   .price {{ font-size:1.9rem; font-weight:800; color:var(--gold);
@@ -650,7 +678,7 @@ def render_listing_page(d: dict, request=None, listing_id: Optional[int] = None,
 
 <div class="wrap">
   <div class="card">
-    <img src="/listing/{lid}/card.png" alt="{_esc(title)}" width="{CARD_W}" height="{CARD_H}">
+    <img src="{_esc(hero)}"{hero_cls} alt="{_esc(title)}"{hero_attrs}>
     <div class="pad">
       <h1>{_esc(title)}</h1>
       <div class="seller">البائع: {_esc(seller_name)}{badge}</div>

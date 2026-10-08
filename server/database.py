@@ -109,6 +109,8 @@ CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
 MIGRATIONS = [
     ("users", "extra_listing_slots",
      "ALTER TABLE users ADD COLUMN extra_listing_slots INTEGER NOT NULL DEFAULT 0"),
+    ("listings", "image_path",
+     "ALTER TABLE listings ADD COLUMN image_path TEXT NOT NULL DEFAULT ''"),
 ]
 
 

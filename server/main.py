@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Optional
 
 import bcrypt
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from fastapi import (Cookie, Depends, FastAPI, File, HTTPException, Request,
+                    UploadFile)
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                            RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
@@ -41,12 +42,15 @@ from .pricing import CATEGORY_BASE, CITY_FACTOR, estimate_price
 # ─────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
+UPLOAD_DIR = BASE_DIR / "data" / "uploads"   # صور الإعلانات — داخل data/ المُتجاهلة في Git
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_COOKIE = "shamaa_session"
 DAY = 86400.0
 JORDAN_DIALING = "962"
 
 app = FastAPI(title="منصة الشامل الذكية", version="2.0.0", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 init_db()
 
@@ -137,11 +141,20 @@ def wa_link(phone: str, title: str) -> str:
 
 
 def clean_featured(conn, t: float) -> None:
-    """يُنزل الإعلانات التي انتهت مدة تثبيتها من المرتبة المميزة."""
+    """
+    يُنزل الإعلانات التي انتهت مدة تثبيتها من المرتبة المميزة.
+
+    ⚠️ يلتزم (commit) بنفسه دائماً: في وضع sqlite الافتراضي يفتح أي UPDATE
+    معاملة كتابة حتى لو لم يطال صفوفاً، ومن بين مناداته مسارات قراءة لا
+    تلتزم إطلاقاً — فكان قفل الكتابة يبقى مفتوحاً على اتصال الـ thread
+    حتى تصادف معاملة أخرى على نفس الاتصال، فيعلق أي كاتب آخر 30 ثانية
+    («database is locked»). الالتزام هنا يغلق المعاملة فوراً ويسدّ العلق.
+    """
     conn.execute(
         "UPDATE listings SET is_featured = 0 WHERE is_featured = 1 AND featured_until < ?",
         (t,),
     )
+    conn.commit()
 
 
 def serialize_listing(row: sqlite3.Row, t: float, viewer: Optional[dict] = None) -> dict:
@@ -157,6 +170,7 @@ def serialize_listing(row: sqlite3.Row, t: float, viewer: Optional[dict] = None)
     d["featured_hours_left"] = (
         max(0, round((d["featured_until"] - t) / 3600)) if featured else 0
     )
+    d["image"] = d.pop("image_path", "") or ""
     d["whatsapp_url"] = wa_link(d.get("phone", ""), d.get("title", ""))
     d["age_label"] = _age_label(t - d["created_at"])
     d["seller_id"] = d.get("user_id")
@@ -739,6 +753,88 @@ def admin_stats(user=Depends(current_user)):
             "SELECT COUNT(*) AS c FROM pricing_uses").fetchone()["c"],
         "top_sellers": [dict(r) for r in top],
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# 📷 صور الإعلانات
+# ─────────────────────────────────────────────────────────────
+#: الحد الأقصى لحجم الصورة (2 ميغابايت تكفي صورة سلعة مضغوطة).
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+#: البصمات السحرية المقبولة — نفحص البايتات لا امتداد الملف ولا ترويسة
+#: Content-Type، لأن كليهما ينتحل بسهولة فيطلب ملفاً خبيثاً بامتداد صورة.
+IMAGE_TYPES = (
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8\xff", "jpg", "image/jpeg"),
+)
+
+
+def _detect_image(data: bytes):
+    """يعيد (الامتداد، نوع MIME) إن كانت البايتات صورة مدعومة، وإلا None."""
+    for magic, ext, mime in IMAGE_TYPES:
+        if data.startswith(magic):
+            return ext, mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    return None
+
+
+@app.post("/api/listings/{listing_id}/image")
+async def upload_listing_image(listing_id: int,
+                               file: UploadFile = File(...),
+                               user=Depends(require_user),
+                               request: Request = None):
+    """
+    يرفع صورة إعلان (PNG/JPEG/WebP حتى 2 ميغابايت).
+
+    الأمان: الملكية أولاً (403 لغير المالك)، ثم فحص البصمة السحرية (415)،
+    ثم الحجم (413)، والاسم النهائي عشوائي بالكامل فلا يوجد مسار يدخله
+    المستخدم إطلاقاً — وهذا يسدّ انتحال المسار (path traversal) من جذوره.
+    """
+    rate_limit(f"upload:{user['id']}", 12, 300)
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM listings WHERE id = ?", (listing_id,)).fetchone()
+    if row is None or not int(row["is_active"]):
+        raise HTTPException(404, "الإعلان غير موجود أو تم حذفه")
+    if row["user_id"] != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "لا يمكنك رفع صورة لإعلان لا تملكه")
+
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "حجم الصورة كبير — الحد الأقصى 2 ميغابايت")
+    detected = _detect_image(data)
+    if detected is None:
+        raise HTTPException(415, "نوع ملف غير مدعوم — يُقبل PNG أو JPEG أو WebP فقط")
+    ext, _mime = detected
+
+    old_path = row["image_path"] or ""
+    name = f"{listing_id}-{secrets.token_hex(8)}.{ext}"
+    (UPLOAD_DIR / name).write_bytes(data)
+    if old_path:
+        (UPLOAD_DIR / Path(old_path).name).unlink(missing_ok=True)
+
+    conn.execute("UPDATE listings SET image_path = ? WHERE id = ?",
+                 (f"/uploads/{name}", listing_id))
+    conn.commit()
+    return {"ok": True, "image": f"/uploads/{name}",
+            "message": "✅ رُفعت الصورة — صارت بطاقة مشاركتك تعرضها"}
+
+
+@app.delete("/api/listings/{listing_id}/image")
+def delete_listing_image(listing_id: int, user=Depends(require_user)):
+    """يزيل صورة الإعلان ويعيده إلى المصغّر الافتراضي."""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM listings WHERE id = ?", (listing_id,)).fetchone()
+    if row is None or not int(row["is_active"]):
+        raise HTTPException(404, "الإعلان غير موجود أو تم حذفه")
+    if row["user_id"] != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "لا يمكنك تعديل صورة إعلان لا تملكه")
+    old_path = row["image_path"] or ""
+    if old_path:
+        (UPLOAD_DIR / Path(old_path).name).unlink(missing_ok=True)
+    conn.execute("UPDATE listings SET image_path = '' WHERE id = ?", (listing_id,))
+    conn.commit()
+    return {"ok": True, "image": "", "message": "أُزيلت الصورة"}
 
 
 # ─────────────────────────────────────────────────────────────

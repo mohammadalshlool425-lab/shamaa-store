@@ -99,6 +99,34 @@ def raw(path, expect=200, label="", follow=False):
     return code, body, ctype, loc
 
 
+def post_raw(path, body, ctype, expect=200, label=""):
+    """POST بجسم خام (multipart للصور) مع عدّ النجاح/Fشل."""
+    global PASS, FAIL
+    req = urllib.request.Request(BASE + path, data=body, method="POST",
+                                headers={"Content-Type": ctype})
+    try:
+        r = op.open(req)
+        code, payload = r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        code, payload = e.code, json.loads(e.read() or b"{}")
+    ok = code == expect
+    PASS += ok
+    FAIL += (not ok)
+    mark = "✅" if ok else "❌"
+    extra = "" if ok else " → " + json.dumps(payload, ensure_ascii=False)[:140]
+    print(f"  {mark} {label or path} [{code}]{extra}")
+    return payload
+
+
+def multipart(file_bytes, filename="photo.png", ctype="image/png",
+              boundary="shamaa-boundary-7"):
+    body = (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {ctype}\r\n\r\n").encode() \
+        + file_bytes + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
 def section(n, title):
     print(f"\n{'─'*62}\n  {n}) {title}\n{'─'*62}")
 
@@ -493,6 +521,89 @@ def run_suite() -> None:
         assert fn in js, f"app.js فقد دالة المشاركة: {fn}"
     PASS += 1
     print("  ✅ لوحة المشاركة موصولة في الواجهة (واتساب/فيسبوك/X/نسخ/QR)")
+
+    # ══════════════════════════════════════════════════════════════
+    section(17, "📷 صور الإعلانات — رفع آمن وعرض ومشاركة")
+    from server import png as _png
+
+    cu = call("POST", "/api/register",
+              {"name": "بائع الصور", "phone": "0793555555", "password": "123456"},
+              label="تسجيل بائع الصور")
+    assert cu, "فشل التسجيل"
+    pic_ad = call("POST", "/api/listings",
+                  {"title": "كنبة ثلاثية مريحة بلون رمادي", "price": 140,
+                   "description": "مستعملة سنة واحدة، نظيفة جداً.",
+                   "category": "أثاث منزلي", "city": "عمّان", "accepts_barter": False},
+                  label="نشر إعلان بلا صورة")
+    lid = pic_ad["listing"]["id"]
+
+    # صورة PNG حقيقية مبنية بمرمّز المنصة نفسه
+    cv = _png.Canvas(96, 72)
+    cv.dgradient((120, 90, 60), (60, 40, 25))
+    cv.circle(48, 36, 22, (200, 60, 40))
+    photo = cv.to_png()
+
+    body, ctype = multipart(photo)
+    up = post_raw(f"/api/listings/{lid}/image", body, ctype, label="رفع صورة PNG")
+    assert up and up["image"].startswith("/uploads/") and up["image"].endswith(".png")
+    PASS += 1
+    print(f"     ✅ مسار محفوظ باسم عشوائي: {up['image']}")
+
+    got = call("GET", f"/api/listings/{lid}", label="الصورة ضمن بيانات الإعلان")
+    assert got["listing"]["image"] == up["image"]
+    PASS += 1
+
+    code, fbody, fctype, _l = raw(up["image"], label="جلب الملف المرفوع")
+    assert fbody[:8] == b"\x89PNG\r\n\x1a\n" and "image/" in fctype
+    PASS += 1
+    print("     ✅ الملف يُخدم بنفس البصمة التي رُفع بها")
+
+    code, pbody, _c, _l = raw(f"/listing/{lid}", label="صفحة المشاركة بصورة البائع")
+    page = pbody.decode()
+    assert f'property="og:image" content="{BASE}{up["image"]}"' in page, \
+        "og:image يجب أن يشير لصورة البائع لا للبطاقة"
+    assert f'src="{BASE}{up["image"]}"' in page and 'class="photo"' in page, \
+        "صورة البائع يجب أن تتصدر الصفحة (src مطلق + class=photo)"
+    PASS += 1
+    print("     ✅ og:image والـ hero لصورة البائع الحقيقية")
+
+    # ── الحماية: نوع منتحل، حجم مبالغ، ملكية، مصادقة ──
+    body, ctype = multipart(b"GIF89a" + b"\x00" * 200, "x.gif", "image/gif")
+    post_raw(f"/api/listings/{lid}/image", body, ctype, expect=415,
+             label="امتداد منتحل / بصمة غير مدعومة (415)")
+    body, ctype = multipart(photo[:8] + b"\x00" * (2 * 1024 * 1024), "big.png")
+    post_raw(f"/api/listings/{lid}/image", body, ctype, expect=413,
+             label="صورة أكبر من 2 ميغابايت (413)")
+    body, ctype = multipart(photo)
+    post_raw("/api/listings/1/image", body, ctype, expect=403,
+             label="رفع لصورة إعلان الغير (403)")
+    req = urllib.request.Request(
+        BASE + f"/api/listings/{lid}/image", data=body, method="POST",
+        headers={"Content-Type": ctype})   # بلا كوكي الجلسة
+    try:
+        urllib.request.urlopen(req)
+        code = 200
+    except urllib.error.HTTPError as e:
+        code = e.code
+    ok = code == 401
+    PASS += ok; FAIL += (not ok)
+    print(f"  {'✅' if ok else '❌'} رفع بدون تسجيل (401) [{code}]")
+
+    # ── الاستبدال ثم الإزالة ──
+    cv2 = _png.Canvas(96, 72, (20, 120, 60))
+    body, ctype = multipart(cv2.to_png(), "second.png")
+    up2 = post_raw(f"/api/listings/{lid}/image", body, ctype, label="استبدال الصورة")
+    assert up2["image"] != up["image"], "الاستبدال يجب أن ينشئ ملفاً جديداً"
+    raw(up["image"], expect=404, label="الملف القديم حُذف عند الاستبدال")
+
+    call("DELETE", f"/api/listings/{lid}/image", label="إزالة الصورة")
+    got = call("GET", f"/api/listings/{lid}", label="الإعلان بلا صورة")
+    assert got["listing"]["image"] == ""
+    code, pbody, _c, _l = raw(f"/listing/{lid}", label="og:image تعود للبطاقة")
+    assert f'property="og:image" content="{BASE}/listing/{lid}/card.png"' \
+        in pbody.decode(), "بعد الإزالة يجب أن تعود بطاقة المنصة"
+    PASS += 1
+    print("     ✅ عند غياب الصورة تسدّ بطاقة المنصة الفراغ")
 
     # ══════════════════════════════════════════════════════════════
 

@@ -258,8 +258,11 @@ async function loadAndRenderResults() {
 function adCard(a) {
   const emoji = CAT_EMOJI[a.category] || "📦";
   const cls = CAT_CLASS[a.category] || "th-أخرى";
+  const thumb = a.image
+    ? `<div class="ad-thumb photo"><img src="${esc(a.image)}" alt="${esc(a.title)}" loading="lazy"></div>`
+    : `<div class="ad-thumb ${cls}">${emoji}</div>`;
   return `<article class="ad ${a.is_featured ? "featured" : ""}" data-id="${a.id}" style="cursor:pointer">
-    <div class="ad-thumb ${cls}">${emoji}</div>
+    ${thumb}
     <div class="ad-body">
       <h3 class="ad-title">${esc(a.title)}</h3>
       <div class="ad-price">${jd(a.price)} <small>${esc(S.boot.currency)}</small></div>
@@ -297,6 +300,7 @@ async function openDetail(id) {
     const cls = CAT_CLASS[a.category] || "th-أخرى";
     const mine = S.user && (S.user.id === a.user_id);
     modal(`
+      ${a.image ? `<div class="detail-hero"><img src="${esc(a.image)}" alt="${esc(a.title)}"></div>` : ""}
       <div class="detail-head">
         <div class="detail-thumb ${cls}">${emoji}</div>
         <div style="flex:1;min-width:0">
@@ -323,6 +327,8 @@ async function openDetail(id) {
       <div style="display:flex;gap:.55rem;flex-wrap:wrap;margin-top:.4rem">
         <a class="btn btn-green" style="flex:1" href="${esc(a.whatsapp_url)}" target="_blank" rel="noopener">💬 تواصل عبر واتساب</a>
         ${mine ? "" : `<button class="btn btn-outline" onclick="offerBarter(${a.id})">🔄 اعرض مقايضة</button>`}
+        ${mine ? `<button class="btn btn-outline" onclick="pickImage(${a.id})">📷 ${a.image ? "تغيير الصورة" : "إضافة صورة"}</button>` : ""}
+        ${mine && a.image ? `<button class="btn btn-outline" style="color:var(--red)" onclick="removeImage(${a.id})">🖼 إزالة</button>` : ""}
         ${mine ? `<button class="btn btn-star" onclick="closeModal();openBoost(${a.id})">⭐ ثبّت هذا الإعلان</button>
                  <button class="btn btn-outline" style="color:var(--red)" onclick="deleteListing(${a.id})">🗑 حذف</button>` : ""}
       </div>
@@ -386,6 +392,43 @@ async function toggleQr(id) {
         <code>${esc(s.short_url)}</code>
       </div>`;
     box.hidden = false;
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* ─────────────── 📷 صور الإعلانات ─────────────── */
+async function uploadListingImage(id, file, silent = false) {
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch(`/api/listings/${id}/image`, {
+      method: "POST", body: fd, credentials: "same-origin",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || "فشل رفع الصورة");
+    toast(data.message || "✅ رُفعت الصورة", "ok");
+    if (!silent) {
+      await loadAndRenderResults();
+      if (!$("#modalRoot").hidden) openDetail(id);
+    }
+    return data;
+  } catch (e) { toast(e.message, "err"); return null; }
+}
+
+function pickImage(id) {
+  // يُبنى المدخل ديناميكياً في كل مرة حتى يعمل اختيار نفس الملف مرتين
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "image/png,image/jpeg,image/webp";
+  inp.onchange = () => { if (inp.files[0]) uploadListingImage(id, inp.files[0]); };
+  inp.click();
+}
+
+async function removeImage(id) {
+  try {
+    const r = await api(`/api/listings/${id}/image`, { method: "DELETE" });
+    toast(r.message || "أُزيلت الصورة", "ok");
+    await loadAndRenderResults();
+    if (!$("#modalRoot").hidden) openDetail(id);
   } catch (e) { toast(e.message, "err"); }
 }
 
@@ -472,6 +515,9 @@ function openNewListing() {
     </div>
     <div class="field"><label>وصف تفصيلي</label>
       <textarea id="nlDesc" rows="4" placeholder="المواصفات، الحالة، سبب البيع، ما يشمله السعر، إمكانية التوصيل…"></textarea></div>
+    <div class="field"><label>📷 صورة السلعة (اختياري — لكن الإعلانات المصوّرة تُباع أسرع بكثير)</label>
+      <input id="nlImage" type="file" accept="image/png,image/jpeg,image/webp" class="file-input">
+      <div class="hint">PNG أو JPEG أو WebP حتى 2 ميغابايت. تظهر في البطاقة وفي بطاقة المشاركة. يمكنك إضافتها لاحقاً من صفحة الإعلان.</div></div>
 
     <label class="switch" id="nlFeatured">
       <span class="sw-box"></span>
@@ -512,6 +558,8 @@ function openNewListing() {
           city: $("#nlCity").value, accepts_barter: $("#nlBarter").checked, featured,
         },
       });
+      const imgFile = ($("#nlImage") && $("#nlImage").files[0]) || null;
+      if (imgFile) await uploadListingImage(r.listing.id, imgFile, true);
       closeModal();
       toast(r.message, "ok");
       if (r.charged_jd) toast(`💳 تم خصم ${r.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
