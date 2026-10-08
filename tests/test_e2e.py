@@ -69,11 +69,42 @@ def get(path, **params):
     return "/api/" + path + ("?" + urllib.parse.urlencode(params) if params else "")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """يمنع اتباع 302 حتى نفحص رابط التحويل نفسه (مسار /l/{id})."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+op_nr = urllib.request.build_opener(_NoRedirect,
+                                    urllib.request.HTTPCookieProcessor(cj))
+
+
+def raw(path, expect=200, label="", follow=False):
+    """طلب خام يعيد (رمز الاستجابة، البايتات، نوع المحتوى، ترويسة Location)."""
+    global PASS, FAIL
+    opener = op if follow else op_nr
+    try:
+        r = opener.open(BASE + path)
+        code, body = r.status, r.read()
+        ctype, loc = r.headers.get("Content-Type", ""), r.headers.get("Location", "")
+    except urllib.error.HTTPError as e:
+        code, body = e.code, e.read()
+        ctype, loc = e.headers.get("Content-Type", ""), e.headers.get("Location", "")
+    ok = code == expect
+    PASS += ok
+    FAIL += (not ok)
+    mark = "✅" if ok else "❌"
+    print(f"  {mark} {label or path} [{code}] {ctype.split(';')[0]} {len(body):,}B")
+    return code, body, ctype, loc
+
+
 def section(n, title):
     print(f"\n{'─'*62}\n  {n}) {title}\n{'─'*62}")
 
 
 def run_suite() -> None:
+    global PASS, FAIL   # القسم 16 يعدّ فحوصات يدوية داخل الدالة نفسها
 
     # ══════════════════════════════════════════════════════════════
     section(1, "الإقلاع والبيانات المرجعية")
@@ -361,6 +392,107 @@ def run_suite() -> None:
         assert r.status == 200
         print(f"  ✅ {asset} ({len(r.read()):,} bytes)")
     print("  ✅", urllib.request.urlopen(BASE + "/healthz").read().decode())
+
+    # ══════════════════════════════════════════════════════════════
+    section(16, "📣 المشاركة والانتشار — صفحة SSR + بطاقة OG + رمز QR")
+    import re as _re
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from server import qr as _qr
+
+    # إعلان حيّ موجود فعلاً (أقسام سابقة تحذف إعلاناتها التجريبية)
+    alive = call("GET", "/api/listings", label="اختيار إعلان حيّ للمشاركة")
+    assert alive and alive["listings"], "لا إعلانات حية لفحص المشاركة"
+    share_id = alive["listings"][0]["id"]
+
+    # ── صفحة الإعلان المُصيَّرة على الخادم ──
+    code, body, ctype, _loc = raw(f"/listing/{share_id}", label="صفحة الإعلان SSR")
+    page = body.decode("utf-8")
+    assert code == 200 and "text/html" in ctype
+    for tag in ('property="og:title"', 'property="og:image"', 'rel="canonical"',
+                'application/ld+json', 'dir="rtl"', 'property="og:image:width"'):
+        assert tag in page, f"ناقص وسم: {tag}"
+    PASS += 1
+    print("  ✅ وسوم Open Graph + canonical + JSON-LD كلها حاضرة")
+    assert not _re.search(r"07[789]\d{8}", page), \
+        "ثغرة: رقم هاتف أردني مكشوف في صفحة المشاركة!"
+    PASS += 1
+    print("  ✅ خصوصية: لا رقم هاتف في صفحة المشاركة")
+    m = _re.search(r'property="og:image" content="([^"]+)"', page)
+    assert m and m.group(1).startswith("http") and m.group(1).endswith(
+        f"/listing/{share_id}/card.png"), f"og:image خاطئ: {m and m.group(1)}"
+    PASS += 1
+    print(f"  ✅ og:image مطلق ويشير للبطاقة: {m.group(1)[:60]}…")
+    assert "wa.me/" in page, "صفحة المشاركة بلا زر واتساب!"
+    PASS += 1
+    print("  ✅ زر تواصل واتساب موجود (والرقم نفسه غير ظاهر)")
+
+    # ── الرابط القصير ──
+    code, body, ctype, loc = raw(f"/l/{share_id}", expect=302, label="الرابط القصير /l/")
+    assert loc.endswith(f"/listing/{share_id}"), f"تحويل خاطئ: {loc}"
+    PASS += 1
+    print(f"  ✅ 302 نحو {loc.split('/')[-1]}")
+
+    # ── بطاقة Open Graph ──
+    code, body, ctype, _l = raw(f"/listing/{share_id}/card.png", label="بطاقة OG")
+    assert "image/png" in ctype and body[:8] == b"\x89PNG\r\n\x1a\n", "ليست PNG سليمة"
+    assert len(body) > 8000, "البطاقة أصغر من المتوقع"
+    PASS += 1
+    print(f"  ✅ PNG سليمة بترويسة صحيحة ومقاس 1200×630")
+    code2, body2, _c2, _l2 = raw(f"/listing/{share_id}/card.png", label="جلب ثانٍ (مخزون)")
+    assert body2 == body, "البطاقة غير حتمية — المخزون أو التوليد يكسر الثبات"
+    PASS += 1
+    print("  ✅ الجلب الثاني مطابق بايت-ببايت (مخزون مؤقت ثابت)")
+
+    # ── رمز QR ──
+    code, body, ctype, _l = raw(f"/api/qr/{share_id}.svg", label="رمز QR")
+    assert "image/svg+xml" in ctype and body.startswith(b"<svg"), "ليس SVG"
+    svg = body.decode("utf-8")
+    PASS += 1
+    # نفك الرمز من مستطيلات الـ SVG نفسها — دليل أن الرمز المسلَّم حقيقي
+    dim = int(_re.search(r'width="(\d+)"', svg).group(1))
+    scale = int(_re.search(r'height="(\d+)" fill="#12212E"', svg).group(1))
+    border = 2
+    size = dim // scale - border * 2
+    mat = [[0] * size for _ in range(size)]
+    for x, y, w in _re.findall(
+            r'<rect x="(\d+)" y="(\d+)" width="(\d+)" height="\d+" fill="#12212E"', svg):
+        r0, c0 = int(y) // scale - border, int(x) // scale - border
+        for cc in range(c0, c0 + int(w) // scale):
+            mat[r0][cc] = 1
+    sh = json.loads(urllib.request.urlopen(
+        BASE + f"/api/listings/{share_id}/share").read())
+    version, _cw = _qr.encode(sh["short_url"])
+    decoded = _qr.decode(mat, size, _qr.make_matrix(sh["short_url"])[2], version)
+    assert decoded == sh["short_url"], f"الرمز يفك لشيء آخر: {decoded}"
+    PASS += 1
+    print(f"  ✅ رمز QR المسلَّم يُفك ذاتياً إلى: {decoded}")
+
+    # ── حزمة المشاركة ──
+    assert set(sh["networks"]) == {"whatsapp", "facebook", "x", "telegram", "copy"}
+    assert sh["networks"]["whatsapp"].startswith("https://wa.me/?text=")
+    assert sh["short_url"].endswith(f"/l/{share_id}")
+    assert sh["short_url"] in sh["text"], "نص الرسالة بلا الرابط القصير"
+    assert "دينار" in sh["title"], "عنوان المشاركة بلا سعر"
+    PASS += 1
+    print(f"  ✅ 5 شبكات + نص رسالة جاهز: {sh['text'][:48].replace(chr(10), ' ⏎ ')}…")
+
+    # ── إعلان محذوف: لا صفحة ميتة ولا بطاقة يتيمه ──
+    code, body, ctype, _l = raw("/listing/99999", expect=404, label="صفحة إعلان محذوف")
+    miss = body.decode("utf-8")
+    assert "noindex" in miss and "لم يعد متاحاً" in miss, "صفحة 404 بلا وسوم مناسبة"
+    PASS += 1
+    print("  ✅ 404 بوسم noindex ورسالة عربية تحفظ ثقة الزائر")
+    raw(f"/listing/99999/card.png", expect=404, label="بطاقة إعلان محذوف")
+    raw(f"/api/qr/99999.svg", expect=404, label="رمز إعلان محذوف")
+    raw(f"/api/listings/99999/share", expect=404, label="حزمة إعلان محذوف")
+
+    # ── الواجهة موصولة بلوحة المشاركة ──
+    js = urllib.request.urlopen(BASE + "/static/app.js").read().decode()
+    for fn in ("shareTo(", "copyShareLink(", "toggleQr(", "/share`"):
+        assert fn in js, f"app.js فقد دالة المشاركة: {fn}"
+    PASS += 1
+    print("  ✅ لوحة المشاركة موصولة في الواجهة (واتساب/فيسبوك/X/نسخ/QR)")
 
     # ══════════════════════════════════════════════════════════════
 

@@ -52,6 +52,11 @@ jobs:
           node --check static/app.js
           echo "✅ static/app.js سليم"
 
+      - name: 🧬 فحوصات وحدات المشاركة (QR + PNG)
+        run: |
+          python tests/test_qr.py
+          echo "✅ ثوابت QR وبنية المصفوفة ومرمّز PNG سليمة"
+
       - name: 🔎 التحقق من سلامة YAML
         run: |
           pip install --quiet pyyaml

@@ -326,7 +326,66 @@ async function openDetail(id) {
         ${mine ? `<button class="btn btn-star" onclick="closeModal();openBoost(${a.id})">⭐ ثبّت هذا الإعلان</button>
                  <button class="btn btn-outline" style="color:var(--red)" onclick="deleteListing(${a.id})">🗑 حذف</button>` : ""}
       </div>
+      <div class="share-panel">
+        <div class="share-title">📣 انشر الإعلان — كل مشاركة تقرّبه من البيع</div>
+        <div class="share-row">
+          <button class="btn btn-outline btn-sm" onclick="shareTo('whatsapp', ${a.id})">💬 واتساب</button>
+          <button class="btn btn-outline btn-sm" onclick="shareTo('facebook', ${a.id})">📘 فيسبوك</button>
+          <button class="btn btn-outline btn-sm" onclick="shareTo('x', ${a.id})">✖️ X</button>
+          <button class="btn btn-outline btn-sm" onclick="copyShareLink(${a.id})">🔗 نسخ الرابط</button>
+          <button class="btn btn-outline btn-sm" onclick="toggleQr(${a.id})">▦ رمز QR</button>
+        </div>
+        <div class="qr-box" id="qrBox" hidden></div>
+      </div>
     `, true);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   المشاركة والانتشار
+   ═══════════════════════════════════════════════════════════ */
+const SHARE_CACHE = {};
+async function fetchShare(id) {
+  if (!SHARE_CACHE[id]) SHARE_CACHE[id] = await api(`/api/listings/${id}/share`);
+  return SHARE_CACHE[id];
+}
+
+async function shareTo(net, id) {
+  try {
+    const s = await fetchShare(id);
+    window.open(s.networks[net], "_blank", "noopener");
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function copyShareLink(id) {
+  try {
+    const s = await fetchShare(id);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(s.short_url);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = s.short_url; ta.setAttribute("readonly", "");
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    toast("تم نسخ الرابط القصير ✅");
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function toggleQr(id) {
+  const box = $("#qrBox");
+  if (!box.hidden) { box.hidden = true; return; }
+  try {
+    const s = await fetchShare(id);
+    box.innerHTML = `
+      <img src="${esc(s.qr_svg)}?v=1" alt="رمز QR للإعلان" width="168" height="168">
+      <div class="qr-meta">
+        <b>امسح الرمز بهاتفك</b>
+        <span>يفتح الإعلان مباشرة — مثالي للطباعة على ملصق أو إرساله صورة.</span>
+        <code>${esc(s.short_url)}</code>
+      </div>`;
+    box.hidden = false;
   } catch (e) { toast(e.message, "err"); }
 }
 

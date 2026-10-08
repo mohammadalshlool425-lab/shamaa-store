@@ -27,11 +27,12 @@ from typing import Optional
 
 import bcrypt
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                           RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import catalog, seed
+from . import catalog, seed, share
 from .database import get_conn, init_db, now
 from .pricing import CATEGORY_BASE, CITY_FACTOR, estimate_price
 
@@ -738,6 +739,112 @@ def admin_stats(user=Depends(current_user)):
             "SELECT COUNT(*) AS c FROM pricing_uses").fetchone()["c"],
         "top_sellers": [dict(r) for r in top],
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# المشاركة والانتشار — صفحة إعلان مُصيَّرة على الخادم + بطاقة OG + QR
+# ─────────────────────────────────────────────────────────────
+def _listing_for_share(conn: sqlite3.Connection, listing_id: int,
+                       t: float) -> Optional[dict]:
+    """
+    يجلب إعلاناً جاهزاً للمشاركة، أو None إن كان محذوفاً/موقوفاً.
+
+    🔒 يستخدم `serialize_listing` بلا مُشاهِد: رقم الهاتف لا يخرج أبداً
+    من هذه البوابة — صفحة المشاركة والبطاقة ورمز QR كلها تمر من هنا.
+    """
+    row = conn.execute("SELECT * FROM listings WHERE id = ?", (listing_id,)).fetchone()
+    if row is None or not int(row["is_active"]):
+        return None
+    return serialize_listing(row, t)
+
+
+@app.get("/listing/{listing_id}", response_class=HTMLResponse)
+def listing_page(listing_id: int, request: Request):
+    """
+    صفحة إعلان كاملة تُصيَّر على الخادم.
+
+    الزواحف (فيسبوك/واتساب/X/جوجل) لا تنفّذ JavaScript، لذا هذه الصفحة تحمل
+    وسوم Open Graph وبطاقة الصورة والبيانات المنظَّمة مباشرة في الـ HTML —
+    وهذا ما يحوّل أي رابط مشترك إلى بطاقة غنية بالسعر والصورة.
+    """
+    # ملاحظة: اتصال get_conn() حيّ لكل thread ولا يُغلق يدوياً أبداً —
+    # إغلاقه هنا يكسر كل الطلبات التالية على نفس الـ thread.
+    conn = get_conn()
+    t = now()
+    clean_featured(conn, t)
+    d = _listing_for_share(conn, listing_id, t)
+    if d is None:
+        return HTMLResponse(share.render_missing_page(listing_id, request),
+                            status_code=404)
+    seller = conn.execute(
+        "SELECT name, is_verified FROM users WHERE id = ?",
+        (d.get("user_id"),),
+    ).fetchone()
+    return HTMLResponse(
+        share.render_listing_page(d, request, listing_id,
+                                  dict(seller) if seller else None)
+    )
+
+
+@app.get("/l/{listing_id}")
+def listing_short(listing_id: int):
+    """
+    الرابط القصير — ما يُرمَّز داخل رمز QR وما يُلصق في رسائل واتساب.
+
+    302 لا 301: إن حُذف الإعلان فالصفحة القانونية تعرض البديل المناسب،
+    ولا نريد للمتصفحات أن تخزّن تحويلاً دائماً نحو رابط ميت.
+    """
+    return RedirectResponse(url=f"/listing/{listing_id}", status_code=302)
+
+
+@app.get("/listing/{listing_id}/card.png")
+def listing_card(listing_id: int, request: Request):
+    """
+    بطاقة المشاركة 1200×630 (صورة Open Graph).
+
+    تُولَّد برمز PNG مكتوب داخلياً (`server/png.py`) بلا أي حزمة رسوميات،
+    ومخزَّنة مؤقتاً بمفتاح محتوى — فتعديل السعر يُبطل المخزون تلقائياً.
+    """
+    conn = get_conn()
+    d = _listing_for_share(conn, listing_id, now())
+    if d is None:
+        raise HTTPException(404, "الإعلان غير موجود")
+    png = share.build_card(d, share.short_url(request, listing_id))
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/api/qr/{listing_id}.svg")
+def listing_qr(listing_id: int, request: Request):
+    """رمز QR متجهي للإعلان — للطباعة على ملصق أو العرض داخل الصفحة."""
+    conn = get_conn()
+    d = _listing_for_share(conn, listing_id, now())
+    if d is None:
+        raise HTTPException(404, "الإعلان غير موجود")
+    svg = share.qr_svg(share.short_url(request, listing_id))
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/api/listings/{listing_id}/share")
+def listing_share_links(listing_id: int, request: Request):
+    """
+    حزمة المشاركة للواجهة: روابط واتساب/فيسبوك/X/تيليجرام + نص الرسالة.
+
+    تُبنى على الخادم لأن النطاق العام الصحيح (خلف وكيل المعاينة أو الإنتاج)
+    لا تعرفه الواجهة، ولأن نص الرسالة يجب أن يطابق ما تفحصه الاختبارات.
+    """
+    conn = get_conn()
+    d = _listing_for_share(conn, listing_id, now())
+    if d is None:
+        raise HTTPException(404, "الإعلان غير موجود")
+    return share.share_links(d, request, listing_id)
 
 
 # ─────────────────────────────────────────────────────────────
