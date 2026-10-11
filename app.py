@@ -101,3 +101,19 @@ elif choice == "🛡️ ضمان حقوق المستخدمين":
     * **توثيق المقايضة:** حماية حقوق الطرفين عند التبادل السلعي لضمان الأمان والثقة التامة.
     * **دعم ذكي مستمر:** إمكانية تقييم المستخدمين وبناء سمعة طيبة داخل المنصة بكل شفافية.
     """)
+# إنشاء مجلد المشروع والدخول إليه
+mkdir Shamaa-Backend
+cd Shamaa-Backend
+
+# تهيئة Git
+git init
+
+# إنشاء بيئة افتراضية وعزل المشروع
+python -m venv venv
+
+# تفعيل البيئة الافتراضية
+# لمستخدمي ويندوز: venv\Scripts\activate
+# لمستخدمي ماك/لينكس: source venv/bin/activate
+
+# تثبيت المكتبات الأساسية
+pip install fastapi uvicorn sqlalchemy psycopg2-binary pydantic
