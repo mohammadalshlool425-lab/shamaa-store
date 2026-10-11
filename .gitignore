@@ -1,11 +1,6 @@
-# بيئة التشغيل والبيانات المولّدة
-data/
-*.db
-*.db-wal
-*.db-shm
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-.env
-.DS_Store
+git add .
+git commit -m "Initial commit: Setup FastAPI and Database Schema"
+git branch -M main
+# هنا أضف رابط مستودعك على جيت هب
+# git remote add origin https://github.com/USERNAME/shamaa-backend.git
+# git push -u origin main
