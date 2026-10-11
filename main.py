@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from database import engine, get_db
 import models
@@ -9,6 +9,9 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Shama'a API", description="السوق المفتوح لطلاب جامعة اليرموك")
 
 @app.get("/")
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
 def root():
     return {"message": "مرحباً بك في الخادم الرئيسي لمنصة شمعة"}
 
