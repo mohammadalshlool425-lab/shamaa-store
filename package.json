@@ -1,0 +1,15 @@
+{
+  "name": "shamaa-marketplace-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser, RTL/LTR and accessibility checks; the web app needs no Node runtime",
+  "scripts": {
+    "check": "node --check static/app.js && node --check static/i18n.js && node --check static/api.js && node --check static/sw.js",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
+    "@sparticuz/chromium": "153.0.0"
+  }
+}

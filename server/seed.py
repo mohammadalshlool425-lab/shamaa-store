@@ -1,152 +1,78 @@
+"""Reference categories always; illustrative products ONLY on explicit opt-in.
+No seeded login credentials, reviews, sales counts or trusted-seller badges.
 """
-🌱 بيانات البداية (Seed)
-=========================
-تُملأ قاعدة البيانات بإعلانات أردنية واقعية في أول تشغيل فقط،
-حتى لا تبدو المنصة فارغة أمام أول مستخدم حقيقي.
+import secrets
+from .database import now
+from .security import hash_password
 
-حساب تجريبي جاهز للتجربة (معرّف في catalog.py):
-    الهاتف: 0790000000
-    كلمة المرور: demo1234
-"""
-import time
-from .catalog import DEMO_PASSWORD, DEMO_PHONE, FEATURE_DAYS
-from .database import tx
-
-DAY = 86400.0
-
-# (name, phone, city, is_verified)
-SEED_USERS = [
-    ("أحمد الشلول",   "0791111111", "إربد",   1),
-    ("محمد فراس",     "0782222222", "عمّان",   0),
-    ("خالد العتوم",   "0773333333", "الزرقاء", 1),
-    ("سارة الخطيب",   "0794444444", "عمّان",   0),
-    ("يوسف الرواشدة", "0785555555", "الكرك",   0),
-    ("ليث Momani",    "0776666666", "إربد",   0),
-    ("معرض النور",    "0797777777", "عمّان",   1),
-    ("أبو رشاد",      "0788888888", "المفرق",  0),
+CATEGORIES = [
+ ('electronics','الإلكترونيات','Electronics','headphones',None),
+ ('audio','الصوتيات','Audio','headphones','electronics'),
+ ('fashion','الأزياء والموضة','Fashion','shirt',None),
+ ('home','المنزل والمعيشة','Home & living','lamp',None),
+ ('beauty','العناية والجمال','Beauty & care','sparkles',None),
+ ('sports','الرياضة','Sports','dumbbell',None),
+ ('handmade','صُنع بحب','Handmade','leaf',None),
+ ('books','الكتب والقرطاسية','Books & stationery','book',None),
+ ('accessories','الإكسسوارات','Accessories','watch',None),
 ]
-
-# (title, description, price, category, city, barter, featured, user_index)
-SEED_LISTINGS = [
-    ("لابتوب Dell Latitude بحالة ممتازة",
-     "مواصفات: i5 الجيل الثامن، رام 8GB، SSD 256GB. البطارية تدوم 4 ساعات. "
-     "استخدام شخصي خفيف، مع الشاحن الأصلي والحقيبة. قابل للفحص في أي مركز صيانة.",
-     220, "إلكترونيات", "إربد", 1, 1, 0),
-
-    ("ايفون 13 - 128GB أسود",
-     "جهاز نظيف جداً، صحة البطارية 87%. خالٍ من الخدوش، مع كرتونه وشاحنه. "
-     "السعر قابل للتفاوض البسيط للجادين فقط. لا أقبل التقسيط.",
-     385, "إلكترونيات", "عمّان", 0, 1, 3),
-
-    ("بلايستيشن 4 سليم مع يدين و3 العاب",
-     "الجهاز يعمل بكفاءة تامة بدون أي مشاكل. يشمل يدين شحن أصليين و3 ألعاب "
-     "(فيفا، قراند، باتلفيلد). البيع سببه السفر.",
-     165, "إلكترونيات", "الزرقاء", 0, 0, 2),
-
-    ("دراجة هوائية رياضية مقاس 27.5",
-     "دراجة ألمانية الصنع، 21 سرعة، فرامل ديسك أمامي وخلفي. استخدام شهرين فقط. "
-     "ممتازة للتمرين اليومي. أقبل المقايضة بجهاز رياضي منزلي.",
-     95, "رياضة وترفيه", "عمّان", 1, 0, 1),
-
-    ("طقم صالون خشب زان 7 قطع",
-     "طقم زان أصلي منجد بقماش مخمل نظيف، إسفنج عالي الكثافة. "
-     "لم يُستخدم إلا في صالون الضيوف فقط. التوصيل على حساب المشتري داخل الزرقاء.",
-     340, "أثاث منزلي", "الزرقاء", 0, 1, 2),
-
-    ("ثلاجة LG بابين 18 قدم",
-     "ثلاجة نظيفة تعمل بشكل ممتاز، تبريد قوي، بدون أي صوت. "
-     "السبب في البيع: تجديد أثاث المطبخ. قابلة للفحص قبل الشراء.",
-     210, "أجهزة كهربائية", "عمّان", 0, 0, 6),
-
-    ("غسالة أوتوماتيك Samsung 8 كيلو",
-     "غسالة بحالة جيدة جداً، جميع البرامج تعمل، لا يوجد تسريب. "
-     "تشمل التوصيل المجاني داخل عمّان. أقبل المقايضة بنشافة مع فرق السعر.",
-     175, "أجهزة كهربائية", "عمّان", 1, 0, 3),
-
-    ("كيا ريو 2016 - أوتوماتيك",
-     "سيارة بحالة ممتازة، ماشية 148 ألف كلم، فحص حديث ساري، رخصة سنة. "
-     "مالك أول في الأردن، صيانة دورية كاملة في الوكالة. الجدية فقط.",
-     8900, "سيارات", "عمّان", 0, 1, 4),
-
-    ("هونداي افانتي 2011 - جير عادي",
-     "سيارة اقتصادية جداً في المصروف، محرك وبحرية ممتازة. "
-     "تحتاج بعض الشغل التجميلي في الداخل. مناسبة كسيارة أولى أو للعمل.",
-     4300, "سيارات", "إربد", 0, 0, 5),
-
-    ("جهاز مشاية كهربائي منزلي",
-     "مشاية بحالة جيدة، سرعة تصل 12 كم/ساعة، تتحمل وزن 110 كغم. "
-     "تُطوى لتوفير المساحة. البيع لعدم الاستخدام. التوصيل متاح بترتيب مسبق.",
-     240, "رياضة وترفيه", "عمّان", 0, 0, 1),
-
-    ("عربة أطفال مع كرسي سيارة",
-     "طقم كامل بحالة ممتازة، استخدام طفل واحد فقط. العربة تُطوى بسهولة "
-     "وكرسي السيارة معتمد أوروبياً. مع جميع الملحقات الأصلية.",
-     110, "أطفال وألعاب", "عمّان", 1, 0, 3),
-
-    ("بدلة رجالية رسمية - مقاس L",
-     "بدلة أنيقة لبست مرتين فقط في مناسبات. القماش صوف إيطالي، "
-     "مع القميص وربطة العنق. البيع لأن المقاس لم يعد مناسباً.",
-     45, "ملابس وأزياء", "إربد", 0, 0, 0),
-
-    ("مكتب خشب للطلاب مع كرسي",
-     "مكتب متين بمساحة عمل واسعة وأدراج تخزين. مثالي لطلاب الجامعة "
-     "أو العمل من المنزل. مع كرسي مريح قابل للتعديل.",
-     65, "أثاث منزلي", "عمّان", 0, 0, 6),
-
-    ("ساعة ذكية Samsung Galaxy Watch",
-     "ساعة بحالة جديدة، مع سوارين (رياضي وجلد) والشاحن اللاسلكي. "
-     "تدعم المكالمات ومراقبة نبض القلب والأكسجين.",
-     120, "إلكترونيات", "الكرك", 0, 0, 4),
-
-    ("خيمة تخيم عائلية 6 أشخاص",
-     "خيمة مقاومة للماء مع أعمدة فايبر جلاس وحقيبة حمل. "
-     "استُخدمت 3 مرات فقط. مثالية لرحلات الربيع في عجلون والطفيلة.",
-     85, "رياضة وترفيه", "عجلون", 1, 0, 7),
+STORES = [
+ ('bayt','بيت للأشياء الجميلة','Bayt Living','تفاصيل بسيطة، تصنع بيتًا أجمل.','Little details for a lovely home.','amman','green'),
+ ('daily','ديلي ستايل','Daily Style','اختيارات ترافق تفاصيل يومك.','Thoughtful essentials for every day.','irbid','sand'),
+ ('nawa','نواة','Nawa Studio','أشياء صُنعت بعناية، لتدوم معك.','Considered objects, made to stay.','amman','blue'),
+]
+# All specs are illustrative and never represent actual goods or guarantees.
+PRODUCTS = [
+ ('سماعات لاسلكية بلون عاجي','Ivory wireless headphones','audio',45000,59000,12,'headphones',1,
+  'منتج توضيحي: سماعات بتصميم فوق الأذن ولون عاجي. المواصفات والصور للتجربة وليست عرض بيع حقيقي.',
+  'Illustrative product: ivory over-ear headphones. Images and specifications are for preview, not a real sales offer.'),
+ ('حذاء رياضي بتصميم يومي','Everyday neutral sneakers','fashion',38500,48000,8,'shoes',1,
+  'منتج توضيحي: حذاء بلون كريمي وتفاصيل بيج، مقاس 40. بيانات للمعاينة فقط.',
+  'Illustrative product: cream and beige everyday sneakers, size 40. Preview data only.'),
+ ('حقيبة يد بلون الكراميل','Caramel everyday handbag','fashion',32000,None,6,'bag',1,
+  'منتج توضيحي: حقيبة يد بنية بتصميم بسيط وحزام طويل. بيانات وصورة مولّدة للمعاينة فقط.',
+  'Illustrative product: a brown handbag with simple handles and a long strap. Preview image and data only.'),
+ ('مصباح طاولة بلون الميرمية','Sage mushroom table lamp','home',24500,29000,10,'lamp',0,
+  'منتج توضيحي: مصباح طاولة صغير بلون أخضر هادئ. صورة وبيانات توضيحية، وليس منتجًا متاحًا للشحن الفعلي.',
+  'Illustrative product: a small sage green table lamp. This is preview data, not available for real shipment.'),
+ ('كوب سفر حراري أخضر','Forest green travel cup','home',14000,18000,15,'coffee',0,
+  'منتج توضيحي: كوب سفر بغطاء مغلق بلون أخضر داكن. لا نقدّم ضمانًا للسعة أو مدة حفظ الحرارة.',
+  'Illustrative product: a dark green travel cup with a closed lid. No capacity or thermal performance is claimed.'),
+ ('ساعة كلاسيكية بحزام بني','Classic brown-strap watch','accessories',49000,None,5,'watch',2,
+  'منتج توضيحي: ساعة بعقارب وقرص كريمي وحزام بني. لا توجد ادعاءات بالأصالة أو مقاومة الماء.',
+  'Illustrative product: an analog watch with a cream dial and brown strap. No authenticity or water-resistance claims.'),
+ ('كوب خزفي بتفاصيل طبيعية','Handcrafted ceramic cup','handmade',12000,None,7,'ceramics',2,
+  'منتج توضيحي: كوب خزفي بلون رملي وتفاصيل نقطية. الصورة والمواصفات للعرض التجريبي فقط.',
+  'Illustrative product: a sand-toned speckled ceramic cup. Image and details are for preview only.'),
+ ('مجموعة عبوات للعناية اليومية','Daily care bottle set','beauty',22000,27000,9,'skincare',2,
+  'منتج توضيحي: عبوات زجاجية للعناية. لا تتضمن هذه البيانات مكونات أو فوائد صحية أو محتوى تجميليًا معتمدًا.',
+  'Illustrative care bottles. No ingredients, health benefits or certified cosmetic contents are represented.'),
 ]
 
 
-def seed_if_empty(password_hasher) -> None:
-    """يملأ القاعدة مرة واحدة فقط عند أول تشغيل."""
-    conn_users_count = None
-    with tx() as conn:
-        row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
-        conn_users_count = row["c"]
-        if conn_users_count > 0:
+def initialize_catalog(db, settings):
+    with db.transaction() as c:
+        for row in CATEGORIES:
+            c.execute('INSERT OR IGNORE INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?)',row)
+    if not settings.demo:
+        return
+    with db.read() as c:
+        if c.execute('SELECT COUNT(*) FROM products').fetchone()[0]:
             return
-
-        t = time.time()
-        user_ids = []
-        for (name, phone, city, verified) in SEED_USERS:
-            cur = conn.execute(
-                """INSERT INTO users
-                   (name, phone, city, password_hash, is_verified, pricing_credits, created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (name, phone, city, password_hasher(DEMO_PASSWORD),
-                 verified, 10, t - 30 * DAY),
-            )
-            user_ids.append(cur.lastrowid)
-
-        # حساب تجريبي إضافي مرتبط بالهاتف DEMO_PHONE
-        demo_id = conn.execute(
-            """INSERT INTO users
-               (name, phone, city, password_hash, is_verified, pricing_credits,
-                is_admin, created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            ("حساب تجريبي", DEMO_PHONE, "عمّان", password_hasher(DEMO_PASSWORD),
-             1, 25, 1, t - 40 * DAY),
-        ).lastrowid
-        user_ids.append(demo_id)
-
-        for i, (title, desc, price, cat, city, barter, featured, ui) in enumerate(SEED_LISTINGS):
-            created = t - (i * 0.4 + 0.2) * DAY
-            conn.execute(
-                """INSERT INTO listings
-                   (user_id, title, description, price, category, city, accepts_barter,
-                    is_featured, featured_until, views, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    user_ids[ui], title, desc, price, cat, city, barter,
-                    featured, (created + FEATURE_DAYS * DAY) if featured else None,
-                    int(30 + (i * 37) % 420), created,
-                ),
-            )
+    unusable = hash_password(secrets.token_urlsafe(64))
+    with db.transaction() as c:
+        if c.execute('SELECT COUNT(*) FROM products').fetchone()[0]:
+            return
+        store_ids = []
+        for index,(slug,ar,en,desc_ar,desc_en,city,accent) in enumerate(STORES):
+            uid = c.execute('INSERT INTO users(name,email,password_hash,role,created_at) VALUES(?,?,?,?,?)',
+                            (en,f'preview-{index}@example.invalid',unusable,'seller',now())).lastrowid
+            sid = c.execute('''INSERT INTO stores(owner_id,slug,name_ar,name_en,description_ar,description_en,city,accent,
+              shipping_fils,status,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,'active',1,?)''',
+              (uid,slug,ar,en,desc_ar,desc_en,city,accent,2500+index*500,now())).lastrowid
+            store_ids.append(sid)
+        for i,(ar,en,cat,price,original,stock,image,store,desc_ar,desc_en) in enumerate(PRODUCTS):
+            c.execute('''INSERT INTO products(store_id,category_id,title_ar,title_en,description_ar,description_en,price_fils,
+              compare_at_fils,stock,sku,demo_image,status,featured,created_at,updated_at)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',1,?,?)''',
+              (store_ids[store],cat,ar,en,desc_ar,desc_en,price,original,stock,f'PREVIEW-{i+1}',image,now()-i*3600,now()))

@@ -1,6 +1,21 @@
-git add .
-git commit -m "Initial commit: Setup FastAPI and Database Schema"
-git branch -M main
-# هنا أضف رابط مستودعك على جيت هب
-# git remote add origin https://github.com/USERNAME/shamaa-backend.git
-# git push -u origin main
+# Local configuration, secrets, databases and private uploads
+.env
+.env.*
+!.env.example
+data/
+backups/
+*.db
+*.sqlite3
+*.db-wal
+*.db-shm
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+test-results/
+playwright-report/
+*.log
+.DS_Store

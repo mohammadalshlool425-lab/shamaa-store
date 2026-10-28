@@ -1,1165 +1,464 @@
-/* ═══════════════════════════════════════════════════════════
-   منصة الشامل الذكية — واجهة المستخدم
-   SPA عربية (RTL) بدون أي اعتماديات خارجية
-   ═══════════════════════════════════════════════════════════ */
+import {icon} from './icons.js';
+import {lang,tr,field,setLanguage,money,number,date,currency,status,fils} from './i18n.js';
+import {api,setCsrf} from './api.js';
 
-const S = {
-  boot: null,
-  user: null,
-  listings: [],
-  totals: {},
-  catCounts: {},
-  filters: { q: "", category: "الكل", city: "كل الأردن", barter: false, sort: "recent" },
-  lastPricing: null,
-  view: "home",
-  stats: null,
-};
+const $=(s,root=document)=>root.querySelector(s);
+const $$=(s,root=document)=>[...root.querySelectorAll(s)];
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function readLocal(key,fallback) { try { return JSON.parse(localStorage.getItem(key))??fallback; } catch { return fallback; } }
+function saveLocal(key,value) { try { localStorage.setItem(key,JSON.stringify(value)); } catch { /* private browsing may disable storage */ } }
+const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,editing:null,store:null,afterAuth:null,checkout:null,install:null};
+if(!Array.isArray(S.favorites)) S.favorites=[];
+if(!S.guest||typeof S.guest!=='object'||Array.isArray(S.guest)) S.guest={};
+const main=$('#main');
+const dialog=$('#dialog');
+let previousFocus=null;
+const price=(n,cls='')=>`<span class="price ${cls}">${money(n)}<small>${currency()}</small></span>`;
+const cityName=id=>field(S.boot?.cities.find(c=>c.id===id),'name')||id;
+const pill=s=>`<span class="pill ${esc(s)}">${esc(status(s))}</span>`;
+const cityOptions=selected=>(S.boot?.cities||[]).map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>${esc(field(c,'name'))}</option>`).join('');
+const categoryOptions=(selected='',all=true)=>(all?`<option value="">${tr('كل الفئات','All categories')}</option>`:'')+(S.boot?.categories||[]).map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>${c.parent_id?'— ':''}${esc(field(c,'name'))}</option>`).join('');
+const brand=()=>`<a class="brand" href="/" data-link><img src="/static/logo.svg" width="45" height="49" alt=""><span class="brand-name"><strong>شمعة</strong><span lang="en">SHAM’A</span></span></a>`;
+const link=(href,text,cls='')=>`<a href="${esc(href)}" class="${cls}" data-link>${text}</a>`;
 
-const CAT_EMOJI = {
-  "إلكترونيات": "📱", "أجهزة كهربائية": "🔌", "أثاث منزلي": "🛋️", "سيارات": "🚗",
-  "رياضة وترفيه": "🚴", "ملابس وأزياء": "👔", "أطفال وألعاب": "🧸", "عقارات": "🏠",
-  "أخرى": "📦",
-};
-const CAT_CLASS = {
-  "إلكترونيات": "th-إلكترونيات", "أجهزة كهربائية": "th-أجهزة", "أثاث منزلي": "th-أثاث",
-  "سيارات": "th-سيارات", "رياضة وترفيه": "th-رياضة", "ملابس وأزياء": "th-ملابس",
-  "أطفال وألعاب": "th-أطفال", "عقارات": "th-عقارات", "أخرى": "th-أخرى",
-};
+function toast(message,error=false) {
+ const el=document.createElement('div');el.className=`toast${error?' error':''}`;
+ el.innerHTML=icon(error?'info':'check')+`<span>${esc(message)}</span>`;
+ $('#toasts').append(el);setTimeout(()=>el.remove(),5500);
+}
+function modal(title,body,wide=false) {
+ previousFocus=document.activeElement;
+ if(dialog.open) dialog.close();
+ dialog.className=wide?'wide':'';
+ $('#dialog-content').innerHTML=`<div class="dialog-header"><h2 id="dialog-title">${esc(title)}</h2><button type="button" class="icon-btn" data-action="close-dialog" aria-label="${tr('إغلاق','Close')}">${icon('close')}</button></div><div class="dialog-body">${body}</div>`;
+ dialog.showModal();
+ document.body.classList.add('dialog-open');
+}
+function closeModal(){dialog.close();}
+dialog.addEventListener('click',e=>{if(e.target===dialog) closeModal();});
+dialog.addEventListener('close',()=>{document.body.classList.remove('dialog-open');if(previousFocus?.isConnected) previousFocus.focus();});
+function formError(form,error) {
+ const box=$('.form-error',form);
+ if(box){box.textContent=error.message;box.tabIndex=-1;box.focus();}
+ (error.fields||[]).forEach(name=>{
+  const input=form.elements.namedItem(name);
+  if(input?.setAttribute){input.setAttribute('aria-invalid','true');if(box?.id)input.setAttribute('aria-describedby',box.id);}
+ });
+ if(error.code==='reauth') openReauth();
+}
+const errorBox=(id='form-error')=>`<div class="form-error" role="alert" id="${id}"></div>`;
+function empty(title,description,action='',ico='package') {return `<div class="empty-state"><div class="empty-icon">${icon(ico)}</div><h2>${esc(title)}</h2><p>${esc(description)}</p>${action}</div>`;}
+function loading(){main.innerHTML=`<div class="container loading-section"><div class="skeleton skeleton-head"></div><div class="products-grid">${'<div class="skeleton"></div>'.repeat(4)}</div></div>`;}
+function errorView(error){main.innerHTML=`<div class="container"><div class="error-view">${empty(tr('لم تكتمل هذه الخطوة','Something interrupted this step'),error.message,`<button class="btn btn-primary" data-action="retry">${tr('إعادة المحاولة','Try again')}</button>`,'wifi')}</div></div>`;}
+function title(text){document.title=`${text} | شمعة SHAM’A`;}
+function breadcrumb(parts){return `<nav class="breadcrumb" aria-label="${tr('مسار التصفح','Breadcrumb')}">${link('/',tr('الرئيسية','Home'))}${parts.map(p=>icon('chevronLeft','directional')+(p.href?link(p.href,esc(p.text)):`<span aria-current="page">${esc(p.text)}</span>`)).join('')}</nav>`;}
+function moneyInput(name,label,value='',extra=''){return `<div class="form-field"><label for="${name}">${label} (${currency()})</label><input id="${name}" name="${name}" type="number" min="0" step="0.001" max="1000000" value="${esc(value)}" ${extra}></div>`;}
+function input(name,label,{type='text',value='',required=true,max=140,min='',hint='',autocomplete='',direction=''}={}) {
+ return `<div class="form-field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${esc(value)}" ${required?'required':''} maxlength="${max}" ${min?`minlength="${min}"`:''} ${autocomplete?`autocomplete="${autocomplete}"`:''} ${direction?`dir="${direction}"`:''} ${hint?`aria-describedby="${name}-hint"`:''}>${hint?`<small id="${name}-hint">${hint}</small>`:''}</div>`;
+}
+function textarea(name,label,value='',required=true,max=5000){return `<div class="form-field"><label for="${name}">${label}</label><textarea id="${name}" name="${name}" ${required?'required minlength="10"':''} maxlength="${max}">${esc(value)}</textarea></div>`;}
+function authGate(destination='/account') {S.afterAuth=destination;return `<div class="container page-space"><div class="panel auth-gate">${icon('user')}<h1>${tr('خطوتك التالية تبدأ من هنا','Your next chapter starts here')}</h1><p>${tr('سجّل الدخول لتتابع طلباتك ومتجرك وسلتك، بأمان في حساب واحد.','Sign in to keep your orders, store and shopping bag together in one account.')}</p><button class="btn btn-primary" data-action="login">${tr('تسجيل الدخول','Sign in')}</button> <button class="btn btn-light" data-action="register">${tr('إنشاء حساب','Create account')}</button></div></div>`;}
+function verificationNotice(){return `<div class="notice warn">${icon('mail')}<div><strong>${tr('خطوة صغيرة لحماية حسابك','One small step to secure your account')}</strong><p>${tr('أكّد بريدك قبل الشراء أو فتح متجر.','Verify your email before placing orders or opening a store.')} ${S.boot.email_mode==='file'?tr('في بيئة التطوير، الرسالة محفوظة محليًا في data/mail ولا تُرسل للبريد.','In development, the email is saved privately in data/mail; it is not sent.') : tr('افتح رابط التحقق المرسل إلى بريدك.','Open the verification link sent to your email.')}</p><button class="text-link" data-action="resend">${tr('إعادة إرسال رابط التحقق','Resend verification link')}</button></div></div>`;}
 
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const esc = (t) => String(t ?? "").replace(/[&<>"']/g, c =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const jd = (n) => `${Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+function renderHeader(){
+ const path=location.pathname;const q=new URLSearchParams(location.search).get('q')||'';
+ $('#site-header').innerHTML=`<div class="top-strip"><div class="container"><div class="top-note">${icon('leaf')}<span>${tr('اختيارات من هنا، لتفاصيل يومك الجميلة.','Local finds. A little more joy in your every day.')}</span></div><div class="strip-links">${link('/help',tr('كيف تعمل شمعة؟','How SHAM’A works'))}<button data-action="language" aria-label="${tr('Switch to English','التغيير إلى العربية')}">${icon('globe')} ${tr('English','العربية')}</button></div></div></div>
+ <header class="header-main"><div class="container header-inner">${brand()}<form class="search-box" id="header-search" role="search"><label class="sr-only" for="site-search">${tr('ابحث عن منتج','Search products')}</label><input id="site-search" name="q" type="search" placeholder="${tr('عن شو بتدور اليوم؟','What are you looking for today?')}" value="${esc(q)}" maxlength="150" autocomplete="off"><label for="search-category" class="sr-only">${tr('الفئة','Category')}</label><select id="search-category" name="category"><option value="">${tr('كل الفئات','All categories')}</option>${S.boot.categories.filter(c=>!c.parent_id).map(c=>`<option value="${c.id}">${esc(field(c,'name'))}</option>`).join('')}</select><button type="submit" aria-label="${tr('بحث','Search')}">${icon('search')}</button></form>
+ <div class="header-actions"><button class="account-link" data-action="${S.user?'account':'login'}">${icon('user')}<span><small>${S.user?tr('أهلًا،','Hello,')+' '+esc(S.user.name.split(' ')[0]):tr('أهلًا في شمعة','Welcome to SHAM’A')}</small><strong>${S.user?tr('حسابي','My account'):tr('دخول / تسجيل','Sign in / Register')}</strong></span><b class="sr-only">${S.user?tr('حسابي','My account'):tr('تسجيل الدخول','Sign in')}</b></button><span class="header-divider"></span>${link('/favorites',icon('heart'),`header-icon favorite-header`)}${link('/cart',icon('bag')+`<span class="sr-only">${tr('سلة التسوق','Shopping bag')}</span><span class="count-bubble" id="cart-count">${number(S.cart.quantity||0)}</span>`,'header-icon cart-header')}</div></div></header>
+ <nav class="nav-bar" aria-label="${tr('التنقل الرئيسي','Main navigation')}"><div class="container nav-inner"><div class="nav-links">${link('/',tr('الرئيسية','Home'),path==='/'?'active':'')}${link('/search',icon('grid','small')+tr('كل المنتجات','All products'),path==='/search'&&!location.search.includes('offers')?'active':'')}${link('/stores',tr('المتاجر','Stores'),path==='/stores'?'active':'')}${link('/search?offers=1',icon('tag','small')+tr('العروض','Offers'),'sale-link')}${link('/search?sort=recent',tr('وصل حديثًا','New arrivals'))}</div><div class="nav-end"><button class="location-control" data-action="city">${icon('pin','small')}<span class="location-text">${tr('نتسوّق في الأردن','Shopping in Jordan')}</span>${icon('chevron','small')}</button>${link('/seller',icon('store','small')+tr('ابدأ البيع معنا','Sell with us'),'sell-link')}<button class="mobile-only" data-action="language" aria-label="${tr('Switch to English','التغيير إلى العربية')}">${icon('globe')}</button></div></div></nav>
+ ${S.boot.development?`<div class="development-notice">${icon('info')} ${S.boot.demo?tr('بيئة معاينة · المنتجات والصور توضيحية، والطلبات محلية للتجربة فقط. لا شحن أو تحصيل فعلي.','Preview environment · Illustrative products and images. Orders are local test records; no real shipping or collection.'):tr('بيئة تطوير محلية · ليست متجرًا منشورًا للإنتاج.','Local development environment · Not a production deployment.')}</div>`:''}`;
+ $('.favorite-header')?.setAttribute('aria-label',tr('المفضلة','Saved items'));
 
-/* ─────────────── API ─────────────── */
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  let data = {};
-  try { data = await res.json(); } catch (_) { /* استجابة فارغة */ }
-  if (!res.ok) {
-    const err = new Error(typeof data === "string" ? data : (data.message || "حدث خطأ غير متوقع"));
-    err.status = res.status;
-    err.payload = data;
-    throw err;
-  }
-  return data;
+}
+function renderFooter(){
+ $('#site-footer').innerHTML=`<footer class="footer"><div class="container footer-inner"><div class="footer-brand">${brand()}<p>${tr('مساحة تجمع الأشياء التي تحبّها والمتاجر التي تصنع فرقًا. من الأردن، بكل حُب.','A home for thoughtful finds and the local stores behind them. From Jordan, with love.')}</p></div><div class="footer-column"><h4>${tr('اكتشف شمعة','Explore SHAM’A')}</h4>${link('/search',tr('تسوّق كل المنتجات','Shop all products'))}${link('/stores',tr('اكتشف المتاجر','Discover stores'))}${link('/search?offers=1',tr('العروض الحالية','Current offers'))}${link('/favorites',tr('اختياراتك المحفوظة','Your saved finds'))}</div><div class="footer-column"><h4>${tr('نحن هنا لمساعدتك','Here to help')}</h4>${link('/help',tr('مركز المساعدة','Help centre'))}${link('/help#delivery',tr('الطلبات والتوصيل','Orders & delivery'))}${link('/help#returns',tr('الإلغاء والإرجاع','Cancellation & returns'))}${link('/help#privacy',tr('الخصوصية والشروط','Privacy & terms'))}</div><div class="footer-column"><h4>${tr('لكل متجر، فرصة','A place for your store')}</h4>${link('/seller',tr('افتح متجرك على شمعة','Open your SHAM’A store'))}${link('/seller?tab=products',tr('لوحة البائع','Seller dashboard'))}${link('/help#sellers',tr('دليل البداية','Getting started'))}<button data-action="install">${tr('شمعة على جوالك','SHAM’A on your phone')}</button><button data-action="language">${tr('English version','النسخة العربية')}</button></div></div><div class="container footer-bottom"><span>© ${new Date().getFullYear()} ${tr('شمعة. كل حكاية تبدأ بشرارة.','SHAM’A. Every story starts with a spark.')}</span><div class="footer-local"><span class="jordan-mark" aria-hidden="true"></span><span>${tr('صُنع بحب في الأردن','Made with love in Jordan')}</span><span>·</span><span>${tr('الأسعار بالدينار الأردني','Prices in Jordanian dinars')}</span></div></div></footer>`;
+}
+function renderProduct(p){
+ S.products.set(p.id,p);const saved=S.favorites.includes(p.id);const discount=p.compare_at_fils?Math.floor((1-p.price_fils/p.compare_at_fils)*100):0;
+ return `<article class="product-card"><div class="product-picture">${link('/product/'+p.id,`<img src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="640" height="640" loading="lazy" decoding="async">`)}<button class="save-product${saved?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${saved}" aria-label="${tr('حفظ','Save')} ${esc(field(p,'title'))}">${icon('heart')}</button>${discount?`<span class="discount">${tr('خصم','Save')} ${number(discount)}٪</span>`:''}${p.is_demo?`<span class="demo-tag">${tr('للمعاينة','Preview')}</span>`:''}</div><div class="product-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name')),'product-store')}${link('/product/'+p.id,esc(field(p,'title')),'product-name')}<div class="product-bottom"><div class="product-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)}</span>`:''}</div><button class="add-product" data-action="add-cart" data-id="${p.id}" aria-label="${tr('أضف للسلة:','Add to bag:')} ${esc(field(p,'title'))}" ${p.stock<=0?'disabled':''}>${icon(p.stock?'bag':'close')}</button></div></div></article>`;
+}
+function renderStore(s){return link('/store/'+s.slug,`<div class="store-avatar ${esc(s.accent)}">${esc(field(s,'name').slice(0,1))}</div><div><h3>${esc(field(s,'name'))}</h3><p>${esc(cityName(s.city))} · ${s.is_demo?tr('متجر توضيحي','Illustrative store'):tr('متجر محلي','Local store')}</p><span class="store-meta">${icon('package','small')}${number(s.product_count||0)} ${tr('منتجات','products')}</span></div>${icon('arrow','directional')}`,'store-card');}
+function grid(products){return products.length?`<div class="products-grid">${products.map(renderProduct).join('')}</div>`:empty(tr('بدايات جميلة في الطريق','Good finds are on their way'),tr('لا توجد منتجات مطابقة حاليًا. جرّب فئة أخرى أو افتح متجرك لتكون من أوائل البائعين.','No matching products yet. Try another category or open your store to become one of our first sellers.'),link('/search',tr('تصفّح المنتجات','Browse products'),'btn btn-outline'));}
+const promoArt=()=>`<svg class="promo-art" viewBox="0 0 130 130" fill="none" aria-hidden="true"><path d="m33 43 65-6 9 76-65 6-9-76Z" fill="#c99e77"/><path d="m33 43 14 9 60-6-9-9-65 6Z" fill="#e6c6a6"/><path d="m33 43 14 9 10 67-15-3-9-73Z" fill="#b4835d"/><path d="M51 48c-2-35 37-35 37-3" stroke="#976542" stroke-width="4"/><path d="M68 74c2 8 14 11 13 20a9 9 0 0 1-18 0c0-5 5-10 5-20Z" fill="#f4debc"/><path d="m15 37 1-13m-7 6 13 1m85-16 2-9m-6 5 10-1" stroke="#ba946a" stroke-width="2"/></svg>`;
+
+async function homeView(route){
+ title(tr('اختيارات تشبهك','Find your everyday favourites'));
+ const selected=new URLSearchParams(location.search).get('collection')||'featured';
+ const [data,stores]=await Promise.all([api('/api/products?limit=8&sort='+(['recent','bestselling'].includes(selected)?selected:'featured')+(selected==='offers'?'&offers=1':'')),api('/api/stores')]);
+ if(route!==S.route)return;
+ main.innerHTML=`<div class="container home-top"><section class="hero-grid" aria-label="${tr('اكتشف شمعة','Discover SHAM’A')}"><div class="hero-main"><div class="hero-copy"><div class="eyebrow">${icon('sun','small')}${tr('أشياء صغيرة، سعادة كبيرة','LITTLE FINDS, EVERYDAY JOY')}</div><h1>${esc(S.boot.content['home_title_'+lang])}</h1><p>${tr('اكتشف اختيارات تشبهك من متاجر محلية.<br>لك، لبيتك، ولكل تفاصيل يومك.','Discover thoughtful finds from local stores.<br>For you, your home, and everything in between.')}</p>${link('/search',tr('اكتشف المنتجات','Explore the collection')+icon('arrow','directional'),'btn btn-primary')}</div><img class="hero-image" src="/static/images/hero.webp" alt="${tr('سماعات وحقيبة وكوب في تنسيق بألوان هادئة، صورة توضيحية مولّدة','Illustrative AI-generated still life with headphones, a bag and a travel cup')}" width="1400" height="933" fetchpriority="high"><div class="hero-label">${icon('leaf')}${tr('اختيارات بعناية، كل يوم','Thoughtfully chosen, every day')}</div></div><aside class="seller-promo"><div class="eyebrow">${tr('للطموح مكان هنا','ROOM FOR YOUR NEXT CHAPTER')}</div><h2>${tr('فكرتك تستاهل<br>تكون متجر.','Your big idea.<br>Your own store.')}</h2><p>${tr('ابدأ رحلتك، ووصل منتجاتك لناس جدد.','Bring your products to a whole new audience.')}</p>${link('/seller',tr('افتح متجرك','Start your store')+icon('arrow','directional'),'text-link')}${promoArt()}${icon('sparkles','promo-spark')}</aside></section>
+ <div class="benefits">${[['store',tr('متاجر، في مكان واحد','Local stores, one place'),tr('اكتشف اختيارات متنوعة','Discover something different')],['wallet',tr('الدفع عند الاستلام','Cash on delivery'),tr('تسوّق بطريقتك المريحة','A familiar way to shop')],['package',tr('طلباتك، خطوة بخطوة','Follow every order'),tr('حالة واضحة لكل شحنة','A clear status for each shipment')],['globe',tr('تجربة تشبهك','Made to feel like you'),tr('بالعربية والإنجليزية','In Arabic and English')]].map(([ico,h,p])=>`<div class="benefit">${icon(ico)}<div><strong>${h}</strong><small>${p}</small></div></div>`).join('')}</div>
+ <section class="section"><div class="section-heading"><div><h2>${tr('لكل اهتمام، حكاية','Find your little corner')}</h2><p>${tr('من وين بتحب تبدأ؟','Where would you like to begin?')}</p></div>${link('/search',tr('جميع الفئات','Explore all')+icon('arrow','directional'),'text-link')}</div><div class="category-grid">${S.boot.categories.filter(c=>!c.parent_id).map(c=>link('/search?category='+c.id,`<span class="category-visual">${icon(c.icon)}</span><strong>${esc(field(c,'name'))}</strong>`,'category-card')).join('')}</div></section>
+ <section class="section"><div class="section-heading"><div><h2>${tr('اختيارات تستحق مكانها عندك','Your next favourite is here')}</h2><p>${tr('تفاصيل حلوة، لاكتشافات كل يوم.','Thoughtful details. Everyday discoveries.')}</p></div>${link('/search',tr('تسوّق الكل','Shop all')+icon('arrow','directional'),'text-link')}</div><div class="product-tabs" aria-label="${tr('تصفية المنتجات','Product collections')}">${[['featured',tr('مختارة لك','Our picks')],['recent',tr('وصل حديثًا','Just landed')],['offers',tr('بأسعار ألطف','Little savings')],['bestselling',tr('حسب المبيعات','By sales')]].map(([v,t])=>link('/?collection='+v,esc(t),'chip'+(selected===v?' active':''))).join('')}</div>${grid(data.products)}</section>
+ <div class="collection-banner"><div class="collection-copy"><div class="collection-icon">${icon('leaf')}</div><div><h3>${tr('قريب منك. مختلف بطريقته.','Local at heart. Lovely by nature.')}</h3><p>${tr('وراء كل متجر حكاية، ووراء كل اختيار ذوق يشبهك.','Every store has a story. Find one that feels like yours.')}</p></div></div>${link('/stores',tr('تعرّف على المتاجر','Meet the stores')+icon('arrow','directional'),'btn btn-outline')}</div>
+ <section class="section home-bottom"><div class="section-heading"><div><h2>${tr('متاجر محلية، نحب نعرّفك عليها','Small stores. Beautiful stories.')}</h2><p>${tr('تعرّف على الأسماء وراء اختياراتك.','Meet the people behind your next find.')}</p></div>${link('/stores',tr('كل المتاجر','All stores')+icon('arrow','directional'),'text-link')}</div>${stores.stores.length?`<div class="stores-grid">${stores.stores.slice(0,3).map(renderStore).join('')}</div>`:empty(tr('مكان لمتجرك القادم','A place for your next store'),tr('كن من أوائل البائعين على شمعة.','Be one of the first sellers on SHAM’A.'),link('/seller',tr('افتح متجرك','Open your store'),'btn btn-primary'),'store')}</section></div>`;
 }
 
-/* ─────────────── التنبيهات ─────────────── */
-function toast(msg, kind = "") {
-  const el = document.createElement("div");
-  el.className = `toast ${kind}`;
-  el.textContent = msg;
-  $("#toasts").appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; el.style.transition = ".3s"; }, 3400);
-  setTimeout(() => el.remove(), 3800);
+async function searchView(route){
+ const p=new URLSearchParams(location.search),q=p.get('q')||'',cat=p.get('category')||'';
+ const selectedCat=S.boot.categories.find(c=>c.id===cat);const heading=q?tr('نتائج البحث عن: ','Results for: ')+q:selectedCat?field(selectedCat,'name'):p.has('offers')?tr('أسعار ألطف، اختيارات أجمل','Good finds, little savings'):tr('اكتشف كل المنتجات','Find your next favourite');
+ const data=await api('/api/products?'+p);if(route!==S.route)return;title(heading);
+ main.innerHTML=`<div class="container">${breadcrumb([{text:tr('المنتجات','Products')}])}<div class="page-heading"><div><div class="eyebrow">${tr('مساحة للاكتشاف','A LITTLE ROOM TO EXPLORE')}</div><h1>${esc(heading)}</h1><p>${tr('اختيارات محلية، وتفاصيل تستحق وقتك.','Local finds and details worth a closer look.')}</p></div></div><div class="search-layout"><aside class="panel filters"><form id="filters-form"><h2>${icon('grid','small')}${tr('ضبّط اختياراتك','Make it your own')}</h2><div class="filter-fields"><div class="form-field"><label for="filter-category">${tr('الفئة','Category')}</label><select id="filter-category" name="category">${categoryOptions(cat)}</select></div><div class="form-field"><label for="filter-city">${tr('مدينة المتجر','Store city')}</label><select id="filter-city" name="city"><option value="">${tr('كل الأردن','All of Jordan')}</option>${cityOptions(p.get('city'))}</select></div><div class="form-row">${moneyInput('min-price',tr('من','From'),p.has('min_price')?Number(p.get('min_price'))/1000:'')}${moneyInput('max-price',tr('إلى','To'),p.has('max_price')?Number(p.get('max_price'))/1000:'')}</div></div><label class="checkbox-field"><input type="checkbox" name="offers" ${p.has('offers')?'checked':''}>${tr('منتجات عليها عروض','Products on offer')}</label><button class="btn btn-primary btn-block btn-small" type="submit">${tr('اعرض النتائج','Show my finds')}</button>${link('/search',tr('إعادة ضبط الفلاتر','Reset filters'),'text-link gap-top')}</form></aside><div><div class="results-toolbar"><p>${number(data.total)} ${tr('منتج بانتظارك','finds to explore')}</p><div class="sort-control"><label for="sort-select">${tr('الترتيب:','Sort by:')}</label><select id="sort-select">${[['featured',tr('المختارة أولًا','Our picks')],['recent',tr('الأحدث أولًا','Newest first')],['price_asc',tr('السعر: من الأقل','Price: low to high')],['price_desc',tr('السعر: من الأعلى','Price: high to low')],['bestselling',tr('حسب المبيعات المكتملة','Completed sales')]].map(([v,t])=>`<option value="${v}" ${v===(p.get('sort')||'featured')?'selected':''}>${t}</option>`).join('')}</select></div></div>${grid(data.products)}${data.pages>1?`<nav class="pagination" aria-label="${tr('صفحات النتائج','Result pages')}">${Array.from({length:Math.min(data.pages,20)},(_,i)=>{const copy=new URLSearchParams(p);copy.set('page',i+1);return link('/search?'+copy,number(i+1),i+1===data.page?'active':'');}).join('')}</nav>`:''}</div></div></div>`;
 }
 
-/* ─────────────── النوافذ المنبثقة ─────────────── */
-function modal(html, wide = false) {
-  const root = $("#modalRoot");
-  $(".modal", root).className = `modal${wide ? " wide" : ""}`;
-  $("#modalBody").innerHTML = html;
-  root.hidden = false;
-  document.body.style.overflow = "hidden";
-  const first = $("input,select,textarea", $("#modalBody"));
-  if (first) setTimeout(() => first.focus(), 80);
+async function productView(id,route){
+ const data=await api('/api/products/'+id);if(route!==S.route)return;
+ const p=data.product;S.products.set(p.id,p);S.detail=p;S.quantity=1;title(field(p,'title'));
+ main.innerHTML=`<div class="container">${breadcrumb([{text:field(p,'category_name'),href:'/search?category='+p.category_id},{text:field(p,'title')}])}<section class="product-detail"><div class="detail-photo"><img src="${esc(p.image_url).replace('/480.webp','/960.webp')}" alt="${esc(field(p,'title'))}" width="640" height="610"><button class="save-product${S.favorites.includes(p.id)?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${S.favorites.includes(p.id)}" aria-label="${tr('حفظ المنتج','Save this product')}">${icon('heart')}</button>${p.is_demo?`<span class="demo-tag">${tr('صورة مولّدة ومنتج توضيحي','AI-generated image · illustrative product')}</span>`:''}</div><div class="detail-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name'))+icon('arrow','directional small'),'detail-store')}<h1>${esc(field(p,'title'))}</h1><div class="detail-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)} ${currency()}</span><span class="pill">${tr('وفّر','Save')} ${money(p.compare_at_fils-p.price_fils)} ${currency()}</span>`:''}</div><p class="detail-description">${esc(field(p,'description'))}</p><div class="stock-line${p.stock?'':' out'}">${icon(p.stock?'check':'info')}${p.stock?tr('متوفر','In stock')+' · '+number(p.stock)+' '+tr('قطعة','available'):tr('غير متوفر حاليًا','Currently out of stock')}</div><div class="buy-controls"><div class="quantity-control"><button data-action="detail-minus" aria-label="${tr('تقليل الكمية','Decrease quantity')}">${icon('minus')}</button><span id="detail-quantity" aria-live="polite">${number(1)}</span><button data-action="detail-plus" aria-label="${tr('زيادة الكمية','Increase quantity')}">${icon('plus')}</button></div><button class="btn btn-primary" data-action="detail-add" data-id="${p.id}" ${p.stock?'':'disabled'}>${icon('bag')}${tr('أضف إلى السلة','Add to bag')}</button></div><div class="delivery-info"><div class="delivery-row">${icon('truck')}<div>${tr('التوصيل من','Delivery from')} ${esc(cityName(p.city))} · ${money(p.shipping_fils)} ${currency()}<small>${tr('المدة التقديرية:','Estimated delivery:')} ${number(p.delivery_days)} ${tr('أيام، يحددها المتجر لكل شحنة.','days, set by this store for each shipment.')}</small></div></div><div class="delivery-row">${icon('wallet')}<div>${tr('الدفع عند الاستلام','Cash on delivery')}<small>${tr('لا تحتاج إلى إدخال أي بيانات بطاقة.','No card details are needed.')}</small></div></div><div class="delivery-row">${icon('help')}<div>${link('/help#returns',tr('تعرّف على سياسة الإلغاء والإرجاع','About cancellation and returns'))}<small>${tr('راجع تفاصيل المنتج قبل تأكيد الطلب.','Review the product details before ordering.')}</small></div></div></div></div></section>${data.similar.length?`<section class="section"><div class="section-heading"><h2>${tr('قد تعجبك أيضًا','You might also love')}</h2></div>${grid(data.similar)}</section>`:''}</div>`;
 }
-function closeModal() {
-  $("#modalRoot").hidden = true;
-  $("#modalBody").innerHTML = "";
-  document.body.style.overflow = "";
+async function storesView(slug,route){
+ if(!slug){const data=await api('/api/stores');if(route!==S.route)return;title(tr('اكتشف المتاجر','Discover local stores'));main.innerHTML=`<div class="container">${breadcrumb([{text:tr('المتاجر','Stores')}])}<div class="page-heading"><div><div class="eyebrow">${tr('حكايات من هنا','STORIES FROM HERE')}</div><h1>${tr('أهلًا بالمتاجر المحلية.','Meet the local stores.')}</h1><p>${tr('أسماء مختلفة، وأشياء تستحق أن تكتشفها.','Different stories. Thoughtful things to discover.')}</p></div>${link('/seller',tr('مكان لمتجرك','A place for your store')+icon('plus'),'btn btn-outline btn-small')}</div>${data.stores.length?`<div class="stores-grid">${data.stores.map(renderStore).join('')}</div>`:empty(tr('أول الحكاية','The beginning of a story'),tr('المتاجر الجديدة ستظهر هنا بعد مراجعتها.','New stores will appear here after review.'),link('/seller',tr('ابدأ البيع','Start selling'),'btn btn-primary'),'store')}</div>`;return;}
+ const [data,products]=await Promise.all([api('/api/stores/'+encodeURIComponent(slug)),api('/api/products?store='+encodeURIComponent(slug)+'&limit=48')]);if(route!==S.route)return;
+ const s=data.store;title(field(s,'name'));main.innerHTML=`<div class="container">${breadcrumb([{text:tr('المتاجر','Stores'),href:'/stores'},{text:field(s,'name')}])}<div class="store-cover ${esc(s.accent)}"><div class="store-avatar">${esc(field(s,'name').slice(0,1))}</div><div><h1>${esc(field(s,'name'))}</h1><p>${esc(field(s,'description'))}</p><div class="store-facts"><span>${icon('pin')}${esc(cityName(s.city))}</span><span>${icon('truck')}${tr('شحن','Shipping')} ${money(s.shipping_fils)} ${currency()}</span><span>${icon('clock')}${tr('تقديريًا','Estimated')} ${number(s.delivery_days)} ${tr('أيام','days')}</span>${s.is_demo?`<span>${tr('متجر للمعاينة، وليس بائعًا موثّقًا','Illustrative store, not a verified seller')}</span>`:''}</div></div></div><div class="section-heading"><h2>${tr('من رفوف المتجر','From the store')}</h2><span class="muted small-text">${number(products.total)} ${tr('منتج','products')}</span></div>${grid(products.products)}</div>`;
 }
-$("#modalRoot").addEventListener("click", (e) => {
-  if (e.target.hasAttribute("data-close")) closeModal();
+
+function normalizeGuest(){
+ const clean={};Object.entries(S.guest).slice(0,50).forEach(([id,qty])=>{if(/^\d+$/.test(id)&&Number.isInteger(qty)&&qty>0&&qty<100)clean[id]=qty;});S.guest=clean;
+}
+async function getCart(){
+ if(S.user){S.cart=await api('/api/cart');return S.cart;}
+ normalizeGuest();const groups=new Map();
+ const entries=await Promise.all(Object.entries(S.guest).map(async([id,quantity])=>{
+  try{const data=await api('/api/products/'+id);S.products.set(data.product.id,data.product);return {...data.product,quantity,line_total_fils:data.product.price_fils*quantity,available:true};}
+  catch{return {id:Number(id),quantity,title_ar:'منتج غير متاح',title_en:'Unavailable product',price_fils:0,line_total_fils:0,stock:0,available:false,image_url:'/static/images/placeholder.svg',store_id:0,store_name_ar:'غير متاح',store_name_en:'Unavailable',shipping_fils:0,delivery_days:0};}
+ }));
+ for(const item of entries){if(!groups.has(item.store_id))groups.set(item.store_id,{store_id:item.store_id,name_ar:item.store_name_ar,name_en:item.store_name_en,shipping_fils:item.shipping_fils,delivery_days:item.delivery_days,subtotal_fils:0,slug:item.store_slug,items:[]});const g=groups.get(item.store_id);g.items.push(item);g.subtotal_fils+=item.line_total_fils;}
+ const list=[...groups.values()],subtotal=list.reduce((a,g)=>a+g.subtotal_fils,0),shipping=list.reduce((a,g)=>a+g.shipping_fils,0);
+ S.cart={groups:list,subtotal_fils:subtotal,shipping_fils:shipping,total_fils:subtotal+shipping,quantity:entries.reduce((a,p)=>a+p.quantity,0)};return S.cart;
+}
+function cartItemQuantity(id){for(const g of S.cart.groups)for(const item of g.items)if(item.id===id)return item.quantity;return 0;}
+async function setCart(id,quantity){
+ if(S.user)S.cart=await api('/api/cart',{method:'PUT',body:{product_id:id,quantity}});
+ else {if(quantity>0){const p=S.products.get(id);if(p&&quantity>p.stock)throw new Error(tr('هذه الكمية غير متوفرة.','This quantity is not available.'));S.guest[id]=quantity;}else delete S.guest[id];saveLocal('shamaa.cart',S.guest);await getCart();}
+ updateCartCount();
+}
+async function addCart(id,quantity=1){
+ if(!navigator.onLine)throw new Error(tr('أعد الاتصال قبل تعديل السلة؛ يمكنك متابعة التصفح.','Reconnect before changing your bag. You can keep browsing.'));
+ let p=S.products.get(id);if(!p){p=(await api('/api/products/'+id)).product;S.products.set(id,p);}
+ const next=cartItemQuantity(id)+quantity;if(next>Math.min(p.stock,99))throw new Error(tr('الكمية المطلوبة أكبر من المتوفر.','The requested quantity exceeds available stock.'));
+ await setCart(id,next);toast(tr('اختيار جميل! أُضيف إلى سلتك.','Lovely choice! Added to your bag.'));
+}
+function updateCartCount(){const el=$('#cart-count');if(el)el.textContent=number(S.cart.quantity);}
+async function mergeGuest(){
+ const remote=await api('/api/cart');S.cart=remote;normalizeGuest();let failed=false;
+ for(const [id,qty]of Object.entries(S.guest)){
+  try{const existing=cartItemQuantity(Number(id));S.cart=await api('/api/cart',{method:'PUT',body:{product_id:Number(id),quantity:Math.min(99,existing+qty)}});delete S.guest[id];}
+  catch{failed=true;}
+ }
+ saveLocal('shamaa.cart',S.guest);if(failed)toast(tr('بعض الاختيارات المحلية لم تُدمج لتغيّر توفرها. راجع السلة.','Some local items could not be merged because availability changed. Review your bag.'),true);
+ updateCartCount();
+}
+function miniItems(items){return items.map(p=>`<div class="mini-item"><img src="${esc(p.image_url)}" alt="" width="45" height="45" loading="lazy"><span>${esc(field(p,'title'))}<br><small>${number(p.quantity)} × ${money(p.unit_price_fils??p.price_fils)} ${currency()}</small></span></div>`).join('');}
+function summary(cart,action=''){return `<aside class="panel order-summary"><h2>${tr('ملخص اختياراتك','Your bag, at a glance')}</h2><div class="summary-row"><span>${tr('المنتجات','Items')} (${number(cart.quantity)})</span><strong>${money(cart.subtotal_fils)} ${currency()}</strong></div><div class="summary-row"><span>${tr('الشحن','Shipping')} (${number(cart.groups.length)} ${tr('شحنات','shipments')})</span><strong>${money(cart.shipping_fils)} ${currency()}</strong></div><div class="summary-row total"><span>${tr('الإجمالي','Total')}</span>${price(cart.total_fils)}</div>${action}<p class="summary-caption">${icon('wallet')} ${tr('الدفع عند الاستلام · دون بيانات بطاقة','Cash on delivery · No card details')}</p><p class="summary-caption">${tr('تُحسب رسوم كل متجر بشكل مستقل. لا يُحجز المخزون حتى تأكيد الطلب على الخادم. لا تُضاف ضريبة منفصلة في هذه النسخة التجريبية.','Each store ships separately. Stock is not reserved until the server confirms your order. No separate tax is added in this development version.')}</p></aside>`;}
+async function cartView(route){
+ const cart=await getCart();if(route!==S.route)return;title(tr('سلة اختياراتك','Your shopping bag'));updateCartCount();
+ main.innerHTML=`<div class="container">${breadcrumb([{text:tr('سلة التسوق','Shopping bag')}])}<div class="page-heading"><div><h1>${tr('كل اختياراتك الجميلة.','Your lovely little finds.')}</h1><p>${number(cart.quantity)} ${tr('منتجات في سلتك','items in your bag')}</p></div>${link('/search',tr('نكمل الاكتشاف؟','Keep exploring')+icon('arrow','directional'),'text-link')}</div>${cart.groups.length?`${!S.user?`<div class="notice">${icon('info')}<p>${tr('سلتك محفوظة على هذا المتصفح فقط. سجّل الدخول لمزامنتها وإتمام الطلب.','Your bag is saved only in this browser. Sign in to sync it and check out.')}</p></div>`:''}<div class="cart-layout"><div>${cart.groups.map(g=>`<section class="cart-group"><div class="cart-group-heading">${g.slug?link('/store/'+g.slug,icon('store','small')+esc(field(g,'name'))):esc(field(g,'name'))}<span class="small-text">${tr('شحنة مستقلة','Separate shipment')}</span></div>${g.items.map(p=>`<div class="cart-item"><a href="/product/${p.id}" data-link><img class="cart-thumb" src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="91" height="93"></a><div class="cart-item-info"><h3>${link('/product/'+p.id,esc(field(p,'title')))}</h3><p>${p.available?tr('متوفر حاليًا','Currently available'):tr('غير متاح حاليًا','Currently unavailable')}</p><div class="quantity-control"><button data-action="cart-minus" data-id="${p.id}" aria-label="${tr('تقليل كمية','Decrease quantity for')} ${esc(field(p,'title'))}">${icon('minus')}</button><span>${number(p.quantity)}</span><button data-action="cart-plus" data-id="${p.id}" aria-label="${tr('زيادة كمية','Increase quantity for')} ${esc(field(p,'title'))}" ${p.quantity>=Math.min(p.stock,99)?'disabled':''}>${icon('plus')}</button></div></div><div class="cart-item-price">${price(p.line_total_fils)}<button class="icon-btn" data-action="cart-remove" data-id="${p.id}" aria-label="${tr('إزالة','Remove')} ${esc(field(p,'title'))}">${icon('trash')}</button></div></div>`).join('')}<div class="cart-shipping"><span>${tr('شحن هذا المتجر','This store’s shipping')} · ${tr('تقديريًا','Estimated')} ${number(g.delivery_days)} ${tr('أيام','days')}</span><span>${money(g.shipping_fils)} ${currency()}</span></div></section>`).join('')}</div>${summary(cart,`<button class="btn btn-primary btn-block" data-action="checkout" ${navigator.onLine?'':'disabled'}>${tr('نكمل الطلب','Continue to checkout')}${icon('arrow','directional')}</button>`)}</div>`:empty(tr('سلتك تنتظر أول اختيار','Your next find is waiting'),tr('خذ وقتك، في أشياء جميلة بانتظارك.','Take your time. There are good things waiting to be found.'),link('/search',tr('ابدأ الاكتشاف','Explore the collection'),'btn btn-primary'),'bag')}</div>`;
+}
+async function recoverAttempt(){
+ if(!S.user)return false;let key;try{key=sessionStorage.getItem('shamaa.checkout.'+S.user.id);}catch{}
+ if(!key)return false;
+ try{const data=await api('/api/order-attempts/'+encodeURIComponent(key));if(data.order){try{sessionStorage.removeItem('shamaa.checkout.'+S.user.id);}catch{}toast(tr('وجدنا طلبك المحفوظ، ولم ننشئ طلبًا مكررًا.','Your saved order was recovered. No duplicate was created.'));navigate('/orders',true);return true;}}
+ catch(error){if(error.status!==404)throw error;}
+ return false;
+}
+async function checkoutView(route){
+ title(tr('إتمام الطلب','Checkout'));if(!S.user){main.innerHTML=authGate('/checkout');return;}
+ if(!S.user.email_verified_at){main.innerHTML=`<div class="container page-space"><h1 class="gap-bottom">${tr('قبل أن نكمل','Before we continue')}</h1>${verificationNotice()}${link('/account',tr('إلى حسابي','Go to my account'),'btn btn-outline')}</div>`;return;}
+ if(await recoverAttempt())return;
+ const cart=await getCart();if(route!==S.route)return;
+ if(!cart.quantity){navigate('/cart',true);return;}
+ let key;try{key=sessionStorage.getItem('shamaa.checkout.'+S.user.id);}catch{}
+ if(!key){key=crypto.randomUUID?.()||Array.from(crypto.getRandomValues(new Uint8Array(20)),x=>x.toString(16).padStart(2,'0')).join('');try{sessionStorage.setItem('shamaa.checkout.'+S.user.id,key);}catch{}}
+ S.checkout={key,cart};
+ main.innerHTML=`<div class="container">${breadcrumb([{text:tr('السلة','Bag'),href:'/cart'},{text:tr('إتمام الطلب','Checkout')}])}<div class="page-heading"><div><h1>${tr('باقي خطوة، وتوصل اختياراتك.','One more step to your next find.')}</h1><p>${tr('راجع التفاصيل، وسندع كل متجر يهتم بشحنته.','Check the details. Each store will prepare its own shipment.')}</p></div></div>${S.boot.development?`<div class="notice warn">${icon('info')}<p>${tr('طلب محلي للتجربة: سيُحفظ في قاعدة البيانات، دون شحن أو تحصيل نقدي فعلي.','Local test order: it will be saved in the database, without real shipping or cash collection.')}</p></div>`:''}<div class="cart-layout"><form id="checkout-form" class="checkout-form"><section class="panel"><h2>${tr('وين نوصل اختياراتك؟','Where should your finds go?')}</h2>${errorBox('checkout-error')}<div class="form-row">${input('recipient',tr('اسم المستلم','Recipient name'),{value:S.user.name,max:80,min:2,autocomplete:'name'})}${input('phone',tr('رقم الهاتف الأردني','Jordanian phone number'),{type:'tel',max:10,hint:tr('مثال: 0791234567','For example: 0791234567'),autocomplete:'tel-national',direction:'ltr'})}</div><div class="form-field"><label for="city">${tr('مدينة التوصيل','Delivery city')}</label><select name="city" id="city" required><option value="">${tr('اختر المدينة','Select a city')}</option>${cityOptions('')}</select></div>${textarea('address',tr('العنوان بالتفصيل','Full delivery address'),'',true,400)}<p class="small-text">${tr('الحي، الشارع، رقم المبنى والطابق، وأقرب نقطة دالة. لا نستخدم عنوانك لأغراض تسويقية.','Include your neighbourhood, street, building and floor. Your address is not used for marketing.')}</p></section><section class="panel"><h2>${tr('طريقة الدفع','Payment method')}</h2><label class="checkout-method"><input type="radio" name="payment" value="cod" checked><span>${tr('الدفع عند الاستلام','Cash on delivery')}<small>${tr('ادفع للمتجر أو مندوب التوصيل عند الاستلام.','Pay the store or delivery driver when your shipment arrives.')}</small></span>${icon('wallet')}</label><p class="small-text gap-top">${tr('الدفع الإلكتروني غير مفعّل. بتأكيدك، توافق على','Online payment is not enabled. By confirming, you accept the')} ${link('/help#terms',tr('شروط النسخة الحالية وسياسة الإلغاء.','current terms and cancellation policy.'),'text-link')}</p></section></form><aside class="panel order-summary"><h2>${tr('اختياراتك','Your finds')}</h2><div class="mini-items">${cart.groups.map(g=>`<strong class="small-text">${esc(field(g,'name'))}</strong>${miniItems(g.items)}`).join('')}</div><div class="summary-row"><span>${tr('المنتجات','Items')}</span><strong>${money(cart.subtotal_fils)} ${currency()}</strong></div><div class="summary-row"><span>${tr('الشحن','Shipping')} (${number(cart.groups.length)})</span><strong>${money(cart.shipping_fils)} ${currency()}</strong></div><div class="summary-row total"><span>${tr('الإجمالي','Total')}</span>${price(cart.total_fils)}</div><button form="checkout-form" type="submit" class="btn btn-primary btn-block" ${navigator.onLine?'':'disabled'}>${icon('check')}${S.boot.development?tr('تأكيد الطلب التجريبي','Confirm test order'):tr('تأكيد الطلب','Confirm order')}</button><p class="summary-caption">${tr('سيتم التحقق من الأسعار والمخزون على الخادم قبل التأكيد.','Prices and stock will be verified on the server before confirmation.')}</p></aside></div></div>`;
+}
+function shipmentHTML(s,order,{admin=false,seller=false}={}){
+ const next={new:['confirmed','cancelled'],confirmed:['preparing','cancelled'],preparing:['shipped','cancelled'],shipped:['delivered']};
+ return `<section class="shipment"><div class="shipment-top"><h3>${link('/store/'+s.store_slug,esc(s.store_name_ar?field(s,'store_name'):field(S.store,'name')))}</h3>${pill(s.status)}</div>${miniItems(s.items)}<div class="shipment-footer"><span class="small-text">${tr('هذه الشحنة:','This shipment:')} <strong>${money(s.subtotal_fils+s.shipping_fils)} ${currency()}</strong></span>${!admin&&!seller&&['new','confirmed'].includes(s.status)?`<button class="btn btn-danger btn-small" data-action="cancel-order" data-order="${order.id}" data-id="${s.id}">${tr('إلغاء هذه الشحنة','Cancel this shipment')}</button>`:''}</div>${seller||admin?`<div class="notice gap-top">${icon('pin')}<div>${esc(order.recipient)} · <bdi>${esc(order.phone)}</bdi><p>${esc(cityName(order.city))} · ${esc(order.address)}</p></div></div><div class="info-row"><span>${tr('عمولة هذا الطلب','Order commission')}</span><strong>${money(s.commission_fils)} ${currency()}</strong></div>${next[s.status]?`<form class="status-form gap-top" data-id="${s.id}" data-current="${s.status}" data-admin="${admin}"><div class="form-row"><div class="form-field"><label for="state-${s.id}">${tr('الحالة الجديدة','Next status')}</label><select id="state-${s.id}" name="status">${next[s.status].map(v=>`<option value="${v}">${status(v)}</option>`).join('')}</select></div><div class="form-field"><label for="note-${s.id}">${tr('ملاحظة للمشتري','Buyer-visible note')}</label><input id="note-${s.id}" name="note" maxlength="500"></div></div>${errorBox('status-error-'+s.id)}<button class="btn btn-primary btn-small" type="submit">${tr('حفظ تحديث الحالة','Save status update')}</button></form>`:''}`:''}<details><summary>${tr('سجل الشحنة','Shipment history')}</summary><div class="timeline">${s.events.map(e=>`<div class="timeline-item"><strong>${esc(status(e.to_status))}</strong><small>${date(e.created_at)}</small>${e.note?`<p>${esc(e.note)}</p>`:''}</div>`).join('')}</div></details></section>`;
+}
+function orderCard(o,admin=false){return `<article class="order-card"><header class="order-head"><div><h2>${esc(o.number)}</h2><p>${date(o.created_at)} · ${tr('الدفع عند الاستلام','Cash on delivery')}${o.is_demo?' · '+tr('طلب تجريبي','Test order'):''}</p></div>${price(o.live_total_fils)}</header><div class="order-body"><p class="small-text">${tr('التوصيل إلى:','Deliver to:')} ${esc(o.recipient)} · ${esc(cityName(o.city))}</p>${o.shipments.map(s=>shipmentHTML(s,o,{admin})).join('')}</div></article>`;}
+async function ordersView(route){
+ title(tr('طلباتي','My orders'));if(!S.user){main.innerHTML=authGate('/orders');return;}
+ const data=await api('/api/orders');if(route!==S.route)return;
+ main.innerHTML=`<div class="container page-space"><div class="page-heading"><div><h1>${tr('اختياراتك، في الطريق.','Your finds, every step of the way.')}</h1><p>${tr('لكل متجر شحنة وحالة مستقلة. الإجمالي المعروض يستثني الشحنات الملغاة.','Each store has a separate shipment and status. Displayed totals exclude cancelled shipments.')}</p></div>${link('/search',tr('اكتشف المزيد','Discover more'),'btn btn-outline btn-small')}</div>${data.orders.length?data.orders.map(o=>orderCard(o)).join(''):empty(tr('أول طلب، أول حكاية.','Your first order starts a story.'),tr('عندما تؤكد طلبًا ستجد تفاصيله وتحديثاته هنا.','When you confirm an order, its details and updates will appear here.'),link('/search',tr('اكتشف المنتجات','Explore products'),'btn btn-primary'),'bag')}</div>`;
+}
+
+function openAuth(mode='login'){
+ const register=mode==='register',forgot=mode==='forgot';
+ modal(forgot?tr('نرجّعك لحسابك.','Let’s get you back in.'):register?tr('أهلًا ببدايتك الجديدة.','Here’s to new beginnings.'):tr('يا أهلًا بعودتك.','Lovely to see you again.'),`
+ <p class="dialog-description">${forgot?tr('أدخل بريدك، وسنجهّز رابطًا لاستعادة كلمة المرور إذا كان الحساب موجودًا.','Enter your email. If an account exists, we’ll prepare a password reset link.'):tr('اختيارات جميلة، ومتاجر محلية، وحكاية جديدة كل يوم.','Thoughtful finds, local stores, and a new story every day.')}</p>${!forgot?`<div class="auth-tabs"><button class="${!register?'active':''}" data-action="login">${tr('تسجيل الدخول','Sign in')}</button><button class="${register?'active':''}" data-action="register">${tr('حساب جديد','Create account')}</button></div>`:''}<form id="auth-form" data-mode="${mode}">${errorBox('auth-error')}${register?input('name',tr('اسمك','Your name'),{max:80,min:2,autocomplete:'name'}):''}${input('email',tr('البريد الإلكتروني','Email address'),{type:'email',max:254,autocomplete:'email',direction:'ltr'})}${!forgot?input('password',tr('كلمة المرور','Password'),{type:'password',min:register?10:'',max:128,autocomplete:register?'new-password':'current-password',hint:register?tr('10 أحرف على الأقل، مع حروف وأرقام.','At least 10 characters, including letters and numbers.'):'',direction:'ltr'}):''}${mode==='login'?`<div class="auth-subaction"><button class="text-link" type="button" data-action="forgot">${tr('نسيت كلمة المرور؟','Forgot password?')}</button></div><details class="gap-bottom"><summary class="small-text muted">${tr('رمز المصادقة لحساب الإدارة فقط','Authenticator code — administrators only')}</summary>${input('otp',tr('رمز من 6 أرقام','6-digit authenticator code'),{required:false,max:6,autocomplete:'one-time-code',direction:'ltr'})}</details>`:''}<button type="submit" class="btn btn-primary btn-block">${forgot?tr('إعداد رابط الاستعادة','Prepare reset link'):register?tr('إنشاء حسابي','Create my account'):tr('دخول إلى حسابي','Sign in')}${icon('arrow','directional')}</button></form><p class="dialog-footer-note">${tr('باستخدام شمعة، توافق على','By using SHAM’A, you accept our')} ${link('/help#terms',tr('الشروط وسياسة الخصوصية','terms and privacy policy'))}</p>`);
+}
+async function accountView(route){
+ title(tr('حسابي','My account'));if(!S.user){main.innerHTML=authGate();return;}
+ const [sessions,notifications]=await Promise.all([api('/api/auth/sessions'),api('/api/notifications')]);if(route!==S.route)return;
+ main.innerHTML=`<div class="container page-space">${!S.user.email_verified_at?verificationNotice():''}<div class="account-grid"><section class="panel"><div class="account-hero"><div class="store-avatar">${esc(S.user.name.slice(0,1))}</div><div><div class="eyebrow">${tr('مساحتك في شمعة','YOUR LITTLE CORNER')}</div><h1>${tr('أهلًا،','Hello,')} ${esc(S.user.name.split(' ')[0])}.</h1><p>${tr('كل ما تحتاجه، أقرب إليك.','Everything you need, a little closer.')}</p></div></div><div class="info-row"><span>${tr('البريد الإلكتروني','Email')}</span><bdi>${esc(S.user.email)}</bdi></div><div class="info-row"><span>${tr('تأكيد البريد','Email verification')}</span><span>${S.user.email_verified_at?tr('تم التأكيد','Confirmed'):tr('بانتظار التأكيد','Not confirmed')}</span></div><div class="info-row"><span>${tr('نوع الحساب','Account type')}</span><span>${S.user.role==='admin'?tr('إدارة','Administrator'):S.user.role==='seller'?tr('بائع ومشترٍ','Seller & buyer'):tr('مشترٍ','Buyer')}</span></div><div class="account-links">${link('/orders',icon('package')+tr('طلباتي وتحديثاتها','My orders & updates')+icon('arrow','directional'),'btn btn-soft')}${S.user.role!=='admin'?link('/seller',icon('store')+tr('متجري على شمعة','My SHAM’A store')+icon('arrow','directional'),'btn btn-light'):link('/admin',icon('shield')+tr('لوحة الإدارة','Admin dashboard')+icon('arrow','directional'),'btn btn-light')}<button class="btn btn-light" data-action="logout">${icon('logout')}${tr('تسجيل الخروج','Sign out')}</button></div></section><section class="panel"><div class="row space-between gap-bottom"><h2>${tr('آخر المستجدات','Your latest updates')}</h2><button class="text-link" data-action="read-notifications">${tr('قراءة الكل','Mark all read')}</button></div>${notifications.notifications.length?notifications.notifications.map(n=>`<div class="notification-item">${icon(n.kind==='security'?'shield':'bell','small')}<div class="notification-body"><p>${esc(field(n,'body'))}</p><small>${date(n.created_at)} ${!n.read_at?' · '+tr('جديد','New'):''}</small></div></div>`).join(''):`<p class="small-text">${tr('كل شيء هادئ هنا. سنخبرك عندما يكون هناك جديد.','All quiet here. We’ll let you know when there’s something new.')}</p>`}</section></div><section class="panel account-security"><h2>${tr('أجهزتك وجلساتك','Your devices & sessions')}</h2><p class="small-text gap-bottom">${tr('إذا لم تتعرّف على جلسة، أنهِها واستعد كلمة المرور. معلومات المتصفح ليست إثباتًا لهوية الجهاز.','If you don’t recognise a session, revoke it and reset your password. Browser descriptions are not proof of device identity.')}</p>${sessions.sessions.map(s=>`<div class="session-item">${icon('shield','small')}<div class="session-body"><p>${esc(s.device)}</p><small>${date(s.created_at)}${s.current?' · '+tr('جلستك الحالية','Current session'):''}</small></div><button class="text-link danger-text" data-action="revoke-session" data-id="${esc(s.id)}" data-current="${s.current}">${tr('إنهاء','Revoke')}</button></div>`).join('')}</section></div>`;
+}
+async function favoritesView(route){
+ title(tr('اختياراتك المحفوظة','Your saved finds'));
+ const items=await Promise.all(S.favorites.slice(0,100).map(async id=>{try{return (await api('/api/products/'+id)).product;}catch{return null;}}));if(route!==S.route)return;
+ main.innerHTML=`<div class="container page-space"><div class="page-heading"><div><h1>${tr('أشياء عجبتك، خليّناها إلك.','Little things you loved.')}</h1><p>${tr('اختيارات محفوظة على هذا المتصفح، دون تتبع أو تخصيص سلوكي.','Saved in this browser only, without behavioural tracking.')}</p></div></div>${items.some(Boolean)?grid(items.filter(Boolean)):empty(tr('مكان لاختياراتك المفضلة','A place for your favourites'),tr('اضغط على القلب بجانب أي منتج، وارجع له وقت ما تحب.','Tap the heart on a product and come back to it whenever you like.'),link('/search',tr('اكتشف شيئًا يعجبك','Find something to love'),'btn btn-primary'),'heart')}</div>`;
+}
+function tokenView(reset=false){
+ const token=new URLSearchParams(location.search).get('token')||'';title(reset?tr('استعادة كلمة المرور','Reset password'):tr('تأكيد البريد','Verify email'));
+ main.innerHTML=`<div class="container page-space"><section class="panel center-form"><div class="eyebrow">${icon(reset?'lock':'mail','small')}SHAM’A</div><h1>${reset?tr('بداية جديدة لحسابك.','A fresh start for your account.'):tr('أهلًا، نؤكّد بريدك؟','Let’s confirm your email.')}</h1><p>${reset?tr('اختر كلمة مرور قوية وجديدة. ستنتهي جميع جلسات الحساب السابقة.','Choose a strong new password. All previous sessions will be revoked.'):tr('اضغط أدناه لتأكيد البريد. فتح الرابط وحده لا يغيّر حسابك.','Confirm below to verify your email. Opening the link alone does not change your account.')}</p><form id="${reset?'reset-form':'verify-form'}">${errorBox('token-error')}<input type="hidden" name="token" value="${esc(token)}">${reset?input('password',tr('كلمة مرور جديدة','New password'),{type:'password',min:10,max:128,autocomplete:'new-password',hint:tr('10 أحرف على الأقل، مع حروف وأرقام.','At least 10 characters, including letters and numbers.')}):''}<button type="submit" class="btn btn-primary btn-block" ${token?'':'disabled'}>${reset?tr('حفظ كلمة المرور الجديدة','Save new password'):tr('تأكيد بريدي الإلكتروني','Confirm my email')}${icon('check')}</button></form>${!token?`<p class="small-text gap-top danger-text">${tr('الرابط غير مكتمل. افتح الرابط من الرسالة.','The link is incomplete. Open the full link from your email.')}</p>`:''}</section></div>`;
+}
+
+function storeForm(s=null){
+ return `<form id="store-form" data-edit="${Boolean(s)}">${errorBox('store-error')}<div class="form-row">${input('name_ar',tr('اسم المتجر بالعربية','Store name in Arabic'),{value:s?.name_ar||'',max:80,min:2,direction:'rtl'})}${input('name_en',tr('اسم المتجر بالإنجليزية','Store name in English'),{value:s?.name_en||'',max:80,min:2,direction:'ltr'})}</div>${input('slug',tr('رابط متجرك','Your store URL'),{value:s?.slug||'',max:50,min:3,direction:'ltr',hint:tr('أحرف إنجليزية صغيرة وأرقام وشرطات فقط، مثل: my-store','Lowercase letters, numbers and hyphens only, e.g. my-store')})}<div class="form-row">${textarea('description_ar',tr('نبذة بالعربية','Arabic introduction'),s?.description_ar||'',false,1000)}${textarea('description_en',tr('نبذة بالإنجليزية','English introduction'),s?.description_en||'',false,1000)}</div><div class="form-row"><div class="form-field"><label for="city">${tr('مدينة المتجر','Store city')}</label><select id="city" name="city" required>${cityOptions(s?.city||'amman')}</select></div><div class="form-field"><label for="accent">${tr('هوية الواجهة','Storefront palette')}</label><select id="accent" name="accent">${[['green',tr('أخضر الميرمية','Sage green')],['sand',tr('رملي دافئ','Warm sand')],['blue',tr('أزرق هادئ','Soft blue')]].map(([v,t])=>`<option value="${v}" ${v===s?.accent?'selected':''}>${t}</option>`).join('')}</select></div></div><div class="form-row">${moneyInput('shipping',tr('رسوم كل شحنة','Fee per shipment'),s?s.shipping_fils/1000:3,'required')}<div class="form-field"><label for="delivery_days">${tr('مدة توصيل تقديرية بالأيام','Estimated delivery days')}</label><input id="delivery_days" name="delivery_days" type="number" min="1" max="30" step="1" required value="${s?.delivery_days||3}"></div></div><div class="notice">${icon('info')}<p>${tr('أنت مسؤول عن ترتيب التوصيل وتحصيل النقد. تعديل هوية المتجر يعيده للمراجعة. تأكيد البريد ليس توثيقًا تجاريًا أو حكوميًا.','You arrange delivery and cash collection. Identity changes require review again. Email confirmation is not business or government verification.')}</p></div><button type="submit" class="btn btn-primary">${icon(s?'check':'store')}${s?tr('حفظ إعدادات متجري','Save my store'):tr('إرسال طلب فتح متجري','Request my store')}</button></form>`;
+}
+function sellerNav(tab){return `<aside class="dashboard-nav" aria-label="${tr('لوحة البائع','Seller dashboard')}"><div class="dashboard-brand"><strong>${esc(field(S.store,'name'))}</strong><small>${tr('مساحتك لتنمو','A little room to grow')}</small></div>${[['overview','chart',tr('نظرة عامة','Overview')],['products','package',tr('منتجاتي','My products')],['orders','bag',tr('الطلبات','Orders')],['inventory','grid',tr('حركة المخزون','Stock history')],['store','store',tr('واجهة متجري','My storefront')]].map(([v,ico,t])=>link('/seller?tab='+v,icon(ico)+t,tab===v?'active':'')).join('')}${link('/store/'+S.store.slug,icon('globe')+tr('زيارة المتجر','Visit storefront'))}</aside>`;}
+function statCard(ico,value,label){return `<div class="stat-card">${icon(ico)}<strong>${value}</strong><span>${label}</span></div>`;}
+async function sellerView(route){
+ title(tr('مساحة البائع','Seller dashboard'));if(!S.user){main.innerHTML=authGate('/seller');return;}
+ if(!S.user.email_verified_at){main.innerHTML=`<div class="container page-space"><div class="page-heading"><h1>${tr('متجرك يبدأ بخطوة.','Your store starts with one step.')}</h1></div>${verificationNotice()}</div>`;return;}
+ if(S.user.role==='admin'){main.innerHTML=`<div class="container page-space">${empty(tr('حساب إدارة منفصل','A separate administrator account'),tr('استخدم حساب بائع منفصلًا، حفاظًا على فصل الصلاحيات.','Use a separate seller account to maintain separation of duties.'),link('/admin',tr('إلى الإدارة','Go to administration'),'btn btn-primary'),'shield')}</div>`;return;}
+ const data=await api('/api/seller/store');if(route!==S.route)return;S.store=data.store;
+ if(!S.store){main.innerHTML=`<div class="container page-space"><div class="onboarding"><div class="eyebrow">${icon('store','small')}${tr('خطوة صغيرة، فرص جديدة','SMALL STEPS, NEW POSSIBILITIES')}</div><h1>${tr('أعطِ فكرتك مكانًا تنمو فيه.','Give your idea a place to grow.')}</h1><p>${tr('عرّفنا على متجرك. بعد مراجعة الإدارة، تقدر تضيف أول منتجاتك.','Tell us about your store. After administrator review, you can add your first products.')}</p><section class="panel">${storeForm()}</section></div></div>`;return;}
+ const tab=new URLSearchParams(location.search).get('tab')||'overview';let content='';
+ const pending=S.store.status!=='active'?`<div class="notice warn">${icon('clock')}<div><strong>${tr('حالة المتجر:','Store status:')} ${status(S.store.status)}</strong><p>${esc(S.store.review_note)||tr('نراجع معلومات متجرك قبل إتاحته للمشترين. لا توجد شارة توثيق تلقائية.','Your store details are reviewed before publishing. No automatic trust badge is granted.')}</p></div></div>`:'';
+ if(tab==='products'){
+  const result=await api('/api/seller/products');if(route!==S.route)return;S.sellerProducts=result.products;
+  result.products.forEach(p=>S.products.set(p.id,p));
+  content=`<div class="page-heading"><div><h1>${tr('من رفوف متجرك.','Your store, your finds.')}</h1><p>${tr('المنتجات الجديدة والتعديلات تمر بالمراجعة قبل النشر.','New products and edits are reviewed before publication.')}</p></div><button class="btn btn-primary btn-small" data-action="new-product" ${S.store.status==='active'?'':'disabled'}>${icon('plus')}${tr('أضف منتجًا','Add product')}</button></div>${result.products.length?`<div class="table-scroll"><table><thead><tr><th>${tr('المنتج','Product')}</th><th>${tr('الحالة','Status')}</th><th>${tr('السعر','Price')}</th><th>${tr('المخزون','Stock')}</th><th>${tr('إدارة','Manage')}</th></tr></thead><tbody>${result.products.map(p=>`<tr><td><div class="table-product"><img src="${esc(p.image_url)}" alt="" width="43" height="43"><div><strong>${esc(field(p,'title'))}</strong><small>${esc(p.sku)}</small>${p.review_note?`<small>${esc(p.review_note)}</small>`:''}</div></div></td><td>${pill(p.status)}</td><td>${money(p.price_fils)} ${currency()}</td><td>${number(p.stock)}</td><td><button class="btn btn-light" data-action="edit-product" data-id="${p.id}">${icon('edit','small')}${tr('تعديل','Edit')}</button><button class="btn btn-soft" data-action="stock" data-id="${p.id}">${tr('الكمية','Stock')}</button></td></tr>`).join('')}</tbody></table></div>`:empty(tr('منتجك الأول، بداية الحكاية.','Your first product starts the story.'),tr('أضف صورة ومعلومات دقيقة بالعربية والإنجليزية، وحدد المخزون والسعر.','Add an image and accurate Arabic and English details, then set the price and stock.'),S.store.status==='active'?`<button class="btn btn-primary" data-action="new-product">${tr('أضف أول منتج','Add your first product')}</button>`:'','package')}`;
+ } else if(tab==='orders'){
+  const result=await api('/api/seller/orders');if(route!==S.route)return;
+  content=`<div class="page-heading"><div><h1>${tr('كل طلب، حكاية ثقة.','Every order builds a little trust.')}</h1><p>${tr('حدّث حالات شحناتك يدويًا. لا يوجد ربط آلي مع شركة شحن.','Update shipment statuses manually. No shipping company is automatically connected.')}</p></div></div>${result.orders.length?result.orders.map(s=>`<article class="order-card"><header class="order-head"><div><h2>${esc(s.order.number)}</h2><p>${date(s.order.created_at)}${s.order.is_demo?' · '+tr('طلب تجريبي','Test order'):''}</p></div>${price(s.subtotal_fils+s.shipping_fils)}</header><div class="order-body">${shipmentHTML(s,s.order,{seller:true})}</div></article>`).join(''):empty(tr('جاهزون لأول طلب.','Ready for your first order.'),tr('عندما يطلب أحدهم من متجرك، ستجد شحنتك وتفاصيل توصيلها هنا فقط.','Your store’s shipments and delivery details will appear here when a buyer places an order.'),'','bag')}`;
+ }else if(tab==='store'){
+  content=`<div class="page-heading"><div><h1>${tr('واجهة تشبه متجرك.','Make your store feel like you.')}</h1><p>${tr('هوية بسيطة وآمنة، مرتبطة بنظام شمعة المركزي.','A simple, safe storefront connected to the SHAM’A marketplace.')}</p></div></div><section class="panel">${storeForm(S.store)}</section>`;
+ }else if(tab==='inventory'){
+  const result=await api('/api/seller/inventory');if(route!==S.route)return;
+  const reason=r=>({initial:tr('مخزون أولي','Initial stock'),adjustment:tr('تعديل يدوي','Manual adjustment'),sale:tr('طلب مؤكد على الخادم','Order committed'),cancel:tr('إلغاء واستعادة','Cancellation restore')})[r]||r;
+  content=`<div class="page-heading"><div><h1>${tr('كل قطعة، محسوبة.','Every piece accounted for.')}</h1><p>${tr('سجل غير قابل للتعديل عبر التطبيق لكل حركة مخزون.','An append-only application record of every stock movement.')}</p></div></div>${result.movements.length?`<div class="table-scroll"><table><thead><tr><th>${tr('المنتج','Product')}</th><th>${tr('التغير','Change')}</th><th>${tr('السبب','Reason')}</th><th>${tr('التاريخ','Date')}</th></tr></thead><tbody>${result.movements.map(r=>`<tr><td>#${r.product_id}</td><td><bdi>${r.delta>0?'+':''}${r.delta}</bdi></td><td>${esc(reason(r.reason))}</td><td>${date(r.created_at)}</td></tr>`).join('')}</tbody></table></div>`:empty(tr('المخزون يبدأ من أول منتج.','Stock starts with your first product.'),tr('ستظهر هنا الإضافات والمبيعات والإلغاءات.','Additions, orders and cancellations will appear here.'),'','grid')}`;
+ }else{
+  const result=await api('/api/seller/summary');if(route!==S.route)return;const r=result.summary;
+  content=`<div class="page-heading"><div><div class="eyebrow">${tr('مساحة للنجاح، خطوة بخطوة','A LITTLE ROOM TO GROW')}</div><h1>${tr('أهلًا بصاحب الحكاية.','Welcome, storyteller.')}</h1><p>${tr('أرقام محسوبة من طلبات متجرك، وليست توقعات.','Real calculations from your store’s orders, not forecasts.')}</p></div></div><div class="stat-grid">${statCard('bag',number(r.orders),tr('شحنات المتجر','Store shipments'))}${statCard('chart',money(r.delivered_sales_fils),tr('مبيعات تم تسليمها · د.أ','Delivered sales · JOD'))}${statCard('wallet',money(r.commission_due_fils),tr('عمولة مستحقة للمنصة · د.أ','Commission due to platform · JOD'))}${statCard('package',money(r.net_sales_fils),tr('صافي المبيعات مع الشحن · د.أ','Net sales incl. shipping · JOD'))}</div><div class="notice">${icon('info')}<p>${tr('في الدفع عند الاستلام، البائع أو مندوبه يجمع المبلغ. صافي المبيعات ليس محفظة أو رصيدًا للسحب، والعمولة ليست دليلًا على تحصيل فعلي. التسويات والتحويلات غير مفعّلة.','With cash on delivery, the seller or driver collects the payment. Net sales are not a wallet or withdrawable balance; commission records do not prove collection. Settlements and transfers are not enabled.')}</p></div><section class="panel"><div class="row space-between gap-bottom"><h2>${tr('اقتربت من النفاد','Running a little low')}</h2>${link('/seller?tab=products',tr('إدارة المنتجات','Manage products'),'text-link')}</div>${result.low_stock.length?result.low_stock.map(p=>`<div class="info-row"><span>${esc(field(p,'title'))}</span><strong>${number(p.stock)} ${tr('قطع','left')}</strong></div>`).join(''):`<p class="small-text">${tr('لا توجد منتجات بمخزون 3 قطع أو أقل.','No products have 3 or fewer pieces in stock.')}</p>`}</section>`;
+ }
+ if(route!==S.route)return;
+ main.innerHTML=`<div class="container page-space"><div class="dashboard-shell">${sellerNav(tab)}<div class="dashboard-main">${pending}${content}</div></div></div>`;
+}
+function openProduct(p=null){
+ S.editing=p;const isEdit=Boolean(p);
+ modal(isEdit?tr('تفاصيل أدق، اختيار أوضح.','A little more detail. A clearer find.'):tr('أضف شيئًا يستحق الاكتشاف.','Add something worth discovering.'),`<p class="dialog-description">${tr('المرحلة الحالية تدعم المنتجات المادية الجديدة فقط. لا ترفع منتجات محظورة أو مواصفات غير مثبتة. كل تعديل منشور يحتاج مراجعة جديدة.','This release supports new physical goods only. Do not upload prohibited products or unproven claims. Published edits require a new review.')}</p><form id="product-form">${errorBox('product-error')}<div class="form-row">${input('title_ar',tr('العنوان بالعربية','Arabic title'),{value:p?.title_ar||'',min:3,max:140,direction:'rtl'})}${input('title_en',tr('العنوان بالإنجليزية','English title'),{value:p?.title_en||'',min:3,max:140,direction:'ltr'})}</div><div class="form-row">${textarea('description_ar',tr('وصف بالعربية','Arabic description'),p?.description_ar||'')}${textarea('description_en',tr('وصف بالإنجليزية','English description'),p?.description_en||'')}</div><div class="form-row"><div class="form-field"><label for="category_id">${tr('الفئة','Category')}</label><select name="category_id" id="category_id" required>${categoryOptions(p?.category_id,false)}</select></div>${input('sku',tr('رمز المخزون SKU','Stock code (SKU)'),{value:p?.sku||'',max:60,direction:'ltr'})}</div><div class="form-row compact-row">${moneyInput('price',tr('سعر البيع','Sale price'),p?p.price_fils/1000:'','required')}${moneyInput('compare_at',tr('قبل الخصم، اختياري','Original price, optional'),p?.compare_at_fils?p.compare_at_fils/1000:'')}</div><div class="form-row compact-row"><div class="form-field"><label for="stock">${tr('الكمية المتاحة','Available quantity')}</label><input id="stock" name="stock" type="number" min="0" max="1000000" step="1" value="${p?.stock??1}" required></div><div class="form-field"><label for="product-status">${tr('الحفظ بصفة','Save as')}</label><select name="status" id="product-status"><option value="pending">${tr('إرسال للمراجعة','Submit for review')}</option><option value="draft" ${p?.status==='draft'?'selected':''}>${tr('مسودة','Draft')}</option><option value="paused" ${p?.status==='paused'?'selected':''}>${tr('متوقف','Paused')}</option></select></div></div><div class="form-field"><label for="product-image">${tr('صورة المنتج','Product image')}</label>${p?`<img class="media-preview" src="${esc(p.image_url)}" alt="${tr('الصورة الحالية','Current image')}">`:''}<input name="image" id="product-image" type="file" accept="image/jpeg,image/png,image/webp"><small>${tr('JPEG أو PNG أو WebP، حتى 5 ميغابايت. تُحسّن الصورة وتُحذف بياناتها الوصفية. الصورة مطلوبة للإرسال للمراجعة.','JPEG, PNG or WebP, up to 5 MB. Images are optimised and metadata is removed. An image is required for review.')}</small></div><div class="form-actions"><button class="btn btn-primary" type="submit">${icon('check')}${isEdit?tr('حفظ التغييرات','Save changes'):tr('حفظ المنتج','Save product')}</button><button class="btn btn-light" type="button" data-action="close-dialog">${tr('إلغاء','Cancel')}</button></div></form>`,true);
+}
+function openStock(id){const p=S.products.get(id);if(!p)return;S.editing=p;modal(tr('تحديث الكمية المتاحة','Update available stock'),`<p class="dialog-description">${esc(field(p,'title'))}. ${tr('سنرفض الحفظ إذا تغيّر المخزون بطلب آخر أثناء التعديل.','Saving will be rejected if another order changes stock while you edit.')}</p><form id="stock-form">${errorBox('stock-error')}<div class="form-field"><label for="new-stock">${tr('الكمية الجديدة','New quantity')}</label><input name="stock" id="new-stock" type="number" min="0" max="1000000" step="1" value="${p.stock}" required></div><button class="btn btn-primary btn-block" type="submit">${tr('تحديث المخزون','Update stock')}</button></form>`);}
+
+const ADMIN_TABS=[['overview','chart',()=>tr('نظرة عامة','Overview')],['stores','store',()=>tr('مراجعة المتاجر','Store reviews')],['products','package',()=>tr('مراجعة المنتجات','Product reviews')],['orders','bag',()=>tr('الطلبات','Orders')],['users','user',()=>tr('المستخدمون','Users')],['settings','grid',()=>tr('الإعدادات','Settings')],['ledger','wallet',()=>tr('سجل العمولات','Commission ledger')],['audit','shield',()=>tr('سجل التدقيق','Audit log')]];
+function adminNav(tab){return `<aside class="dashboard-nav" aria-label="${tr('لوحة الإدارة','Administration')}"><div class="dashboard-brand"><strong>${tr('إدارة شمعة','SHAM’A administration')}</strong><small>${tr('صلاحيات خادم + مصادقة ثنائية','Server permissions + MFA')}</small></div>${ADMIN_TABS.map(([v,ico,t])=>link('/admin?tab='+v,icon(ico)+t(),tab===v?'active':'')).join('')}</aside>`;}
+async function adminView(route){
+ title(tr('إدارة شمعة','SHAM’A administration'));if(!S.user){main.innerHTML=authGate('/admin');return;}
+ if(S.user.role!=='admin'){main.innerHTML=`<div class="container page-space">${empty(tr('هذه المساحة للإدارة فقط','This space is for administrators'),tr('يتم التحقق من صلاحيات الإدارة والمصادقة الثنائية على الخادم.','Administrator permissions and multi-factor authentication are checked on the server.'),link('/account',tr('العودة إلى حسابي','Back to my account'),'btn btn-primary'),'lock')}</div>`;return;}
+ const tab=new URLSearchParams(location.search).get('tab')||'overview';let content='';
+ const heading=(h,p)=>`<div class="page-heading"><div><h1>${h}</h1><p>${p}</p></div></div>`;
+ if(tab==='stores'){
+  const data=await api('/api/admin/stores');if(route!==S.route)return;S.adminStores=data.stores;
+  content=heading(tr('كل متجر، مراجعة واضحة.','Every store deserves a clear review.'),tr('تأكيد البريد أساسي. الموافقة لا تعني تحققًا قانونيًا أو حكوميًا.','Email confirmation is required. Approval does not certify legal or government verification.'))+(data.stores.length?data.stores.map(s=>`<section class="review-card"><div class="review-card-top"><div><h3>${esc(field(s,'name'))}</h3><p><bdi>${esc(s.email)}</bdi> · ${esc(cityName(s.city))}</p><p>${esc(field(s,'description'))}</p><p>${tr('عمولة مخصصة:','Custom commission:')} ${s.commission_bps===null?tr('حسب الإعداد العام أو الفئة','Global/category default'):s.commission_bps/100+'%'}</p></div>${pill(s.status)}</div>${s.is_demo?`<div class="notice warn">${icon('info')}<p>${tr('متجر توضيحي لا يُمنح توثيقًا ولا يُراجع كبائع حقيقي.','Illustrative store; it cannot be reviewed as a real seller.')}</p></div>`:`<form class="review-form" data-entity="stores" data-id="${s.id}">${errorBox('store-review-'+s.id)}<div class="form-field"><label for="review-${s.id}">${tr('ملاحظة للبائع','Note for seller')}</label><textarea id="review-${s.id}" name="note" maxlength="500">${esc(s.review_note)}</textarea></div><div class="review-actions"><button type="submit" name="decision" value="approve" class="btn btn-primary">${tr('موافقة ونشر المتجر','Approve store')}</button><button type="submit" name="decision" value="reject" class="btn btn-danger">${tr('رفض / إيقاف العرض','Reject / unpublish')}</button><button type="button" class="btn btn-light" data-action="commission" data-id="${s.id}">${tr('تخصيص العمولة','Custom commission')}</button></div></form>`}</section>`).join(''):empty(tr('لا توجد متاجر للمراجعة','No stores to review'),tr('ستظهر طلبات فتح المتاجر هنا.','Store applications will appear here.'),'','store'));
+ }else if(tab==='products'){
+  const data=await api('/api/admin/products');if(route!==S.route)return;
+  content=heading(tr('معلومات دقيقة قبل النشر.','Accurate details before publication.'),tr('راجع الوصف والصورة والسعر والمنتجات المقيدة. مؤشرات الاشتباه ليست حكمًا بالاحتيال.','Review descriptions, images, prices and restricted goods. Risk indicators are not proof of fraud.'))+(data.products.length?data.products.map(p=>`<section class="review-card"><div class="review-card-top"><div class="row"><img class="review-product-photo" src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="85" height="85"><div><h3>${esc(p.title_ar)}</h3><p>${esc(p.title_en)} · ${esc(field(p,'store_name'))}</p><p>${money(p.price_fils)} ${currency()} · ${number(p.stock)} ${tr('قطعة','pieces')}</p></div></div>${pill(p.status)}</div><p class="pre-wrap">${esc(p.description_ar)}</p><p class="pre-wrap">${esc(p.description_en)}</p>${p.is_demo?`<p>${tr('بيانات عرض توضيحية، وليست منتج بائع حقيقي.','Illustrative data, not a real seller product.')}</p>`:`<form class="review-form" data-entity="products" data-id="${p.id}">${errorBox('product-review-'+p.id)}<div class="form-field"><label for="product-review-note-${p.id}">${tr('ملاحظات المراجعة','Review notes')}</label><textarea name="note" id="product-review-note-${p.id}" maxlength="500">${esc(p.review_note)}</textarea></div><div class="review-actions"><button type="submit" name="decision" value="approve" class="btn btn-primary">${tr('موافقة ونشر','Approve & publish')}</button><button type="submit" name="decision" value="reject" class="btn btn-danger">${tr('رفض / سحب المنتج','Reject / unpublish')}</button></div></form>`}</section>`).join(''):empty(tr('لا توجد منتجات للمراجعة','No products to review'),tr('المنتجات الجديدة تظهر هنا بعد إضافتها.','Newly submitted products appear here.'),'','package'));
+ }else if(tab==='orders'){
+  const data=await api('/api/admin/orders');if(route!==S.route)return;
+  content=heading(tr('الطلبات، بكل وضوح.','Orders, with a clear trail.'),tr('لا يتم تأكيد التحصيل المالي آليًا عند تغيير حالة الشحنة.','Changing shipment status does not automatically confirm cash collection.'))+(data.orders.length?data.orders.map(o=>orderCard(o,true)).join(''):empty(tr('لم تُنشأ طلبات بعد','No orders yet'),tr('الطلبات المؤكدة على الخادم ستظهر هنا.','Orders committed on the server will appear here.'),'','bag'));
+ }else if(tab==='users'){
+  const data=await api('/api/admin/users');if(route!==S.route)return;
+  content=heading(tr('الحسابات والصلاحيات.','Accounts & permissions.'),tr('التعطيل يُنهي جميع جلسات الحساب فورًا. لا يمكن ترقية الدور من الواجهة.','Suspension revokes all sessions immediately. Roles cannot be elevated from this interface.'))+`<div class="table-scroll"><table><thead><tr><th>${tr('المستخدم','User')}</th><th>${tr('الدور','Role')}</th><th>${tr('البريد','Email')}</th><th>${tr('الحالة','Status')}</th><th>${tr('الإجراء','Action')}</th></tr></thead><tbody>${data.users.map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(({buyer:tr('مشترٍ','Buyer'),seller:tr('بائع','Seller'),admin:tr('مشرف','Administrator')})[u.role]||u.role)}</td><td><bdi>${esc(u.email)}</bdi><br><small>${u.email_verified_at?tr('البريد مؤكد','Email confirmed'):tr('غير مؤكد','Not confirmed')}</small></td><td>${pill(u.active?'active':'suspended')}</td><td><button class="btn ${u.active?'btn-danger':'btn-soft'}" data-action="toggle-user" data-id="${u.id}" data-active="${u.active}" ${u.id===S.user.id?'disabled':''}>${u.active?tr('تعطيل الحساب','Suspend account'):tr('تفعيل الحساب','Enable account')}</button></td></tr>`).join('')}</tbody></table></div>`;
+ }else if(tab==='settings'){
+  const data=await api('/api/admin/settings');if(route!==S.route)return;
+  content=heading(tr('قواعد واضحة، من الخادم.','Clear rules, on the server.'),tr('تُحفظ نسب الطلبات السابقة كما كانت. أولوية النسبة: المتجر، ثم الفئة، ثم الفئة الأم، ثم الإعداد العام.','Existing orders keep their commission snapshot. Precedence: store, category, parent category, then global.'))+`<section class="panel"><form id="settings-form">${errorBox('settings-error')}<div class="form-field"><label for="commission-percent">${tr('العمولة العامة (%)','Global commission (%)')}</label><input id="commission-percent" name="commission_percent" type="number" min="0" max="50" step="0.01" required value="${data.commission_bps/100}"></div>${input('home_title_ar',tr('عنوان الرئيسية بالعربية','Arabic homepage headline'),{value:data.home_title_ar,max:100,min:3})}${input('home_title_en',tr('عنوان الرئيسية بالإنجليزية','English homepage headline'),{value:data.home_title_en,max:100,min:3})}<div class="form-actions"><button type="submit" class="btn btn-primary">${tr('حفظ الإعدادات','Save settings')}</button><button type="button" class="btn btn-light" data-action="reauth">${icon('lock','small')}${tr('إعادة التحقق الأمني','Re-authenticate')}</button></div></form></section><section class="panel"><h2>${tr('عمولة حسب الفئة','Category commission')}</h2><form id="category-commission-form">${errorBox('category-commission-error')}<div class="form-row"><div class="form-field"><label for="category-commission-id">${tr('الفئة','Category')}</label><select id="category-commission-id" name="category_id">${data.category_commissions.map(c=>`<option value="${esc(c.id)}" data-rate="${c.commission_bps===null?'':c.commission_bps/100}">${c.parent_id?'— ':''}${esc(field(c,'name'))}</option>`).join('')}</select></div><div class="form-field"><label for="category-percent">${tr('النسبة (%)','Rate (%)')}</label><input id="category-percent" name="percent" type="number" min="0" max="50" step="0.01" value="${data.category_commissions[0]?.commission_bps==null?'':data.category_commissions[0].commission_bps/100}" aria-describedby="category-commission-hint" placeholder="${tr('فارغ = النسبة الموروثة','Empty = inherited rate')}"><small id="category-commission-hint">${tr('تظهر النسبة المحفوظة للفئة المختارة. اتركها فارغة لتوريث نسبة الفئة الأم أو النسبة العامة.','The selected category’s saved override is shown. Leave empty to inherit its parent or the global rate.')}</small></div></div><button class="btn btn-outline" type="submit">${tr('حفظ نسبة الفئة المحددة','Save selected category rate')}</button></form></section><div class="notice gap-top">${icon('shield')}<p>${tr('بعد 10 دقائق، يُطلب تأكيد كلمة المرور ورمز المصادقة لتغيير الإعدادات المالية. لا توجد عمليات صرف أو تحويل أموال مفعّلة.','After 10 minutes, financial changes require your password and authenticator code again. No payout or money-transfer operations are enabled.')}</p></div>`;
+ }else if(tab==='ledger'){
+  const data=await api('/api/admin/ledger');if(route!==S.route)return;
+  content=heading(tr('سجل عمولات قابل للتدقيق.','An auditable commission trail.'),tr('عمولات مستحقة عند تسليم طلبات الدفع عند الاستلام. ليست إثباتًا لقبض أموال أو صرفها.','Commission due on delivered COD shipments. These entries are not proof of collection or payout.'))+(data.entries.length?`<div class="table-scroll"><table><thead><tr><th>#</th><th>${tr('الشحنة','Shipment')}</th><th>${tr('المتجر','Store')}</th><th>${tr('المستحق للمنصة','Due to platform')}</th><th>${tr('التاريخ','Date')}</th></tr></thead><tbody>${data.entries.map(e=>`<tr><td>${e.id}</td><td>${e.seller_order_id}</td><td>${e.store_id}</td><td>${money(e.amount_fils)} ${currency()}</td><td>${date(e.created_at)}</td></tr>`).join('')}</tbody></table></div>`:empty(tr('لا توجد عمولات مكتسبة بعد','No commissions accrued yet'),tr('تُسجّل العمولة مرة واحدة عند اكتمال تسليم الشحنة فقط.','Commission is recorded once, only after a shipment is delivered.'),'','wallet'));
+ }else if(tab==='audit'){
+  const data=await api('/api/admin/audit');if(route!==S.route)return;
+  content=heading(tr('كل إجراء، له أثر.','Every action leaves a trail.'),tr('سجل إلحاق فقط داخل التطبيق. مسؤول قاعدة البيانات يظل ذا صلاحية تقنية ويحتاج ضوابط تشغيل مستقلة.','Append-only within the application. Database operators still need separate operational access controls.'))+`<div class="table-scroll"><table><thead><tr><th>#</th><th>${tr('الإجراء','Action')}</th><th>${tr('المنفذ','Actor')}</th><th>${tr('العنصر','Entity')}</th><th>${tr('التفاصيل','Details')}</th><th>${tr('الوقت','Time')}</th></tr></thead><tbody>${data.events.map(e=>`<tr><td>${e.id}</td><td><bdi>${esc(e.action)}</bdi></td><td>${e.actor_id??'CLI'}</td><td>${esc(e.entity)} #${esc(e.entity_id)}</td><td>${esc(e.detail)}</td><td>${date(e.created_at)}</td></tr>`).join('')}</tbody></table></div>`;
+ }else{
+  const data=await api('/api/admin/summary');if(route!==S.route)return;
+  content=heading(tr('شمعة، من وراء الكواليس.','SHAM’A, behind the scenes.'),tr('أرقام من قاعدة البيانات الحالية. بيانات المعاينة ليست نشاطًا تجاريًا حقيقيًا.','Figures from the current database. Preview data is not real commercial activity.'))+`<div class="stat-grid">${statCard('user',number(data.users),tr('حسابات','Accounts'))}${statCard('store',number(data.stores),tr('متاجر','Stores'))}${statCard('package',number(data.products),tr('منتجات','Products'))}${statCard('bag',number(data.orders),tr('طلبات محفوظة','Saved orders'))}</div><div class="panel"><h2>${tr('بانتظار المراجعة','Ready for a review')}</h2><div class="info-row">${link('/admin?tab=stores',tr('طلبات فتح المتاجر','Store applications'),'text-link')}<strong>${number(data.pending_stores)}</strong></div><div class="info-row">${link('/admin?tab=products',tr('منتجات بانتظار النشر','Products awaiting publication'),'text-link')}<strong>${number(data.pending_products)}</strong></div><div class="info-row"><span>${tr('بريد تعذّر إرساله','Failed email deliveries')}</span><strong>${number(data.failed_mail)}</strong></div></div><div class="notice gap-top">${icon('lock')}<p>${tr('لا توجد حسابات إدارة أو كلمات مرور افتراضية. البريد الحقيقي والنسخ الاحتياطي المجدول وHTTPS يتطلبون إعداد التشغيل قبل الإطلاق.','No default administrator accounts or passwords exist. Real email, scheduled backups and HTTPS require operational configuration before launch.')}</p></div>`;
+ }
+ if(route!==S.route)return;main.innerHTML=`<div class="container page-space"><div class="dashboard-shell">${adminNav(tab)}<div class="dashboard-main">${content}</div></div></div>`;
+}
+function openCommission(id){const s=S.adminStores?.find(x=>x.id===id);if(!s)return;S.commissionStore=s;modal(tr('عمولة مخصصة للمتجر','Custom store commission'),`<p class="dialog-description">${esc(field(s,'name'))} · ${tr('اترك النسبة فارغة لإلغاء التخصيص والعودة للفئة أو الإعداد العام.','Leave the rate empty to use category or global defaults.')}</p><form id="commission-form">${errorBox('commission-error')}<div class="form-field"><label for="store-percent">${tr('النسبة (%)','Rate (%)')}</label><input id="store-percent" name="percent" type="number" min="0" max="50" step="0.01" value="${s.commission_bps===null?'':s.commission_bps/100}"></div><button class="btn btn-primary btn-block" type="submit">${tr('حفظ النسبة','Save rate')}</button></form>`);}
+function openReauth(){modal(tr('نؤكّد هويتك أولًا.','Let’s confirm it’s you.'),`<p class="dialog-description">${tr('أدخل كلمة المرور ورمزًا جديدًا من تطبيق المصادقة. لا يمكن إعادة استخدام الرمز السابق.','Enter your password and a fresh authenticator code. Previously used codes cannot be reused.')}</p><form id="reauth-form">${errorBox('reauth-error')}${input('password',tr('كلمة المرور','Password'),{type:'password',max:128,autocomplete:'current-password'})}${input('otp',tr('رمز المصادقة','Authenticator code'),{max:6,autocomplete:'one-time-code',direction:'ltr'})}<button class="btn btn-primary btn-block" type="submit">${tr('تأكيد هويتي','Confirm my identity')}</button></form>`);}
+
+function helpView(){
+ title(tr('المساعدة والثقة','Help & trust'));
+ main.innerHTML=`<div class="container page-space"><div class="help-content"><div class="eyebrow">${icon('leaf','small')}${tr('وضوح من أول خطوة','CLEAR FROM THE FIRST STEP')}</div><h1>${tr('خلّينا نجاوب أسئلتك.','Let’s make things a little clearer.')}</h1><p class="gap-top">${tr('شمعة سوق متعدد البائعين في الأردن. النسخة الحالية مرحلة تشغيل محلية أولى، وليست إعلان إطلاق عام.','SHAM’A is a multi-vendor marketplace for Jordan. This version is an initial local operating release, not a public launch announcement.')}</p><nav class="help-nav">${[['delivery',tr('الطلب والتوصيل','Orders & delivery')],['returns',tr('الإلغاء والإرجاع','Cancellation & returns')],['sellers',tr('للبائعين','For sellers')],['privacy',tr('الخصوصية','Privacy')],['terms',tr('الشروط','Terms')]].map(([id,t])=>link('/help#'+id,t,'chip')).join('')}</nav><div class="legal-draft">${tr('سياسات أولية للنسخة التطويرية. يجب اعتماد النصوص القانونية والضريبية وسياسات الإرجاع من مختص أردني قبل استقبال معاملات حقيقية.','Development policy drafts. Jordanian legal, tax and returns policies must be reviewed by a qualified specialist before accepting real transactions.')}</div>
+ <section class="panel" id="delivery"><h2>${tr('اختيارات متعددة، شحنات واضحة.','One bag. Clear, separate shipments.')}</h2><p>${tr('تُقسّم السلة إلى شحنة لكل متجر. تظهر رسوم كل شحنة قبل تأكيد الطلب. يتأكد الخادم من السعر والمخزون، ثم يحفظ الطلب ويحجز الكمية نهائيًا له في معاملة واحدة.','Your bag is split into a shipment for each store. Each shipping fee is displayed before confirmation. The server verifies the price and stock, then saves the order and deducts its stock in one transaction.')}</p><p>${tr('الدفع عند الاستلام فقط. البائع مسؤول عن ترتيب التوصيل وتحديث الحالة يدويًا. لا يوجد تتبع آلي لشركة شحن، أو دفع إلكتروني، أو ضمان لمدة التوصيل.','Payment is cash on delivery only. Sellers arrange delivery and update status manually. There is no automatic carrier tracking, online payment or guaranteed delivery time.')}</p><p>${tr('إذا انقطع الاتصال بعد التأكيد، أعد المحاولة من الصفحة نفسها أو افتح الطلبات. يحتفظ المتصفح بمفتاح إعادة المحاولة فقط، دون عنوانك أو رقمك، لمنع الطلب المكرر.','If the connection fails after confirmation, retry on the same page or open your orders. The browser keeps only a retry key, not your address or phone number, to prevent duplicates.')}</p></section>
+ <section class="panel" id="returns"><h2>${tr('إلغاء واضح، دون وعود وهمية.','Clear cancellation. No empty promises.')}</h2><p>${tr('يمكن للمشتري إلغاء كل شحنة من صفحة طلباته عندما تكون جديدة أو مؤكدة، قبل تجهيزها. يعيد الخادم مخزونها مرة واحدة. بعد التجهيز، يحتاج الإلغاء إلى مراجعة البائع أو الإدارة وفق السياسة المعتمدة. لا تُحوّل مبالغ أو تُرد أموال تلقائيًا في هذه النسخة.','Buyers can cancel each shipment from their orders while it is new or confirmed, before preparation. Stock is restored exactly once. After preparation, cancellation requires seller or administrator review under the agreed policy. No money is automatically transferred or refunded in this version.')}</p><p>${tr('نظام طلبات الإرجاع والنزاعات والرسائل لم يُفعّل بعد، وهو مانع إطلاق تجاري حتى وضع إجراء دعم بشري واضح وسياسة إرجاع معتمدة. لا تقدّم شمعة حاليًا ضمان مشتريات أو خدمة حفظ أموال.','Returns, disputes and internal messaging are not enabled yet. A clear human support process and approved returns policy are launch prerequisites. SHAM’A currently provides no purchase guarantee or escrow service.')}</p></section>
+ <section class="panel" id="sellers"><h2>${tr('من فكرة صغيرة، لمتجر مستقل.','From a small idea to your own store.')}</h2><ol><li>${tr('أنشئ حسابًا وأكّد بريدك الإلكتروني.','Create an account and verify your email.')}</li><li>${tr('أرسل بيانات متجرك والشحن للمراجعة. لا تُمنح شارة ثقة عند تأكيد البريد.','Submit your store and shipping details for review. Email confirmation does not grant a trusted-seller badge.')}</li><li>${tr('بعد الموافقة، أضف حتى 10 منتجات مادية جديدة، بصور ومعلومات دقيقة باللغتين.','After approval, add up to 10 new physical products, with images and accurate details in both languages.')}</li><li>${tr('تابع المخزون والطلبات وحدّث حالات الشحن يدويًا. يُرفض تعديل المخزون إن كانت نسخة المنتج قد تغيّرت أثناء التعديل.','Manage stock and update shipment statuses manually. Stock edits are rejected if the product version changed while you edited it.')}</li></ol><p>${tr('تُحسب العمولة على قيمة المنتجات بعد الخصم، دون رسوم الشحن، وتُحفظ نسبتها مع الطلب. في الدفع عند الاستلام، تسجّل العمولة كمستحق للمنصة عند التسليم؛ لا يوجد رصيد محفظة أو صرف آلي.','Commission is calculated on discounted item value, excluding shipping, with a rate snapshot stored on the order. For cash on delivery, it accrues as due to the platform on delivery; there is no wallet or automatic payout.')}</p></section>
+ <section class="panel" id="privacy"><h2>${tr('بياناتك، للغرض الضروري فقط.','Your data, only where it is needed.')}</h2><p>${tr('نحفظ اسمك وبريدك وكلمة مرور مجزّأة. يحتاج الطلب إلى اسم مستلم وهاتف وعنوان، ويُظهر لكل بائع بيانات شحنته فقط. تحفظ الجلسات رموزًا مجزّأة ووصف المتصفح وبصمة عنوان الشبكة للتنبيه الأمني، دون عرضها لمستخدمين آخرين.','We store your name, email and a password hash. Orders require recipient, phone and address details; each seller can see only their shipment. Sessions store hashed tokens, browser descriptions and network-address hashes for security alerts, not for other users to view.')}</p><p>${tr('تُخزّن السلة غير المسجّلة والمفضلة واللغة محليًا لأغراض وظيفية فقط. لا توجد تحليلات إعلانية أو توصيات سلوكية أو تتبع تسويقي. لا تُخزّن صفحات الحساب والطلبات في ذاكرة PWA العامة.','Guest bags, saved items and language preferences are stored locally for functionality only. There are no advertising analytics, behavioural recommendations or marketing trackers. Account and order pages are not stored in the public PWA cache.')}</p><p>${tr('إدارة تنزيل البيانات وحذف الحساب، ومدد الاحتفاظ القانونية، وإجراءات التواصل مع مسؤول الخصوصية لا تزال تتطلب إجراء تشغيل بشري موثق قبل الإطلاق. إغلاق جلسة لا يحذف بيانات الطلبات اللازمة للمحاسبة.','Data export, account deletion, lawful retention periods and a privacy-contact process still require a documented human operating procedure before launch. Revoking a session does not delete order records needed for accounting.')}</p><div class="form-actions"><button class="btn btn-outline btn-small" data-action="clear-local">${tr('مسح المفضلة والسلة المحلية','Clear local saved items & bag')}</button>${link('/account',tr('إدارة الجلسات','Manage sessions'),'btn btn-light btn-small')}</div></section>
+ <section class="panel" id="terms"><h2>${tr('شروط النسخة وحدودها.','This version’s terms & limits.')}</h2><p>${tr('تُمنع السلع غير القانونية والمقلّدة والمسروقة والخطرة والمواد المحظورة. لا تعرض منتجات تتطلب ترخيصًا أو ادعاءات صحية دون التحقق من متطلباتها القانونية. المنتجات المستعملة والرقمية والتفاوض والرسائل والتقييمات والكوبونات والولاء والتسويق بالعمولة وميزات الذكاء الاصطناعي مؤجلة.','Illegal, counterfeit, stolen, dangerous and prohibited goods are not allowed. Do not list licensed goods or health claims without checking legal requirements. Used and digital goods, negotiation, messages, reviews, coupons, loyalty, affiliates and AI features are deferred.')}</p><p>${tr('الصور وبيانات المتاجر الموسومة للمعاينة مولّدة أو توضيحية، وليست إثباتًا لمنتج أو بائع حقيقي. الطلبات في بيئة التطوير محلية للتجربة فقط. معرّف الطلب ليس فاتورة ضريبية رسمية.','Preview-labelled images and store data are generated or illustrative, not evidence of real products or sellers. Development orders are local test records. An order reference is not an official tax invoice.')}</p><p>${tr('المحتوى التلقائي هنا لا يشكّل استشارة قانونية أو ضريبية، ولا ضمانًا للأمان المطلق أو جودة البضائع. الإطلاق يحتاج مراجعة قانونية وأمنية وإعداد بريد وHTTPS ونسخ احتياطي ومراقبة فعلية.','This content is not legal or tax advice, nor a guarantee of absolute security or product quality. Launch requires legal and security review, real email, HTTPS, backups and monitoring.')}</p></section></div></div>`;
+}
+
+async function refreshUser(){const data=await api('/api/auth/me');S.user=data.user;setCsrf(data.csrf_token);return S.user;}
+async function navigate(href,replace=false){
+ const url=new URL(href,location.origin);if(url.origin!==location.origin)return;
+ if(dialog.open)closeModal();
+ const same=url.pathname===location.pathname&&url.search===location.search;
+ history[replace?'replaceState':'pushState']({},'',url.pathname+url.search+url.hash);
+ if(same&&url.hash){document.getElementById(decodeURIComponent(url.hash.slice(1)))?.scrollIntoView();return;}
+ await renderRoute();
+}
+async function renderRoute(){
+ if(!S.boot){await init();return;}
+ const route=++S.route;const path=location.pathname;
+ renderHeader();renderFooter();loading();
+ try{
+  if(path==='/')await homeView(route);
+  else if(path==='/search')await searchView(route);
+  else if(/^\/product\/\d+$/.test(path))await productView(Number(path.split('/')[2]),route);
+  else if(path==='/stores')await storesView('',route);
+  else if(path.startsWith('/store/'))await storesView(decodeURIComponent(path.split('/')[2]),route);
+  else if(path==='/cart')await cartView(route);
+  else if(path==='/checkout')await checkoutView(route);
+  else if(path==='/orders')await ordersView(route);
+  else if(path==='/account')await accountView(route);
+  else if(path==='/seller')await sellerView(route);
+  else if(path==='/admin')await adminView(route);
+  else if(path==='/favorites')await favoritesView(route);
+  else if(path==='/help')helpView();
+  else if(path==='/verify-email')tokenView();
+  else if(path==='/reset-password')tokenView(true);
+  else{title(tr('الصفحة غير موجودة','Page not found'));main.innerHTML=`<div class="container page-space">${empty(tr('شكلنا أخذنا طريقًا ثانيًا.','We seem to have taken a little detour.'),tr('الصفحة غير موجودة. خلّينا نرجع للاكتشاف.','That page isn’t here. Let’s get back to exploring.'),link('/',tr('العودة للرئيسية','Back to home'),'btn btn-primary'),'search')}</div>`;}
+ }catch(error){if(route===S.route){if(error.status===401){S.user=null;setCsrf('');renderHeader();}errorView(error);}}
+ if(route!==S.route)return;
+ if(location.hash)requestAnimationFrame(()=>document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView());
+ else window.scrollTo({top:0,behavior:'instant'});
+ main.focus({preventScroll:true});
+}
+window.addEventListener('popstate',renderRoute);
+document.addEventListener('click',e=>{
+ const a=e.target.closest('a[data-link]');if(!a||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
+ e.preventDefault();navigate(a.getAttribute('href'));
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
-
-/* ─────────────── التنقل بين الصفحات ─────────────── */
-function go(view) {
-  if ((view === "dashboard" || view === "admin") && !S.user) { openAuth("login", "لوحة التحكم تتطلب تسجيل الدخول"); return; }
-  if (view === "admin" && (!S.user || !S.user.is_admin)) { toast("هذه الصفحة لمدير المنصة فقط", "err"); return; }
-  S.view = view;
-  ["home", "safety", "dashboard", "admin"].forEach(v => {
-    $(`#view-${v}`).hidden = v !== view;
-  });
-  if (view === "home") renderHome();
-  if (view === "safety") renderSafety();
-  if (view === "dashboard") renderDashboard();
-  if (view === "admin") renderAdmin();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+function confirmAction(titleText,description,action){
+ modal(titleText,`<p class="dialog-description">${esc(description)}</p><div class="form-actions"><button class="btn btn-danger" id="confirm-action">${tr('نعم، تأكيد','Yes, confirm')}</button><button class="btn btn-light" data-action="close-dialog">${tr('تراجع','Go back')}</button></div>`);
+ $('#confirm-action').addEventListener('click',async e=>{e.currentTarget.disabled=true;try{await action();closeModal();}catch(error){toast(error.message,true);if($('#confirm-action'))$('#confirm-action').disabled=false;}});
 }
-
-/* ═══════════════════════════════════════════════════════════
-   الصفحة الرئيسية
-   ═══════════════════════════════════════════════════════════ */
-async function loadListings() {
-  const f = S.filters;
-  const p = new URLSearchParams({
-    q: f.q, category: f.category === "الكل" ? "" : f.category,
-    city: f.city === "كل الأردن" ? "" : f.city,
-    barter: f.barter ? "1" : "-1", sort: f.sort, limit: "80",
-  });
-  const data = await api(`/api/listings?${p}`);
-  S.listings = data.listings;
-  S.totals = data.totals;
-  S.catCounts = data.category_counts;
-}
-
-function renderHome() {
-  const cats = S.boot.categories;
-  $("#view-home").innerHTML = `
-    ${heroHTML()}
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="card">
-          <h3>📂 الأقسام</h3>
-          <div class="cat-list" id="catList"></div>
-        </div>
-        <div class="card">
-          <h3>🎛️ تصفية النتائج</h3>
-          <div class="field">
-            <label>المدينة</label>
-            <select id="fCity"></select>
-          </div>
-          <label class="switch ${S.filters.barter ? "on" : ""}" id="fBarter">
-            <span class="sw-box">${S.filters.barter ? "✓" : ""}</span>
-            <span class="switch-text"><strong>🔄 يقبل المقايضة فقط</strong><small>تبادل السلع بدون دفع نقدي</small></span>
-          </label>
-          <div class="field" style="margin-top:.9rem">
-            <label>الترتيب</label>
-            <select id="fSort">
-              <option value="recent">الأحدث أولاً</option>
-              <option value="price_asc">السعر: من الأقل للأعلى</option>
-              <option value="price_desc">السعر: من الأعلى للأقل</option>
-              <option value="popular">الأكثر مشاهدة</option>
-            </select>
-          </div>
-          <button class="btn btn-outline btn-block btn-sm" id="fReset">↺ إعادة ضبط الفلاتر</button>
-        </div>
-        ${boostHTML()}
-      </aside>
-      <div>
-        <div class="toolbar">
-          <h2 id="resultsTitle">أحدث الإعلانات</h2>
-          <div class="chips" id="sortChips"></div>
-        </div>
-        <div id="results"></div>
-      </div>
-    </div>`;
-
-  // الأقسام
-  $("#catList").innerHTML = [["الكل", S.totals.ads || 0], ...cats.map(c => [c, S.catCounts[c] || 0])]
-    .map(([name, n]) => `
-      <div class="cat-item ${S.filters.category === name ? "active" : ""}" data-cat="${esc(name)}">
-        <span>${name === "الكل" ? "🌐" : CAT_EMOJI[name] || "📦"} ${esc(name)}</span>
-        <span class="cat-count">${n}</span>
-      </div>`).join("");
-  $$("#catList .cat-item").forEach(el => el.onclick = () => {
-    S.filters.category = el.dataset.cat; renderHome(); loadAndRenderResults();
-  });
-
-  // المدن
-  $("#fCity").innerHTML = ["كل الأردن", ...S.boot.cities]
-    .map(c => `<option ${S.filters.city === c ? "selected" : ""}>${esc(c)}</option>`).join("");
-  $("#fCity").onchange = (e) => { S.filters.city = e.target.value; loadAndRenderResults(); };
-  $("#fSort").value = S.filters.sort;
-  $("#fSort").onchange = (e) => { S.filters.sort = e.target.value; loadAndRenderResults(); };
-  $("#fBarter").onclick = () => { S.filters.barter = !S.filters.barter; renderHome(); loadAndRenderResults(); };
-  $("#fReset").onclick = () => {
-    S.filters = { q: "", category: "الكل", city: "كل الأردن", barter: false, sort: "recent" };
-    $("#searchInput").value = ""; renderHome(); loadAndRenderResults();
-  };
-
-  loadAndRenderResults();
-}
-
-function heroHTML() {
-  if (S.user) {
-    return `<div class="hero">
-      <h1>أهلاً ${esc(S.user.name)} 👋 <em>جاهز تبيع اليوم؟</em></h1>
-      <p>لديك ${S.user.pricing_credits} تسعيرة ذكية في رصيدك. الإعلانات المثبّتة ⭐ تُشاهد بمعدل 4 أضعاف العادية.</p>
-      <div class="hero-acts">
-        <button class="btn btn-primary" onclick="openNewListing()">➕ أضف إعلاناً الآن</button>
-        <button class="btn btn-star" onclick="openPricing()">🤖 احسب سعر سلعتي</button>
-        <button class="btn btn-ghost" style="color:#fff" onclick="go('dashboard')">📊 لوحة التحكم</button>
-      </div>
-    </div>`;
+document.addEventListener('click',async e=>{
+ const button=e.target.closest('button[data-action]');if(!button||button.disabled)return;
+ const action=button.dataset.action,id=Number(button.dataset.id);
+ const busy=['add-cart','detail-add','cart-minus','cart-plus','cart-remove','logout','resend','read-notifications','revoke-session'];
+ if(busy.includes(action))button.disabled=true;
+ try{
+  if(action==='close-dialog')closeModal();
+  else if(action==='login')openAuth();
+  else if(action==='register')openAuth('register');
+  else if(action==='forgot')openAuth('forgot');
+  else if(action==='account')navigate('/account');
+  else if(action==='retry')renderRoute();
+  else if(action==='language'){setLanguage(lang==='ar'?'en':'ar');const p=new URLSearchParams(location.search);p.delete('lang');history.replaceState({},'',location.pathname+(p.size?'?'+p:'')+location.hash);renderRoute();}
+  else if(action==='city')modal(tr('اختيارات أقرب إليك.','Find something a little closer.'),`<p class="dialog-description">${tr('تصفّح حسب مدينة المتجر. هذا لا يغيّر رسوم الشحن أو عنوان طلبك.','Browse by store city. This does not change shipping fees or your delivery address.')}</p><form id="city-form"><div class="form-field"><label for="browse-city">${tr('مدينة المتجر','Store city')}</label><select name="city" id="browse-city"><option value="">${tr('كل الأردن','All of Jordan')}</option>${cityOptions('')}</select></div><button class="btn btn-primary btn-block" type="submit">${tr('اكتشف المتاجر القريبة','Find nearby products')}</button></form>`);
+  else if(action==='favorite'){
+   if(S.favorites.includes(id))S.favorites=S.favorites.filter(x=>x!==id);else S.favorites.push(id);
+   S.favorites=S.favorites.slice(-100);saveLocal('shamaa.favorites',S.favorites);
+   $$(`button[data-action="favorite"][data-id="${id}"]`).forEach(b=>{b.classList.toggle('saved',S.favorites.includes(id));b.setAttribute('aria-pressed',String(S.favorites.includes(id)));});
+   toast(S.favorites.includes(id)?tr('حفظنا اختيارك، ارجع له وقت ما تحب.','Saved for whenever you’re ready.'):tr('أُزيل من اختياراتك المحفوظة.','Removed from your saved finds.'));
+   if(location.pathname==='/favorites')renderRoute();
   }
-  return `<div class="hero">
-    <h1>بيع واشترِ وقايض <em>بأذكى تسعير في الأردن</em></h1>
-    <p>منصة مبوبة نظيفة وسريعة بدون إعلانات مزعجة — مع مساعد ذكاء اصطناعي يحسب لك السعر العادل قبل أن تنشر، ونظام توثيق يحمي حقوقك عند المقايضة.</p>
-    <div class="hero-acts">
-      <button class="btn btn-primary" onclick="openNewListing()">➕ أضف إعلانك مجاناً</button>
-      <button class="btn btn-star" onclick="openPricing()">🤖 جرّب التسعير الذكي</button>
-      <button class="btn btn-ghost" style="color:#fff;border-color:rgba(255,255,255,.25)" onclick="openAuth('login')">تسجيل الدخول</button>
-    </div>
-  </div>`;
-}
-
-function boostHTML() {
-  return `<div class="card boost-card">
-    <h3>⭐ هل تريد بيعاً أسرع؟</h3>
-    <p>ثبّت إعلانك في أعلى نتائج البحث لمدة ${S.boot.pricing.feature_days} أيام.</p>
-    <ul class="boost-list">
-      <li>ظهور قبل كل الإعلانات في قسمك</li>
-      <li>إطار ذهبي وشارة «مثبّت» تلفت الانتباه</li>
-      <li>مشاهدات أكثر بمعدل 4 أضعاف</li>
-      <li>رابط واتساب مباشر للمشتري</li>
-    </ul>
-    <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.7rem">
-      <b style="font-size:1.5rem;color:#FFD86B">${S.boot.pricing.feature_price}</b>
-      <span style="font-size:.8rem;opacity:.75">دينار / ${S.boot.pricing.feature_days} أيام<br>التجديد ${S.boot.pricing.renew_price} د.أ فقط</span>
-    </div>
-    <button class="btn btn-star btn-block" onclick="openBoost()">ثبّت إعلاني الآن</button>
-  </div>`;
-}
-
-async function loadAndRenderResults() {
-  const box = $("#results");
-  if (!box) return;
-  box.innerHTML = `<div class="empty"><span class="big">⏳</span>جارٍ تحميل الإعلانات…</div>`;
-  try {
-    await loadListings();
-  } catch (e) {
-    box.innerHTML = `<div class="empty"><span class="big">⚠️</span>${esc(e.message)}</div>`;
-    return;
+  else if(action==='add-cart')await addCart(id);
+  else if(action==='detail-add')await addCart(id,S.quantity);
+  else if(action==='detail-plus'||action==='detail-minus'){
+   S.quantity=Math.max(1,Math.min(S.quantity+(action==='detail-plus'?1:-1),S.detail.stock||1,99));$('#detail-quantity').textContent=number(S.quantity);
   }
-  updateStats();
-  const f = S.filters;
-  $("#resultsTitle").textContent =
-    f.category !== "الكل" ? `${CAT_EMOJI[f.category] || ""} ${f.category}` :
-    f.q ? `نتائج البحث عن «${f.q}»` : "أحدث الإعلانات في الأردن";
-
-  if (!S.listings.length) {
-    box.innerHTML = `<div class="empty">
-      <span class="big">🔍</span>
-      <strong>لا توجد إعلانات مطابقة</strong>
-      <p style="margin:.4rem 0 1rem;font-size:.88rem">جرّب توسيع البحث أو كن أول من ينشر في هذا القسم!</p>
-      <button class="btn btn-primary" onclick="openNewListing()">➕ أضف إعلانك الآن</button>
-    </div>`;
-    return;
+  else if(action.startsWith('cart-')){await setCart(id,action==='cart-remove'?0:Math.max(0,cartItemQuantity(id)+(action==='cart-plus'?1:-1)));await renderRoute();}
+  else if(action==='checkout'){if(!S.user){S.afterAuth='/checkout';openAuth();}else navigate('/checkout');}
+  else if(action==='logout'){await api('/api/auth/logout',{method:'POST'});S.user=null;setCsrf('');S.cart={groups:[],quantity:0};S.checkout=null;await getCart();toast(tr('إلى لقاء قريب. خرجت من حسابك بأمان.','See you soon. You’ve been signed out.'));navigate('/');}
+  else if(action==='resend'){await api('/api/auth/resend-verification',{method:'POST'});toast(S.boot.email_mode==='file'?tr('حُفظ رابط جديد في صندوق data/mail المحلي.','A new link was saved to the private data/mail folder.'):tr('جُهّز رابط التحقق للإرسال. تحقّق من بريدك.','A verification email was queued. Check your inbox.'));}
+  else if(action==='read-notifications'){await api('/api/notifications/read',{method:'POST'});renderRoute();}
+  else if(action==='revoke-session'){await api('/api/auth/sessions/'+button.dataset.id,{method:'DELETE'});if(button.dataset.current==='true'){S.user=null;setCsrf('');await getCart();}toast(tr('انتهت الجلسة.','Session revoked.'));renderRoute();}
+  else if(action==='cancel-order')confirmAction(tr('نلغي هذه الشحنة؟','Cancel this shipment?'),tr('سيُعاد المخزون ولن تتأثر شحنات المتاجر الأخرى. لا يوجد مبلغ إلكتروني لاسترداده.','Stock will be restored without affecting other stores’ shipments. There is no online payment to refund.'),async()=>{await api(`/api/orders/${button.dataset.order}/shipments/${id}/cancel`,{method:'POST'});toast(tr('أُلغيت الشحنة وأُعيد مخزونها.','The shipment was cancelled and its stock restored.'));renderRoute();});
+  else if(action==='new-product')openProduct();
+  else if(action==='edit-product')openProduct(S.products.get(id));
+  else if(action==='stock')openStock(id);
+  else if(action==='commission')openCommission(id);
+  else if(action==='reauth')openReauth();
+  else if(action==='toggle-user')confirmAction(tr('تغيير حالة الحساب؟','Change account status?'),tr('تعطيل الحساب يُنهي جلساته ويخفي منتجاته، دون حذف سجلاته المالية.','Suspending the account revokes its sessions and hides its products, without deleting financial records.'),async()=>{await api('/api/admin/users/'+id,{method:'PATCH',body:{active:button.dataset.active!=='1'}});toast(tr('حُدّثت حالة الحساب.','Account status updated.'));renderRoute();});
+  else if(action==='clear-local')confirmAction(tr('نمسح الاختيارات المحلية؟','Clear your local finds?'),tr('ستُمسح السلة غير المسجّلة والمفضلة من هذا المتصفح فقط. لن تُحذف الطلبات أو سلة الحساب.','This clears only this browser’s guest bag and saved items. Account bags and orders will not be deleted.'),async()=>{S.guest={};S.favorites=[];saveLocal('shamaa.cart',{});saveLocal('shamaa.favorites',[]);await getCart();updateCartCount();toast(tr('مُسحت البيانات المحلية المحددة.','Selected local data cleared.'));});
+  else if(action==='install'){
+   if(S.install){await S.install.prompt();S.install=null;}
+   else modal(tr('شمعة، أقرب على جوالك.','Keep SHAM’A a little closer.'),`<p class="dialog-description">${tr('في متصفح يدعم التثبيت، افتح قائمة المتصفح ثم اختر «إضافة إلى الشاشة الرئيسية» أو «تثبيت التطبيق». على iPhone استخدم المشاركة في Safari ثم «إضافة إلى الشاشة الرئيسية».','In a supported browser, open the browser menu and choose “Add to Home Screen” or “Install app”. On iPhone, use Safari’s Share menu, then “Add to Home Screen”.')}</p><div class="notice">${icon('wifi')}<p>${tr('بعد الزيارة الأولى يمكنك تصفّح المنتجات العامة التي حُمّلت سابقًا. إنشاء الطلبات وتحديث المخزون يحتاجان اتصالًا بالخادم.','After your first visit, previously loaded public products can be browsed offline. Orders and stock changes require a server connection.')}</p></div>`);
   }
-  box.innerHTML = `<div class="grid">${S.listings.map(adCard).join("")}</div>`;
-  $$("#results .ad").forEach(el => {
-    el.onclick = (ev) => {
-      if (ev.target.closest("[data-stop]")) return;
-      openDetail(Number(el.dataset.id));
-    };
-  });
-}
-
-function adCard(a) {
-  const emoji = CAT_EMOJI[a.category] || "📦";
-  const cls = CAT_CLASS[a.category] || "th-أخرى";
-  const thumb = a.image
-    ? `<div class="ad-thumb photo"><img src="${esc(a.image)}" alt="${esc(a.title)}" loading="lazy"></div>`
-    : `<div class="ad-thumb ${cls}">${emoji}</div>`;
-  return `<article class="ad ${a.is_featured ? "featured" : ""}" data-id="${a.id}" style="cursor:pointer">
-    ${thumb}
-    <div class="ad-body">
-      <h3 class="ad-title">${esc(a.title)}</h3>
-      <div class="ad-price">${jd(a.price)} <small>${esc(S.boot.currency)}</small></div>
-      <div class="ad-meta">
-        <span class="tag tag-cat">${esc(a.category)}</span>
-        <span class="tag">📍 ${esc(a.city)}</span>
-        ${a.accepts_barter ? `<span class="tag tag-barter">🔄 مقايضة</span>` : ""}
-        ${a.seller_verified ? `<span class="tag tag-verified">🛡️ موثّق</span>` : ""}
-      </div>
-      <div class="ad-actions">
-        <a class="btn btn-green btn-sm" data-stop href="${esc(a.whatsapp_url)}" target="_blank" rel="noopener">💬 واتساب</a>
-        <button class="btn btn-outline btn-sm" data-stop onclick="openDetail(${a.id})">التفاصيل</button>
-      </div>
-    </div>
-    <div class="ad-foot">
-      <span>👤 ${esc(a.seller_name)}</span>
-      <span>👁 ${a.views} · ${esc(a.age_label)}</span>
-    </div>
-  </article>`;
-}
-
-function updateStats() {
-  $("#statAds").textContent = jd(S.totals.ads || 0);
-  $("#statBarter").textContent = jd(S.totals.barter || 0);
-  $("#statSellers").textContent = jd(S.totals.sellers || 0);
-}
-
-/* ═══════════════════════════════════════════════════════════
-   تفاصيل الإعلان
-   ═══════════════════════════════════════════════════════════ */
-async function openDetail(id) {
-  try {
-    const { listing: a } = await api(`/api/listings/${id}`);
-    const emoji = CAT_EMOJI[a.category] || "📦";
-    const cls = CAT_CLASS[a.category] || "th-أخرى";
-    const mine = S.user && (S.user.id === a.user_id);
-    modal(`
-      ${a.image ? `<div class="detail-hero"><img src="${esc(a.image)}" alt="${esc(a.title)}"></div>` : ""}
-      <div class="detail-head">
-        <div class="detail-thumb ${cls}">${emoji}</div>
-        <div style="flex:1;min-width:0">
-          <h2>${a.is_featured ? "⭐ " : ""}${esc(a.title)}</h2>
-          <div class="detail-price">${jd(a.price)} <small style="font-size:.9rem;color:var(--slate)">${esc(S.boot.currency)}</small></div>
-          <div class="ad-meta" style="margin-top:.4rem">
-            <span class="tag tag-cat">${esc(a.category)}</span>
-            <span class="tag">📍 ${esc(a.city)}</span>
-            ${a.accepts_barter ? `<span class="tag tag-barter">🔄 يقبل المقايضة</span>` : `<span class="tag">💵 بيع نقدي فقط</span>`}
-          </div>
-        </div>
-      </div>
-      <dl class="kv">
-        <dt>البائع</dt><dd>${esc(a.seller_name)} ${a.seller_verified ? '<span class="tag tag-verified">🛡️ بائع موثّق</span>' : ""}</dd>
-        <dt>عدد إعلاناته</dt><dd>${a.seller_ads}</dd>
-        <dt>نُشر</dt><dd>${esc(a.age_label)} · ${a.views} مشاهدة</dd>
-        ${a.is_featured ? `<dt>التثبيت</dt><dd>⭐ مثبّت — متبقٍ ${a.featured_hours_left} ساعة</dd>` : ""}
-        ${mine && a.hits ? `<dt>أثر المشاركة</dt><dd>🔗 ${a.hits.scans} فتحة رابط مشاركة · 📄 ${a.hits.pages} زيارة للصفحة — كل واحدة فرصة بيع</dd>` : ""}
-      </dl>
-      <div class="desc">${esc(a.description || "لم يضف البائع وصفاً تفصيلياً.")}</div>
-      <div class="pay-note">
-        <span>🛡️</span>
-        <span><strong>تذكير أمني:</strong> التَقِ البائع في مكان عام، عاين السلعة قبل الدفع، ووثّق أي اتفاق مقايضة برسالة واتساب مكتوبة.</span>
-      </div>
-      <div style="display:flex;gap:.55rem;flex-wrap:wrap;margin-top:.4rem">
-        <a class="btn btn-green" style="flex:1" href="${esc(a.whatsapp_url)}" target="_blank" rel="noopener">💬 تواصل عبر واتساب</a>
-        ${mine ? "" : `<button class="btn btn-outline" onclick="offerBarter(${a.id})">🔄 اعرض مقايضة</button>`}
-        ${mine ? `<button class="btn btn-outline" onclick="pickImage(${a.id})">📷 ${a.image ? "تغيير الصورة" : "إضافة صورة"}</button>` : ""}
-        ${mine && a.image ? `<button class="btn btn-outline" style="color:var(--red)" onclick="removeImage(${a.id})">🖼 إزالة</button>` : ""}
-        ${mine ? `<button class="btn btn-star" onclick="closeModal();openBoost(${a.id})">⭐ ثبّت هذا الإعلان</button>
-                 <button class="btn btn-outline" style="color:var(--red)" onclick="deleteListing(${a.id})">🗑 حذف</button>` : ""}
-      </div>
-      <div class="share-panel">
-        <div class="share-title">📣 انشر الإعلان — كل مشاركة تقرّبه من البيع</div>
-        <div class="share-row">
-          <button class="btn btn-outline btn-sm" onclick="shareTo('whatsapp', ${a.id})">💬 واتساب</button>
-          <button class="btn btn-outline btn-sm" onclick="shareTo('facebook', ${a.id})">📘 فيسبوك</button>
-          <button class="btn btn-outline btn-sm" onclick="shareTo('x', ${a.id})">✖️ X</button>
-          <button class="btn btn-outline btn-sm" onclick="copyShareLink(${a.id})">🔗 نسخ الرابط</button>
-          <button class="btn btn-outline btn-sm" onclick="toggleQr(${a.id})">▦ رمز QR</button>
-        </div>
-        <div class="qr-box" id="qrBox" hidden></div>
-      </div>
-    `, true);
-  } catch (e) { toast(e.message, "err"); }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   المشاركة والانتشار
-   ═══════════════════════════════════════════════════════════ */
-const SHARE_CACHE = {};
-async function fetchShare(id) {
-  if (!SHARE_CACHE[id]) SHARE_CACHE[id] = await api(`/api/listings/${id}/share`);
-  return SHARE_CACHE[id];
-}
-
-async function shareTo(net, id) {
-  try {
-    const s = await fetchShare(id);
-    window.open(s.networks[net], "_blank", "noopener");
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function copyShareLink(id) {
-  try {
-    const s = await fetchShare(id);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(s.short_url);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = s.short_url; ta.setAttribute("readonly", "");
-      ta.style.position = "fixed"; ta.style.opacity = "0";
-      document.body.appendChild(ta); ta.select();
-      document.execCommand("copy"); ta.remove();
-    }
-    toast("تم نسخ الرابط القصير ✅");
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function toggleQr(id) {
-  const box = $("#qrBox");
-  if (!box.hidden) { box.hidden = true; return; }
-  try {
-    const s = await fetchShare(id);
-    box.innerHTML = `
-      <img src="${esc(s.qr_svg)}?v=1" alt="رمز QR للإعلان" width="168" height="168">
-      <div class="qr-meta">
-        <b>امسح الرمز بهاتفك</b>
-        <span>يفتح الإعلان مباشرة — مثالي للطباعة على ملصق أو إرساله صورة.</span>
-        <code>${esc(s.short_url)}</code>
-      </div>`;
-    box.hidden = false;
-  } catch (e) { toast(e.message, "err"); }
-}
-
-/* ─────────────── 📷 صور الإعلانات ─────────────── */
-async function uploadListingImage(id, file, silent = false) {
-  const fd = new FormData();
-  fd.append("file", file);
-  try {
-    const res = await fetch(`/api/listings/${id}/image`, {
-      method: "POST", body: fd, credentials: "same-origin",
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || "فشل رفع الصورة");
-    toast(data.message || "✅ رُفعت الصورة", "ok");
-    if (!silent) {
-      await loadAndRenderResults();
-      if (!$("#modalRoot").hidden) openDetail(id);
-    }
-    return data;
-  } catch (e) { toast(e.message, "err"); return null; }
-}
-
-function pickImage(id) {
-  // يُبنى المدخل ديناميكياً في كل مرة حتى يعمل اختيار نفس الملف مرتين
-  const inp = document.createElement("input");
-  inp.type = "file";
-  inp.accept = "image/png,image/jpeg,image/webp";
-  inp.onchange = () => { if (inp.files[0]) uploadListingImage(id, inp.files[0]); };
-  inp.click();
-}
-
-async function removeImage(id) {
-  try {
-    const r = await api(`/api/listings/${id}/image`, { method: "DELETE" });
-    toast(r.message || "أُزيلت الصورة", "ok");
-    await loadAndRenderResults();
-    if (!$("#modalRoot").hidden) openDetail(id);
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function offerBarter(id) {
-  let title = "";
-  try { title = (await api(`/api/listings/${id}`)).listing.title; } catch (_) { }
-  modal(`
-    <h3 class="form-title">🔄 اعرض مقايضة</h3>
-    <p class="form-sub">على إعلان: <b>${esc(title)}</b><br>سيصل عرضك للبائع مباشرة على واتساب — وهذا يوثّق الاتفاق كتابياً لحمايتكما.</p>
-    <div class="field"><label>ما الذي تعرضه بالمقابل؟ *</label>
-      <textarea id="barterOffer" rows="3" placeholder="مثال: أعرض جهاز Xbox Series S بحالة ممتازة + 30 دينار فرق…"></textarea>
-      <div class="hint">كن محدداً: السلعة + حالتها + أي فرق نقدي تعرضه أو تطلبه.</div></div>
-    <div class="field"><label>رقم هاتفك (واتساب) *</label>
-      <input id="barterPhone" type="tel" inputmode="numeric" placeholder="07XXXXXXXX" value="${esc(S.user?.phone || "")}"></div>
-    <div id="barterMsg"></div>
-    <button class="btn btn-primary btn-block" onclick="sendBarter(${id})">📤 أرسل عرض المقايضة</button>
-  `);
-}
-
-async function sendBarter(id) {
-  const offer = $("#barterOffer").value.trim();
-  const phone = ($("#barterPhone").value || "").replace(/\D/g, "");
-  if (offer.length < 5) {
-    $("#barterMsg").innerHTML = `<div class="inline-msg err">اكتب وصفاً واضحاً لما تعرضه (5 أحرف على الأقل).</div>`;
-    return;
+ }catch(error){toast(error.message,true);}
+ finally{if(button.isConnected)button.disabled=false;}
+});
+$('#main').addEventListener('change',e=>{
+ if(e.target.id==='category-commission-id')$('#category-percent').value=e.target.selectedOptions[0]?.dataset.rate||'';
+ if(e.target.id==='sort-select'){const p=new URLSearchParams(location.search);p.set('sort',e.target.value);p.delete('page');navigate('/search?'+p);}
+});
+function percentBps(value){if(!/^\d{1,2}(\.\d{1,2})?$/.test(String(value)))throw new Error(tr('أدخل نسبة من 0 إلى 50، بمنزلتين عشريتين كحد أقصى.','Enter a percentage from 0 to 50, with up to two decimal places.'));const [whole,fraction='']=String(value).split('.');return Number(whole)*100+Number(fraction.padEnd(2,'0'));}
+document.addEventListener('submit',async e=>{
+ const form=e.target;if(!(form instanceof HTMLFormElement))return;
+ e.preventDefault();const data=new FormData(form),v=name=>String(data.get(name)??'').trim();
+ const submit=e.submitter;const original=submit?.innerHTML;
+ if(submit){submit.disabled=true;submit.innerHTML=tr('لحظة من فضلك…','Just a moment…');}
+ $$('.form-error',form).forEach(b=>b.textContent='');$$('[aria-invalid]',form).forEach(b=>b.removeAttribute('aria-invalid'));
+ try{
+  if(form.id==='header-search'){const p=new URLSearchParams();if(v('q'))p.set('q',v('q'));if(v('category'))p.set('category',v('category'));navigate('/search?'+p);}
+  else if(form.id==='filters-form'){
+   const old=new URLSearchParams(location.search),p=new URLSearchParams();['q','store','sort'].forEach(k=>{if(old.get(k))p.set(k,old.get(k));});
+   if(v('category'))p.set('category',v('category'));if(v('city'))p.set('city',v('city'));if(v('min-price'))p.set('min_price',fils(v('min-price')));if(v('max-price'))p.set('max_price',fils(v('max-price')));if(data.has('offers'))p.set('offers','1');navigate('/search?'+p);
   }
-  if (!/^07[4-9]\d{7}$/.test(phone)) {
-    $("#barterMsg").innerHTML = `<div class="inline-msg err">أدخل رقم هاتف أردني صحيح مثل 0791234567.</div>`;
-    return;
+  else if(form.id==='city-form'){closeModal();navigate('/search'+(v('city')?'?city='+v('city'):''));}
+  else if(form.id==='auth-form'){
+   const mode=form.dataset.mode,body={email:v('email')};if(mode!=='forgot')body.password=String(data.get('password')||'');if(mode==='register'){body.name=v('name');body.locale=lang;}if(mode==='login')body.otp=v('otp');
+   const result=await api('/api/auth/'+(mode==='forgot'?'forgot-password':mode),{method:'POST',body});
+   if(mode==='forgot'){
+    modal(tr('خطوتك التالية في الرسالة.','Your next step is in the email.'),`<div class="notice">${icon('mail')}<p>${tr('إذا كان البريد مسجّلًا، تم إعداد رابط صالح لمدة 30 دقيقة.','If the email is registered, a reset link valid for 30 minutes was prepared.')}</p></div><p class="dialog-description">${S.boot.email_mode==='file'?tr('التطوير: افتح أحدث ملف في data/mail. لا يُرسل بريد حقيقي في هذا الوضع.','Development: open the newest file in data/mail. No real email is sent in this mode.'):tr('قد يتأخر الإرسال. تحقّق من صندوق الرسائل المزعجة أيضًا.','Delivery may take a moment. Check your spam folder too.')}</p>`);
+   }else{S.user=result.user;setCsrf(result.csrf_token);closeModal();await mergeGuest();const destination=S.afterAuth||'/account';S.afterAuth=null;toast(tr('أهلًا في شمعة. سعيدين بوجودك.','Welcome to SHAM’A. Lovely to have you here.'));navigate(destination);}
   }
-  try {
-    const { listing } = await api(`/api/listings/${id}`);
-    const lines = [
-      `عرض مقايضة على إعلانك: «${listing.title}»`,
-      ``,
-      `أعرض بالمقابل: ${offer}`,
-      `رقمي للتواصل: ${phone}`,
-      ``,
-      `— أُرسل عبر منصة الشامل الذكية 🌟`,
-    ];
-    window.open(`${listing.whatsapp_url.split("?")[0]}?text=${encodeURIComponent(lines.join("\n"))}`,
-                "_blank", "noopener");
-    closeModal();
-    toast("✅ تم فتح واتساب لإرسال عرض المقايضة — احتفظ بالرسالة كتوثيق", "ok");
-  } catch (e) {
-    $("#barterMsg").innerHTML = `<div class="inline-msg err">${esc(e.message)}</div>`;
+  else if(form.id==='verify-form'){
+   await api('/api/auth/verify',{method:'POST',body:{token:v('token')}});await refreshUser();toast(tr('أكّدنا بريدك. أهلًا بخطوتك التالية!','Your email is confirmed. Here’s to your next step!'));navigate('/account',true);
   }
-}
-
-async function deleteListing(id) {
-  if (!confirm("هل أنت متأكد من حذف هذا الإعلان؟")) return;
-  try {
-    await api(`/api/listings/${id}`, { method: "DELETE" });
-    closeModal(); toast("🗑 تم حذف الإعلان", "ok"); loadAndRenderResults();
-    if (S.view === "dashboard") renderDashboard();
-  } catch (e) { toast(e.message, "err"); }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   إضافة إعلان جديد (+ ترقية مدفوعة)
-   ═══════════════════════════════════════════════════════════ */
-function openNewListing() {
-  if (!S.user) return openAuth("login", "سجّل الدخول أولاً لنشر إعلانك — يستغرق 20 ثانية فقط");
-  const cats = S.boot.categories, cities = S.boot.cities;
-  modal(`
-    <h3 class="form-title">➕ أضف إعلانك الجديد</h3>
-    <p class="form-sub">النشر مجاني تماماً. الإعلانات الواضحة والمسعّرة بعدالة تُباع أسرع بـ 3 مرات.</p>
-    <div class="field"><label>عنوان الإعلان *</label>
-      <input id="nlTitle" type="text" maxlength="120" placeholder="مثال: ايفون 13 - 128GB بحالة ممتازة">
-      <div class="hint">اذكر النوع والموديل والحالة في العنوان — هذا ما يبحث عنه المشتري.</div></div>
-    <div class="field-row">
-      <div class="field"><label>السعر المطلوب (${esc(S.boot.currency)}) *</label>
-        <input id="nlPrice" type="number" min="0" step="1" value="100"></div>
-      <div class="field"><label>القسم *</label>
-        <select id="nlCat">${cats.map(c => `<option>${esc(c)}</option>`).join("")}</select></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>المدينة *</label>
-        <select id="nlCity">${cities.map(c => `<option ${c === S.user.city ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
-      <div class="field"><label>&nbsp;</label>
-        <div style="display:flex;align-items:center;gap:.5rem;height:42px">
-          <input type="checkbox" id="nlBarter" style="width:auto"> <label for="nlBarter" style="font-size:.85rem">🔄 أقبل المقايضة والتبادل</label>
-        </div></div>
-    </div>
-    <div class="field"><label>وصف تفصيلي</label>
-      <textarea id="nlDesc" rows="4" placeholder="المواصفات، الحالة، سبب البيع، ما يشمله السعر، إمكانية التوصيل…"></textarea></div>
-    <div class="field"><label>📷 صورة السلعة (اختياري — لكن الإعلانات المصوّرة تُباع أسرع بكثير)</label>
-      <input id="nlImage" type="file" accept="image/png,image/jpeg,image/webp" class="file-input">
-      <div class="hint">PNG أو JPEG أو WebP حتى 2 ميغابايت. تظهر في البطاقة وفي بطاقة المشاركة. يمكنك إضافتها لاحقاً من صفحة الإعلان.</div></div>
-
-    <label class="switch" id="nlFeatured">
-      <span class="sw-box"></span>
-      <span class="switch-text">
-        <strong>⭐ ثبّت إعلاني في الأعلى — ${S.boot.pricing.feature_price} ${esc(S.boot.currency)}</strong>
-        <small>ظهور مميز لمدة ${S.boot.pricing.feature_days} أيام · مشاهدات أكثر 4 أضعاف</small>
-      </span>
-    </label>
-
-    <div class="pay-note"><span>💳</span>
-      <span>الدفع حالياً في وضع <strong>المحاكاة التجريبية</strong> — عند الإطلاق الفعلي يُستبدل بـ Clicks / إي-فواتيركم / محفظة زين كاش. الميزة تُفعَّل فوراً بعد الدفع.</span>
-    </div>
-    <div id="nlMsg"></div>
-    <button class="btn btn-primary btn-block" id="nlSubmit">🚀 نشر الإعلان</button>
-    <div style="text-align:center;margin-top:.6rem">
-      <button class="btn btn-ghost btn-sm" onclick="closeModal();openPricing()">🤖 لست متأكداً من السعر؟ احسبه أولاً</button>
-    </div>
-  `, true);
-
-  let featured = false;
-  $("#nlFeatured").onclick = () => {
-    featured = !featured;
-    $("#nlFeatured").classList.toggle("on", featured);
-    $(".sw-box", $("#nlFeatured")).textContent = featured ? "✓" : "";
-    $("#nlSubmit").textContent = featured
-      ? `🚀 انشر وثبّت إعلاني — ${S.boot.pricing.feature_price} ${S.boot.currency}`
-      : "🚀 نشر الإعلان";
-  };
-
-  $("#nlSubmit").onclick = async () => {
-    const btn = $("#nlSubmit"); btn.disabled = true; btn.textContent = "جارٍ النشر…";
-    try {
-      const r = await api("/api/listings", {
-        method: "POST",
-        body: {
-          title: $("#nlTitle").value, description: $("#nlDesc").value,
-          price: Number($("#nlPrice").value || 0), category: $("#nlCat").value,
-          city: $("#nlCity").value, accepts_barter: $("#nlBarter").checked, featured,
-        },
-      });
-      const imgFile = ($("#nlImage") && $("#nlImage").files[0]) || null;
-      if (imgFile) await uploadListingImage(r.listing.id, imgFile, true);
-      closeModal();
-      toast(r.message, "ok");
-      if (r.charged_jd) toast(`💳 تم خصم ${r.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
-      await refreshMe(); await loadAndRenderResults();
-      if (S.view !== "home") go("home");
-    } catch (e) {
-      btn.disabled = false; btn.textContent = "🚀 نشر الإعلان";
-      $("#nlMsg").innerHTML = `<div class="inline-msg err">${esc(e.message)}</div>`;
-      if (e.status === 402) {
-        toast(e.message, "err");
-        if (e.payload?.need_slots) {
-          $("#nlMsg").insertAdjacentHTML("afterend", `
-            <div class="card" style="margin-top:.8rem;border-color:#F6D9A5;background:var(--flame-soft)">
-              <h4 style="color:#8A5B00">📦 وصلت لحدّك الأقصى من الإعلانات</h4>
-              <p style="font-size:.8rem;color:#8A5B00;margin:.2rem 0 .7rem">وسّع حدك بـ ${S.boot.pricing.extra_listing_pack} إعلانات دائمة — التوسعة لا تضيع حتى لو حذفت إعلاناً.</p>
-              <button class="btn btn-primary btn-block" onclick="buySlots()">وسّع حدّي بـ ${(S.boot.pricing.extra_listing_price * S.boot.pricing.extra_listing_pack).toFixed(2)} د.أ</button>
-            </div>`);
-        }
-      }
-    }
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════
-   🤖 التسعير الذكي
-   ═══════════════════════════════════════════════════════════ */
-function openPricing() {
-  const cats = S.boot.categories, cities = S.boot.cities;
-  const credits = S.user ? S.user.pricing_credits : null;
-  modal(`
-    <h3 class="form-title">🤖 مساعد التسعير الذكي</h3>
-    <p class="form-sub">أدخل تفاصيل سلعتك، وسيحلل المحرك السوق الأردني (أسعار الفئات، حالة المنتج، قوة الطلب في مدينتك) ويعطيك السعر العادل ونطاق المفاوضة.</p>
-    ${credits !== null
-      ? `<div class="inline-msg ok" style="margin-top:0">رصيدك الحالي: <strong>${credits}</strong> تسعيرة ذكية ${credits === 0 ? "— يمكنك استخدام " + S.boot.pricing.free_daily + " تسعيرات مجانية يومياً" : ""}</div>`
-      : `<div class="inline-msg" style="background:var(--flame-soft);color:#8A5B00;border:1px solid #F6D9A5;margin-top:0">وضع الزائر: ${S.boot.pricing.free_daily} تسعيرات مجانية يومياً. سجّل الدخول للحصول على رصيد إضافي.</div>`}
-    <div class="field"><label>اسم المنتج أو وصفه *</label>
-      <input id="prName" type="text" placeholder="مثال: ايفون 12 - 64GB مع كرتونه">
-      <div class="hint">كلما كان الوصف أدق (النوع + الموديل + الملحقات) كانت النتيجة أدق.</div></div>
-    <div class="field-row">
-      <div class="field"><label>القسم</label>
-        <select id="prCat">${cats.map(c => `<option>${esc(c)}</option>`).join("")}</select></div>
-      <div class="field"><label>المدينة</label>
-        <select id="prCity">${cities.map(c => `<option ${c === (S.user?.city || "عمّان") ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
-    </div>
-    <div class="field"><label>حالة المنتج: <b id="prCondLbl">8 / 10</b></label>
-      <input id="prCond" type="range" min="1" max="10" value="8">
-      <div class="range-labels"><span>1 = يحتاج صيانة</span><span>10 = جديد بالكرتون</span></div></div>
-    <div class="field">
-      <label class="switch" id="prBarter"><span class="sw-box"></span>
-        <span class="switch-text"><strong>🔄 سأقبل المقايضة</strong><small>يوسّع دائرة المشترين لكنه يخفض السعر النقدي قليلاً</small></span></label>
-    </div>
-    <div id="prMsg"></div>
-    <div id="prResult"></div>
-    <button class="btn btn-primary btn-block" id="prGo">🚀 احسب السعر العادل</button>
-  `, true);
-
-  let barter = false;
-  $("#prCond").oninput = (e) => $("#prCondLbl").textContent = `${e.target.value} / 10`;
-  $("#prBarter").onclick = () => {
-    barter = !barter;
-    $("#prBarter").classList.toggle("on", barter);
-    $(".sw-box", $("#prBarter")).textContent = barter ? "✓" : "";
-  };
-  $("#prGo").onclick = runPricing;
-}
-
-async function runPricing() {
-  const btn = $("#prGo"); btn.disabled = true; btn.textContent = "⏳ جارٍ تحليل السوق…";
-  try {
-    const r = await api("/api/pricing", {
-      method: "POST",
-      body: {
-        item_name: $("#prName").value, category: $("#prCat").value,
-        condition: Number($("#prCond").value), city: $("#prCity").value, accepts_barter: barterFlag(),
-      },
-    });
-    renderPricingResult(r);
-    await refreshMe();
-  } catch (e) {
-    $("#prMsg").innerHTML = `<div class="inline-msg err">${esc(typeof e.message === "string" ? e.message : "خطأ")}</div>`;
-    if (e.status === 402 && e.payload?.need_credits) renderUpsell(e.payload);
-    if (e.status === 401) { closeModal(); openAuth("login", "سجّل الدخول لمتابعة استخدام التسعير الذكي"); }
+  else if(form.id==='reset-form'){
+   await api('/api/auth/reset-password',{method:'POST',body:{token:v('token'),password:String(data.get('password')||'')}});S.user=null;setCsrf('');await getCart();navigate('/account',true);toast(tr('تغيّرت كلمة المرور وانتهت الجلسات القديمة. سجّل الدخول مجددًا.','Password updated and old sessions revoked. Please sign in again.'));openAuth();
   }
-  btn.disabled = false; btn.textContent = "🚀 احسب السعر العادل";
-}
-function barterFlag() { return $("#prBarter")?.classList.contains("on") || false; }
-
-function renderPricingResult(r) {
-  S.lastPricing = {
-    price: r.fair_price,
-    name: $("#prName").value,
-    category: r.category,
-    city: r.city,
-    barter: r.accepts_barter,
-  };
-  const span = r.high_price - r.low_price || 1;
-  const pos = Math.min(100, Math.max(0, ((r.fair_price - r.low_price) / span) * 100));
-  $("#prResult").innerHTML = `
-    <div class="price-hero">
-      <div class="lbl">💡 السعر العادل المقترح لسلعتك</div>
-      <div class="big">${jd(r.fair_price)} <span style="font-size:1rem">${esc(r.currency)}</span></div>
-      <div class="lbl">نطاق المفاوضة المتوقع في السوق الأردني</div>
-    </div>
-    <div class="range-bar">
-      <div class="range-track"></div>
-      <div class="range-dot" style="inset-inline-start:${100 - pos}%"></div>
-    </div>
-    <div class="range-labels"><span>أقل سعر ${jd(r.low_price)} د.أ</span><span>أعلى سعر ${jd(r.high_price)} د.أ</span></div>
-    <div class="quick-cards">
-      <div class="quick-card"><b>${jd(r.quick_sale_price)}</b><span>⚡ سعر البيع السريع (48 ساعة)</span></div>
-      <div class="quick-card"><b>${jd(r.fair_price)}</b><span>⚖️ السعر العادل</span></div>
-      <div class="quick-card"><b>${jd(r.high_price)}</b><span>🎯 ابدأ به ثم فاوض</span></div>
-    </div>
-    <div class="drivers">
-      <h4>🔍 كيف وصل المحرك لهذا الرقم؟</h4>
-      <ul>${r.drivers.map(d => `<li>${esc(d)}</li>`).join("")}</ul>
-    </div>
-    <div class="tip-box">💡 ${esc(r.tip)}</div>
-    <div style="display:flex;gap:.5rem;margin-top:.9rem;flex-wrap:wrap">
-      <button class="btn btn-primary" style="flex:1" onclick="usePriceInListing()">📝 انشر إعلاناً بهذا السعر</button>
-      <button class="btn btn-outline" onclick="copyPricing()">📋 نسخ النتيجة</button>
-    </div>
-    ${r.remaining_credits !== undefined && S.user ? `<p style="font-size:.76rem;color:var(--slate);text-align:center;margin-top:.7rem">الرصيد المتبقي: ${r.remaining_credits} تسعيرة</p>` : ""}
-  `;
-  const ps = $("#statPricing"); if (ps) loadPricingStats();
-}
-
-function copyPricing() {
-  const txt = $("#prResult").innerText.replace(/\n{2,}/g, "\n");
-  navigator.clipboard?.writeText(`نتيجة التسعير الذكي — منصة الشامل 🌟\n${txt}`)
-    .then(() => toast("📋 تم نسخ النتيجة", "ok"))
-    .catch(() => toast("تعذّر النسخ — حدّد النص يدوياً", "err"));
-}
-
-function usePriceInListing() {
-  const p = S.lastPricing;
-  if (!p) return;
-  closeModal();
-  openNewListing();
-  setTimeout(() => {
-    if ($("#nlTitle")) $("#nlTitle").value = p.name;
-    if ($("#nlPrice")) $("#nlPrice").value = p.price;
-    if ($("#nlCat")) $("#nlCat").value = p.category;
-    if ($("#nlCity")) $("#nlCity").value = p.city;
-    if ($("#nlBarter")) $("#nlBarter").checked = p.barter;
-    toast(`✨ تم تعبئة النموذج بالسعر العادل ${jd(p.price)} ${S.boot.currency}`, "ok");
-  }, 140);
-}
-
-function renderUpsell(payload) {
-  $("#prMsg").insertAdjacentHTML("afterend", `
-    <div class="card" style="margin:.9rem 0;border-color:#F6D9A5;background:var(--flame-soft)">
-      <h4 style="color:#8A5B00">🔓 افتح التسعير غير المحدود</h4>
-      <div class="packs">${(payload.packages || S.boot.pricing.packages).map(packHTML).join("")}</div>
-      ${S.user ? `<p style="font-size:.75rem;color:var(--slate);text-align:center">الدفع بالمحاكاة حالياً — يُفعَّل رصيدك فوراً</p>`
-               : `<button class="btn btn-dark btn-block" onclick="closeModal();openAuth('register','سجّل واحصل على رصيد تسعير مجاني فوراً')">إنشاء حساب مجاني</button>`}
-    </div>`);
-  bindPacks();
-}
-
-function packHTML(p) {
-  return `<div class="pack ${p.tag ? "best" : ""}" data-pack="${p.id}">
-    ${p.tag ? `<span class="tagline">${esc(p.tag)}</span>` : ""}
-    <b>${p.price_jd}</b><span class="label">د.أ</span>
-    <div class="credits">${p.credits} تسعيرة ذكية</div>
-    <div class="label">${esc(p.label)}</div>
-    <button class="btn btn-primary btn-sm btn-block" style="margin-top:.55rem" onclick="buyPackage('${p.id}')">اشترِ</button>
-  </div>`;
-}
-function bindPacks() { /* الأزرار مرتبطة مباشرة عبر onclick */ }
-
-async function buyPackage(id) {
-  if (!S.user) return openAuth("register", "أنشئ حساباً مجانياً لشراء حزمة التسعير");
-  try {
-    const r = await api("/api/buy/package", { method: "POST", body: { package_id: id } });
-    toast(r.message, "ok");
-    toast(`💳 تم خصم ${r.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
-    await refreshMe(); closeModal();
-    if (S.view === "dashboard") renderDashboard(); else openPricing();
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function loadPricingStats() {
-  try {
-    const r = await api("/api/pricing/stats");
-    const el = $("#statPricing");
-    if (el) el.textContent = jd(r.total);
-  } catch (_) { /* غير حرج */ }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   المصادقة
-   ═══════════════════════════════════════════════════════════ */
-function openAuth(mode = "login", note = "") {
-  const cities = S.boot.cities;
-  modal(`
-    <div style="display:flex;gap:.4rem;margin-bottom:1rem;background:#F1F4F8;padding:.25rem;border-radius:999px">
-      <button class="btn btn-sm ${mode === "login" ? "btn-dark" : ""}" style="flex:1" onclick="openAuth('login')">تسجيل الدخول</button>
-      <button class="btn btn-sm ${mode === "register" ? "btn-dark" : ""}" style="flex:1" onclick="openAuth('register')">حساب جديد</button>
-    </div>
-    ${note ? `<div class="inline-msg" style="background:var(--blue-soft);color:#1E5A96;border:1px solid #CFE1F6">${esc(note)}</div>` : ""}
-    <div id="authForm">
-      ${mode === "register" ? `<div class="field"><label>الاسم الكامل *</label><input id="aName" type="text" placeholder="مثال: محمد الشلول"></div>` : ""}
-      <div class="field"><label>رقم الهاتف (واتساب) *</label>
-        <input id="aPhone" type="tel" placeholder="07XXXXXXXX" inputmode="numeric">
-        <div class="hint">سيظهر للمشترين كزر تواصل مباشر عبر واتساب.</div></div>
-      ${mode === "register" ? `<div class="field"><label>المدينة</label>
-        <select id="aCity">${cities.map(c => `<option>${esc(c)}</option>`).join("")}</select></div>` : ""}
-      <div class="field"><label>كلمة المرور *</label><input id="aPass" type="password" placeholder="6 أحرف على الأقل">
-        ${mode === "register" ? `<div class="hint">احصل على ${S.boot.pricing.free_daily} تسعيرات ذكية مجانية فور التسجيل 🎁</div>` : ""}</div>
-      <div id="aMsg"></div>
-      <button class="btn btn-primary btn-block" id="aGo">${mode === "register" ? "🚀 إنشاء الحساب" : "دخول"}</button>
-      <div style="text-align:center;margin-top:.8rem;font-size:.78rem;color:var(--slate)">
-        حساب تجريبي جاهز: <b>${esc(S.boot.demo_account.phone)}</b> / <b>${esc(S.boot.demo_account.password)}</b>
-        <button class="btn btn-ghost btn-sm" onclick="fillDemo()">تعبئة تلقائية</button>
-      </div>
-    </div>
-  `);
-
-  $("#aGo").onclick = async () => {
-    const btn = $("#aGo"); btn.disabled = true;
-    const payload = {
-      phone: $("#aPhone").value,
-      password: $("#aPass").value,
-    };
-    if (mode === "register") { payload.name = $("#aName").value; payload.city = $("#aCity").value; }
-    try {
-      const r = await api(mode === "register" ? "/api/register" : "/api/login", { method: "POST", body: payload });
-      S.user = r.user;
-      renderAuthArea(); closeModal();
-      toast(mode === "register" ? `🎉 أهلاً ${r.user.name}! تم إنشاء حسابك بنجاح` : `👋 أهلاً بعودتك ${r.user.name}`, "ok");
-      if (S.view === "home") renderHome(); else go("dashboard");
-      refreshMe();
-    } catch (e) {
-      btn.disabled = false;
-      $("#aMsg").innerHTML = `<div class="inline-msg err">${esc(e.message)}</div>`;
-    }
-  };
-}
-function fillDemo() {
-  $("#aPhone").value = S.boot.demo_account.phone;
-  $("#aPass").value = S.boot.demo_account.password;
-}
-
-async function logout() {
-  try { await api("/api/logout", { method: "POST" }); } catch (_) { }
-  S.user = null; S.stats = null; renderAuthArea(); go("home"); toast("تم تسجيل الخروج 👋", "info");
-}
-
-function renderAuthArea() {
-  const el = $("#authArea");
-  if (!S.user) {
-    el.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="openAuth('login')">دخول</button>
-                    <button class="btn btn-dark btn-sm" onclick="openAuth('register')">حساب جديد</button>`;
-    return;
+  else if(form.id==='checkout-form'){
+   if(!navigator.onLine)throw new Error(tr('لا يمكن تأكيد الطلب دون اتصال. أعد الاتصال وحاول من نفس الصفحة.','Orders cannot be confirmed offline. Reconnect and retry on this page.'));
+   const attempt=S.checkout,body={recipient:v('recipient'),phone:v('phone'),city:v('city'),address:v('address'),expected_total_fils:attempt.cart.total_fils,quote_hash:attempt.cart.quote_hash};
+   const result=await api('/api/orders',{method:'POST',body,headers:{'Idempotency-Key':attempt.key}});
+   try{sessionStorage.removeItem('shamaa.checkout.'+S.user.id);}catch{}S.checkout=null;await getCart();updateCartCount();toast(tr('حُفظ طلبك: ','Order saved: ')+result.order.number);navigate('/orders');
   }
-  const initial = (S.user.name || "?").trim().charAt(0);
-  el.innerHTML = `<div class="user-chip">
-      <button class="btn btn-ghost btn-sm" style="padding:.2rem .5rem" onclick="go('dashboard')">📊</button>
-      <span class="nm">${S.user.is_verified ? "🛡️ " : ""}${esc(S.user.name)}</span>
-      ${S.user.pricing_credits > 0 ? `<span class="credits-pill">🤖 ${S.user.pricing_credits}</span>` : ""}
-      <span class="avatar">${esc(initial)}</span>
-      <button class="btn btn-ghost btn-sm" style="padding:.2rem .4rem" onclick="openNotifications()" title="إشعاراتي">🔔</button>
-      <button class="btn btn-ghost btn-sm" style="padding:.2rem .4rem" onclick="logout()" title="خروج">⏻</button>
-    </div>`;
-}
-
-async function openNotifications() {
-  try {
-    const r = await api("/api/notifications");
-    const list = r.notifications || [];
-    const ico = { renew_reminder: "⏳", renew_done: "✅", welcome: "🌟" };
-    modal(`
-      <h3 class="form-title">🔔 إشعاراتي</h3>
-      <p class="form-sub">تذكيرات تجديد التثبيت وتأكيداتها — تصل واتساب عند الإطلاق الفعلي (محاكاة حالياً).</p>
-      ${list.length ? list.map(n => `
-        <div class="notif kind-${esc(n.kind)}">
-          <span class="notif-ico">${ico[n.kind] || "🔔"}</span>
-          <div>
-            <div class="notif-body">${esc(n.body)}</div>
-            <div class="notif-time">${new Date(n.created_at * 1000).toLocaleString("ar-JO")}</div>
-          </div>
-        </div>`).join("")
-        : `<p style="opacity:.6;text-align:center;padding:1.4rem 0">لا إشعارات بعد — سيصلك تذكير قبل انتهاء تثبيت أي إعلان لك بـ 24 ساعة.</p>`}
-    `, true);
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function refreshMe() {
-  try {
-    const r = await api("/api/me");
-    S.user = r.user; S.stats = r.stats; renderAuthArea();
-  } catch (_) { }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   ⭐ شراء التثبيت
-   ═══════════════════════════════════════════════════════════ */
-async function openBoost(preselect) {
-  if (!S.user) return openAuth("login", "سجّل الدخول لتثبيت إعلانك في الأعلى");
-  try {
-    const r = await api(`/api/listings?q=&limit=200`);
-    const mine = r.listings.filter(a => a.seller_id === S.user.id);
-    if (!mine.length) {
-      modal(`<h3 class="form-title">⭐ تثبيت إعلان</h3>
-        <p class="form-sub">لا تملك إعلانات نشطة بعد.</p>
-        <button class="btn btn-primary btn-block" onclick="closeModal();openNewListing()">➕ أضف إعلانك الأول</button>`);
-      return;
-    }
-    modal(`
-      <h3 class="form-title">⭐ ثبّت إعلانك في الأعلى</h3>
-      <p class="form-sub">اختر الإعلان — سيظهر بإطار ذهبي وشارة «مثبّت» قبل كل نتائج البحث لمدة ${S.boot.pricing.feature_days} أيام.</p>
-      <div class="field"><label>الإعلان</label>
-        <select id="bsListing">${mine.map(a =>
-          `<option value="${a.id}" ${preselect === a.id ? "selected" : ""}>${a.is_featured ? "⭐ " : ""}${esc(a.title)} — ${jd(a.price)} ${esc(S.boot.currency)}</option>`).join("")}</select></div>
-      <div class="quick-cards">
-        <div class="quick-card"><b>${S.boot.pricing.feature_price}</b><span>د.أ تثبيت جديد</span></div>
-        <div class="quick-card"><b>${S.boot.pricing.renew_price}</b><span>د.أ تجديد مثبّت</span></div>
-        <div class="quick-card"><b>×4</b><span>زيادة المشاهدات</span></div>
-      </div>
-      <div class="pay-note"><span>💳</span><span>الدفع بالمحاكاة في النسخة التجريبية. يُستبدل ببوابة دفع أردنية حقيقية عند الإطلاق.</span></div>
-      <div id="bsMsg"></div>
-      <button class="btn btn-star btn-block" id="bsGo">⭐ ثبّت الآن</button>
-    `);
-    $("#bsGo").onclick = async () => {
-      const btn = $("#bsGo"); btn.disabled = true; btn.textContent = "جارٍ المعالجة…";
-      try {
-        const res = await api("/api/feature", {
-          method: "POST",
-          body: { listing_id: Number($("#bsListing").value), renew: false },
-        });
-        closeModal(); toast(res.message, "ok");
-        toast(`💳 تم خصم ${res.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
-        await refreshMe(); await loadAndRenderResults();
-        if (S.view === "dashboard") renderDashboard();
-      } catch (e) {
-        btn.disabled = false; btn.textContent = "⭐ ثبّت الآن";
-        $("#bsMsg").innerHTML = `<div class="inline-msg err">${esc(e.message)}</div>`;
-      }
-    };
-  } catch (e) { toast(e.message, "err"); }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   📊 لوحة التحكم
-   ═══════════════════════════════════════════════════════════ */
-async function renderDashboard() {
-  const box = $("#view-dashboard");
-  box.innerHTML = `<div class="empty"><span class="big">⏳</span>جارٍ تحميل لوحتك…</div>`;
-  await refreshMe();
-  if (!S.user) { go("home"); return; }
-  const st = S.stats || { listings: 0, featured: 0, views: 0, spent_jd: 0 };
-  const r = await api(`/api/listings?limit=200`);
-  const mine = r.listings.filter(a => a.seller_id === S.user.id);
-  const packs = S.boot.pricing.packages;
-  const freeUsed = S.boot.pricing.free_active_listings;
-
-  box.innerHTML = `
-    <div class="hero" style="margin-bottom:1rem">
-      <h1>📊 لوحة التحكم ${S.user.is_verified ? '<span class="tag tag-verified" style="font-size:.7rem;vertical-align:middle">🛡️ بائع موثّق</span>' : ""}</h1>
-      <p>${esc(S.user.name)} · ${esc(S.user.city)} · ${esc(S.user.phone)}</p>
-    </div>
-    <div class="stat-grid">
-      <div class="stat-card"><b>${st.listings}</b><span>إعلاناتك النشطة</span>
-        <div class="bar"><i style="width:${Math.min(100, (st.listings / (freeUsed + S.user.extra_listing_slots)) * 100)}%"></i></div>
-        <span style="font-size:.68rem">الحد المتاح ${freeUsed + S.user.extra_listing_slots} (${freeUsed} مجاني + ${S.user.extra_listing_slots} مدفوع)</span></div>
-      <div class="stat-card gold"><b>${st.featured}</b><span>⭐ إعلانات مثبّتة</span></div>
-      <div class="stat-card"><b>${jd(st.views || 0)}</b><span>👁 إجمالي المشاهدات</span></div>
-      <div class="stat-card green"><b>${S.user.pricing_credits}</b><span>🤖 رصيد التسعير</span></div>
-      <div class="stat-card"><b>${freeUsed + S.user.extra_listing_slots}</b><span>📦 حدّك الأقصى للإعلانات</span></div>
-      <div class="stat-card"><b>${st.spent_jd}</b><span>💳 إجمالي مدفوعاتك (د.أ)</span></div>
-    </div>
-
-    <div class="layout" style="grid-template-columns:1fr 300px">
-      <div>
-        <div class="card">
-          <h3>📦 إعلاناتك</h3>
-          ${mine.length ? mine.map(a => `
-            <div class="my-ad">
-              <div class="detail-thumb ${CAT_CLASS[a.category] || "th-أخرى"}" style="width:52px;height:52px;font-size:1.5rem;border-radius:11px">${CAT_EMOJI[a.category] || "📦"}</div>
-              <div class="info">
-                <strong>${a.is_featured ? "⭐ " : ""}${esc(a.title)}</strong>
-                <small>${jd(a.price)} ${esc(S.boot.currency)} · ${esc(a.city)} · 👁 ${a.views} مشاهدة · ${esc(a.age_label)}
-                ${a.is_featured ? ` · ينتهي التثبيت بعد ${a.featured_hours_left} ساعة` : ""}</small>
-              </div>
-              <div class="acts">
-                <a class="btn btn-outline btn-sm" data-stop href="${esc(a.whatsapp_url)}" target="_blank" rel="noopener">💬</a>
-                <button class="btn btn-sm ${a.is_featured ? "btn-outline" : "btn-star"}" onclick="openBoost(${a.id})">${a.is_featured ? "تجديد ⭐" : "⭐ ثبّت"}</button>
-                <button class="btn btn-outline btn-sm" onclick="openDetail(${a.id})">عرض</button>
-                <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteListing(${a.id})">🗑</button>
-              </div>
-            </div>`).join("")
-            : `<div class="empty" style="padding:2rem"><span class="big">📭</span>لا توجد إعلانات بعد
-                <div style="margin-top:.8rem"><button class="btn btn-primary" onclick="openNewListing()">➕ أضف إعلانك الأول</button></div></div>`}
-          <button class="btn btn-primary btn-block" style="margin-top:.8rem" onclick="openNewListing()">➕ إضافة إعلان جديد</button>
-        </div>
-
-        <div class="card">
-          <h3>📦 فتحات الإعلانات الإضافية</h3>
-          <p style="font-size:.83rem;color:var(--slate);margin:.2rem 0 .6rem">
-            حدك المجاني ${freeUsed} إعلانات نشطة. تحتاج أكثر؟ وسّع حدك بـ ${S.boot.pricing.extra_listing_pack} إعلانات <b>دائمة</b> — لا تضيع حتى لو حذفت إعلاناً.</p>
-          <div style="display:flex;gap:.7rem;align-items:center;flex-wrap:wrap">
-            <div class="quick-card" style="flex:1;min-width:120px"><b>+${S.boot.pricing.extra_listing_pack}</b><span>إعلانات دائمة</span></div>
-            <div class="quick-card" style="flex:1;min-width:120px"><b>${(S.boot.pricing.extra_listing_price * S.boot.pricing.extra_listing_pack).toFixed(2)}</b><span>د.أ للحزمة</span></div>
-            <button class="btn btn-primary" onclick="buySlots()">وسّع حدّي</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>🤖 اشترِ رصيد التسعير الذكي</h3>
-          <p style="font-size:.83rem;color:var(--slate);margin:.2rem 0 .6rem">
-            رصيدك الحالي: <b>${S.user.pricing_credits}</b> تسعيرة. بدون رصيد تحصل على ${S.boot.pricing.free_daily} تسعيرات مجانية يومياً.</p>
-          <div class="packs">${packs.map(packHTML).join("")}</div>
-        </div>
-      </div>
-
-      <aside class="sidebar" style="position:static">
-        ${S.user.is_verified ? `
-          <div class="card" style="border-color:#CFE1F6;background:var(--blue-soft)">
-            <h3>🛡️ حسابك موثّق</h3>
-            <p style="font-size:.83rem;margin:.2rem 0 0;color:#1E5A96">إعلاناتك تحمل وسم الثقة — المشترين يتواصلون مع البائعين الموثّقين بنسبة أعلى 60%.</p>
-          </div>` : `
-          <div class="card boost-card">
-            <h3>🛡️ احصل على وسم «بائع موثّق»</h3>
-            <ul class="boost-list">
-              <li>شارة زرقاء بجانب اسمك في كل إعلان</li>
-              <li>ثقة أعلى = تواصل أكثر 60%</li>
-              <li>أولوية في نتائج البحث</li>
-              <li>دفعة واحدة مدى الحياة</li>
-            </ul>
-            <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem">
-              <b style="font-size:1.5rem;color:#FFD86B">${S.boot.pricing.verify_price}</b>
-              <span style="font-size:.8rem;opacity:.75">دينار أردني<br>مرة واحدة فقط</span>
-            </div>
-            <button class="btn btn-star btn-block" onclick="buyVerification()">🛡️ وثّق حسابي</button>
-          </div>`}
-        ${boostHTML()}
-        ${S.user.is_admin ? `<div class="card"><h3>🔐 أدوات المدير</h3>
-          <button class="btn btn-dark btn-block" onclick="go('admin')">عرض إحصاءات وأرباح المنصة</button></div>` : ""}
-      </aside>
-    </div>`;
-}
-
-async function buySlots() {
-  if (!S.user) return openAuth("login");
-  try {
-    const r = await api("/api/buy/extra-listing", { method: "POST" });
-    toast(r.message, "ok");
-    toast(`💳 تم خصم ${r.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
-    await refreshMe(); renderDashboard();
-  } catch (e) { toast(e.message, "err"); }
-}
-
-async function buyVerification() {
-  if (!S.user) return openAuth("login");
-  try {
-    const r = await api("/api/buy/verification", { method: "POST" });
-    toast(r.message, "ok");
-    toast(`💳 تم خصم ${r.charged_jd} ${S.boot.currency} (محاكاة)`, "info");
-    await refreshMe(); renderDashboard();
-  } catch (e) { toast(e.message, "err"); }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   🔐 لوحة المدير — أرباح المنصة
-   ═══════════════════════════════════════════════════════════ */
-async function renderAdmin() {
-  const box = $("#view-admin");
-  box.innerHTML = `<div class="empty"><span class="big">⏳</span>جارٍ التحميل…</div>`;
-  try {
-    const r = await api("/api/admin/stats");
-    const kindLabel = {
-      feature: "⭐ تثبيت إعلانات", renew: "🔁 تجديد تثبيت",
-      verify: "🛡️ توثيق بائعين", credits: "🤖 حزم تسعير", slots: "📦 فتحات إعلانات",
-    };
-    const total = r.revenue_total_jd || 0;
-    box.innerHTML = `
-      <div class="hero"><h1>🔐 لوحة إدارة المنصة</h1>
-        <p>نظرة فورية على الأداء والأرباح — كل الأرقام بالدينار الأردني.</p></div>
-      <div class="stat-grid">
-        <div class="stat-card gold"><b>${total}</b><span>💰 إجمالي الإيرادات (د.أ)</span></div>
-        <div class="stat-card"><b>${r.users}</b><span>👥 مستخدم مسجّل</span></div>
-        <div class="stat-card"><b>${r.listings}</b><span>📦 إعلان نشط</span></div>
-        <div class="stat-card"><b>${r.featured_active}</b><span>⭐ مثبّت حالياً</span></div>
-        <div class="stat-card green"><b>${jd(r.pricing_calls)}</b><span>🤖 عملية تسعير</span></div>
-      </div>
-      <div class="layout" style="grid-template-columns:1fr 1fr">
-        <div class="card">
-          <h3>💵 الإيرادات حسب المصدر</h3>
-          <table class="data">
-            <thead><tr><th>المصدر</th><th>عدد العمليات</th><th>الإيراد</th><th>النسبة</th></tr></thead>
-            <tbody>${r.revenue_by_kind.map(k => `
-              <tr><td>${kindLabel[k.kind] || esc(k.kind)}</td><td>${k.n}</td>
-                  <td><b>${k.total.toFixed(2)}</b> د.أ</td>
-                  <td style="min-width:90px"><div class="bar"><i style="width:${total ? (k.total / total * 100) : 0}%"></i></div></td></tr>`).join("")
-              || `<tr><td colspan="4" style="text-align:center;color:var(--slate);padding:1.5rem">لا توجد إيرادات بعد</td></tr>`}
-            </tbody>
-          </table>
-          <div class="pay-note" style="margin-top:1rem"><span>🔌</span>
-            <span>كل العمليات مسجّلة بوضع <b>simulated</b>. لربط دفع حقيقي: أضف مزوّد Clicks أو إي-فواتيركم في <code>server/main.py</code> عند نقاط <code>POST /api/feature</code> و <code>/api/buy/*</code>.</span></div>
-        </div>
-        <div class="card">
-          <h3>🏆 أعلى البائعين نشاطاً</h3>
-          <table class="data">
-            <thead><tr><th>البائع</th><th>إعلانات نشطة</th><th>الحالة</th></tr></thead>
-            <tbody>${r.top_sellers.map(u => `
-              <tr><td>${esc(u.name)}</td><td>${u.ads || 0}</td>
-                  <td>${u.is_verified ? '<span class="tag tag-verified">🛡️ موثّق</span>' : '<span class="tag">عادي</span>'}</td></tr>`).join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
-  } catch (e) {
-    box.innerHTML = `<div class="empty"><span class="big">🔒</span>${esc(e.message)}</div>`;
+  else if(form.id==='store-form'){
+   const body={slug:v('slug'),name_ar:v('name_ar'),name_en:v('name_en'),description_ar:v('description_ar'),description_en:v('description_en'),city:v('city'),accent:v('accent'),shipping_fils:fils(v('shipping')),delivery_days:Number(v('delivery_days'))};
+   await api('/api/seller/store',{method:form.dataset.edit==='true'?'PUT':'POST',body});await refreshUser();toast(tr('حُفظت بيانات متجرك.','Your store details were saved.'));navigate('/seller');
   }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   🛡️ صفحة الأمان والضمان
-   ═══════════════════════════════════════════════════════════ */
-function renderSafety() {
-  $("#view-safety").innerHTML = `
-    <div class="hero"><h1>🛡️ ضمان حقوق المستخدمين</h1>
-      <p>بنينا المنصة على مبدأ واحد: لا أحد يخسر بسبب غموض. هذه آليات الحماية المتاحة لك.</p></div>
-    <div class="safety-grid">
-      <div class="safety-item"><span class="ico">🚫</span><h4>بيئة خالية من الإعلانات المزعجة</h4>
-        <p>لا نوافذ منبثقة ولا إعلانات طرف ثالث تتعقبك. التصفح نظيف وسريع على أي جهاز.</p></div>
-      <div class="safety-item"><span class="ico">🔄</span><h4>توثيق المقايضة</h4>
-        <p>عند اختيار «اعرض مقايضة» يُولَّد عرض مكتوب يُرسل عبر واتساب ويوثّق السلعتين وقيمتهما — دليل لك إن حدث خلاف.</p></div>
-      <div class="safety-item"><span class="ico">🛡️</span><h4>وسم البائع الموثّق</h4>
-        <p>حسابات خضعت للتحقق تحمل شارة زرقاء. نسبة التواصل معها أعلى 60% لأن المشتري يعرف من يتعامل معه.</p></div>
-      <div class="safety-item"><span class="ico">📱</span><h4>تواصل مباشر وآمن</h4>
-        <p>لا وساطة ولا عمولة على البيع العادي. زر واتساب ينقلك للمحادثة مباشرة، ورقمك يبقى بيدك.</p></div>
-      <div class="safety-item"><span class="ico">🤖</span><h4>تسعير عادل يمنع الاستغلال</h4>
-        <p>المحرك يحسب السعر الحقيقي من بيانات السوق الأردني، فلا يُضحك على البائع بسعر متدنٍ ولا يُنفَّر المشتري بسعر مبالغ.</p></div>
-      <div class="safety-item"><span class="ico">🔒</span><h4>حماية بياناتك</h4>
-        <p>كلمات المرور مخزّنة بتجزئة bcrypt ولا تُقرأ أبداً. لا نبيع بياناتك ولا نشاركها مع أي طرف.</p></div>
-    </div>
-
-    <div class="card faq" style="margin-top:1.3rem">
-      <h3>❓ الأسئلة الشائعة</h3>
-      <details><summary>هل النشر مجاني فعلاً؟</summary>
-        <p>نعم — لديك ${S.boot.pricing.free_active_listings} إعلانات نشطة مجاناً و ${S.boot.pricing.free_daily} تسعيرات ذكية يومياً. الدفع اختياري تماماً ولمن يريد تسريع البيع فقط.</p></details>
-      <details><summary>ما الفرق بين الإعلان العادي والمثبّت ⭐؟</summary>
-        <p>المثبّت يظهر أولاً في نتائج البحث بإطار ذهبي وشارة «مثبّت» لمدة ${S.boot.pricing.feature_days} أيام مقابل ${S.boot.pricing.feature_price} ${esc(S.boot.currency)}. التجديد أرخص (${S.boot.pricing.renew_price} ${esc(S.boot.currency)}).</p></details>
-      <details><summary>كيف أحمي نفسي في عملية مقايضة؟</summary>
-        <p>التقِ الطرف الآخر في مكان عام، عاين السلعتين معاً، ووقّع الاتفاق برسالة واتساب مكتوبة تذكر السلعتين وقيمتهما المتفق عليها. احتفظ بالرسالة.</p></details>
-      <details><summary>هل تأخذون عمولة على البيع؟</summary>
-        <p>لا. لا نقتطع أي نسبة من سعر سلعتك. دخلنا فقط من الخدمات الاختيارية: التثبيت، التوثيق، وحزم التسعير.</p></details>
-      <details><summary>كيف يعمل محرك التسعير؟</summary>
-        <p>يحلل: متوسط سعر الفئة في السوق الأردني + نوع السلعة من اسمها + حالتها من 1 إلى 10 + قوة الطلب في مدينتك + قبولك للمقايضة. ثم يعطيك السعر العادل ونطاق المفاوضة وسعر البيع السريع مع شرح كل عامل.</p></details>
-      <details><summary>الدفع إلكتروني أم يدوي؟</summary>
-        <p>النسخة الحالية تعمل بمحاكاة دفع لتجربة المنطق الكامل. عند الإطلاق تُربط ببوابة دفع أردنية (Clicks / إي-فواتيركم / زين كاش) دون تغيير في تجربة المستخدم.</p></details>
-    </div>
-
-    <div class="card" style="margin-top:1rem;background:var(--flame-soft);border-color:#F6D9A5">
-      <h3 style="color:#8A5B00">💡 نصائح السلامة</h3>
-      <ul style="margin:.3rem 0 0;padding-inline-start:1.2rem;font-size:.86rem;color:#7A5A1A">
-        ${S.boot.safety_tips.map(t => `<li style="margin-bottom:.3rem">${esc(t)}</li>`).join("")}
-      </ul>
-    </div>`;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   الإقلاع والربط العام
-   ═══════════════════════════════════════════════════════════ */
-async function boot() {
-  $("#year").textContent = new Date().getFullYear();
-  try {
-    S.boot = await api("/api/bootstrap");
-    S.user = S.boot.user;
-  } catch (e) {
-    document.body.innerHTML = `<div class="empty" style="margin:4rem auto"><span class="big">⚠️</span>
-      تعذّر تحميل المنصة: ${esc(e.message)}</div>`;
-    return;
+  else if(form.id==='product-form'){
+   let mediaId=S.editing?.media_id||null;const file=data.get('image');
+   if(file instanceof File&&file.size){if(file.size>5*1024*1024)throw new Error(tr('الصورة تتجاوز 5 ميغابايت.','The image exceeds 5 MB.'));const upload=new FormData();upload.set('file',file);mediaId=(await api('/api/seller/media',{method:'POST',body:upload})).id;}
+   const body={category_id:v('category_id'),title_ar:v('title_ar'),title_en:v('title_en'),description_ar:v('description_ar'),description_en:v('description_en'),sku:v('sku'),price_fils:fils(v('price')),compare_at_fils:v('compare_at')?fils(v('compare_at')):null,stock:Number(v('stock')),media_id:mediaId,status:v('status'),expected_version:S.editing?.version||null};
+   if(body.status==='pending'&&!mediaId)throw new Error(tr('أضف صورة قبل الإرسال للمراجعة.','Add an image before submitting for review.'));
+   await api('/api/seller/products'+(S.editing?'/'+S.editing.id:''),{method:S.editing?'PUT':'POST',body});closeModal();toast(tr('حُفظ المنتج. راجع حالته في لوحة المنتجات.','Product saved. Review its status in your dashboard.'));navigate('/seller?tab=products');
   }
-  renderAuthArea();
-  renderHome();
-  loadPricingStats();
-
-  // البحث
-  let t;
-  $("#searchInput").addEventListener("input", (e) => {
-    clearTimeout(t);
-    t = setTimeout(() => { S.filters.q = e.target.value.trim(); if (S.view !== "home") go("home"); else loadAndRenderResults(); }, 260);
-  });
-
-  // أزرار التنقل
-  $$("[data-view]").forEach(el => el.addEventListener("click", (e) => { e.preventDefault(); go(el.dataset.view); }));
-  $("#navPricing").onclick = () => openPricing();
-  $("#navNew").onclick = () => openNewListing();
-  $("#footPricing").onclick = (e) => { e.preventDefault(); openPricing(); };
-  $("#footNew").onclick = (e) => { e.preventDefault(); openNewListing(); };
-  $("#footFeature").onclick = (e) => { e.preventDefault(); openBoost(); };
-  $("#footDashboard").onclick = (e) => { e.preventDefault(); go("dashboard"); };
-  $("#footVerify").onclick = (e) => { e.preventDefault(); S.user?.is_verified ? go("dashboard") : openAuth("register", "أنشئ حساباً ثم احصل على وسم بائع موثّق 🛡️"); };
+  else if(form.id==='stock-form'){
+   await api('/api/seller/products/'+S.editing.id+'/stock',{method:'PATCH',body:{stock:Number(v('stock')),expected_version:S.editing.version}});closeModal();toast(tr('حُدّث المخزون وسُجّلت الحركة.','Stock updated and the movement recorded.'));renderRoute();
+  }
+  else if(form.classList.contains('status-form')){
+   await api('/api/'+(form.dataset.admin==='true'?'admin':'seller')+'/orders/'+form.dataset.id+'/status',{method:'PATCH',body:{status:v('status'),expected_status:form.dataset.current,note:v('note')}});toast(tr('حُفظ تحديث الحالة.','Status update saved.'));renderRoute();
+  }
+  else if(form.classList.contains('review-form')){
+   await api('/api/admin/'+form.dataset.entity+'/'+form.dataset.id+'/review',{method:'POST',body:{approved:e.submitter?.value==='approve',note:v('note')}});toast(tr('حُفظ قرار المراجعة مع سجل تدقيق.','Review decision saved with an audit trail.'));renderRoute();
+  }
+  else if(form.id==='settings-form'){
+   await api('/api/admin/settings',{method:'PUT',body:{commission_bps:percentBps(v('commission_percent')),home_title_ar:v('home_title_ar'),home_title_en:v('home_title_en')}});S.boot=await api('/api/bootstrap');toast(tr('حُفظت الإعدادات. الطلبات السابقة لم تتغيّر.','Settings saved. Previous orders were not changed.'));
+  }
+  else if(form.id==='commission-form'||form.id==='category-commission-form'){
+   const entity=form.id==='commission-form'?'store':'category',id=entity==='store'?S.commissionStore.id:v('category_id');
+   await api('/api/admin/commissions/'+entity+'/'+id,{method:'PUT',body:{commission_bps:v('percent')?percentBps(v('percent')):null}});closeModal();toast(tr('حُفظت قاعدة العمولة.','Commission rule saved.'));renderRoute();
+  }
+  else if(form.id==='reauth-form'){
+   await api('/api/auth/reauth',{method:'POST',body:{password:String(data.get('password')||''),otp:v('otp')}});closeModal();toast(tr('تم التحقق. يمكنك إعادة حفظ الإعداد المالي خلال 10 دقائق.','Identity confirmed. You can retry saving financial settings within 10 minutes.'));
+  }
+ }catch(error){if($('.form-error',form))formError(form,error);else toast(error.message,true);}
+ finally{if(submit?.isConnected){submit.disabled=false;submit.innerHTML=original;}}
+});
+function connectionState(){const banner=$('#offline-banner');banner.hidden=navigator.onLine;banner.textContent=tr('أنت دون اتصال. تصفّح المنتجات المحمّلة سابقًا؛ تأكيد الطلبات وتعديل المخزون يتطلبان الاتصال.','You’re offline. Browse previously loaded products; orders and stock changes require a connection.');$$('button[form="checkout-form"]').forEach(b=>b.disabled=!navigator.onLine);}
+window.addEventListener('online',()=>{connectionState();toast(tr('رجع الاتصال. أهلًا بعودتك.','You’re connected again. Welcome back.'));});window.addEventListener('offline',connectionState);
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();S.install=e;});
+window.addEventListener('storage',e=>{if(e.key==='shamaa.cart'&&!S.user){S.guest=readLocal('shamaa.cart',{});getCart().then(updateCartCount).catch(()=>{});}if(e.key==='shamaa.favorites')S.favorites=readLocal('shamaa.favorites',[]);});
+async function init(){
+ loading();connectionState();
+ try{const [boot,account]=await Promise.all([api('/api/bootstrap'),api('/api/auth/me').catch(()=>({user:null,csrf_token:null}))]);S.boot=boot;S.user=account.user;setCsrf(account.csrf_token);try{await getCart();}catch{S.cart={groups:[],quantity:0};}await renderRoute();}
+ catch(error){errorView(error);}
 }
-
-// تحديث الإحصاءات دورياً
-setInterval(() => { if (S.view === "home") loadPricingStats(); }, 25000);
-
-boot();
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{/* Core marketplace never depends on service-worker availability. */}));
+init();

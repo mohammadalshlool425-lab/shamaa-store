@@ -1,0 +1,26 @@
+# TEMPLATE: update paths, create a dedicated unprivileged shamaa user, configure
+# production.env and persistent storage, then review docs/OPERATIONS.md first.
+[Unit]
+Description=SHAM'A marketplace
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shamaa
+Group=shamaa
+WorkingDirectory=/opt/shamaa/current
+EnvironmentFile=/etc/shamaa/production.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/shamaa/current/.venv/bin/python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --no-access-log --proxy-headers --forwarded-allow-ips=127.0.0.1 --workers 1 --limit-concurrency 100
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shamaa
+
+[Install]
+WantedBy=multi-user.target
