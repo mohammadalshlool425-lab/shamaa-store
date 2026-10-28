@@ -1,0 +1,24 @@
+[Unit]
+Description=SHAM'A transactional email retries
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shamaa
+Group=shamaa
+WorkingDirectory=/opt/shamaa/current
+EnvironmentFile=/etc/shamaa/production.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/shamaa/current/.venv/bin/python -m server.cli mail-worker
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shamaa
+
+[Install]
+WantedBy=multi-user.target
