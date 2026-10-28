@@ -56,7 +56,7 @@ class RequestSizeLimit:
 def create_app(settings=None):
     s = settings or Settings()
     s.prepare()
-    db = Database(s.db_path)
+    db = Database(s.db_path,s.sqlite_journal_mode)
     db.initialize()
     with db.read() as c:
         if s.production and (c.execute('SELECT COUNT(*) FROM stores WHERE is_demo=1').fetchone()[0]

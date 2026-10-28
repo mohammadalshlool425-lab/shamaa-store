@@ -7,7 +7,7 @@ const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function readLocal(key,fallback) { try { return JSON.parse(localStorage.getItem(key))??fallback; } catch { return fallback; } }
 function saveLocal(key,value) { try { localStorage.setItem(key,JSON.stringify(value)); } catch { /* private browsing may disable storage */ } }
-const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,editing:null,store:null,afterAuth:null,checkout:null,install:null};
+const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,editing:null,store:null,afterAuth:null,checkout:null,install:null,emailToken:null};
 if(!Array.isArray(S.favorites)) S.favorites=[];
 if(!S.guest||typeof S.guest!=='object'||Array.isArray(S.guest)) S.guest={};
 const main=$('#main');
@@ -199,7 +199,9 @@ async function favoritesView(route){
  main.innerHTML=`<div class="container page-space"><div class="page-heading"><div><h1>${tr('أشياء عجبتك، خليّناها إلك.','Little things you loved.')}</h1><p>${tr('اختيارات محفوظة على هذا المتصفح، دون تتبع أو تخصيص سلوكي.','Saved in this browser only, without behavioural tracking.')}</p></div></div>${items.some(Boolean)?grid(items.filter(Boolean)):empty(tr('مكان لاختياراتك المفضلة','A place for your favourites'),tr('اضغط على القلب بجانب أي منتج، وارجع له وقت ما تحب.','Tap the heart on a product and come back to it whenever you like.'),link('/search',tr('اكتشف شيئًا يعجبك','Find something to love'),'btn btn-primary'),'heart')}</div>`;
 }
 function tokenView(reset=false){
- const token=new URLSearchParams(location.search).get('token')||'';title(reset?tr('استعادة كلمة المرور','Reset password'):tr('تأكيد البريد','Verify email'));
+ const kind=reset?'reset':'verify',incoming=new URLSearchParams(location.hash.slice(1)).get('token')||new URLSearchParams(location.search).get('token');
+ if(incoming){S.emailToken={kind,value:incoming};const url=new URL(location.href);url.searchParams.delete('token');url.hash='';history.replaceState({},'',url.pathname+url.search);}
+ const token=S.emailToken?.kind===kind?S.emailToken.value:'';title(reset?tr('استعادة كلمة المرور','Reset password'):tr('تأكيد البريد','Verify email'));
  main.innerHTML=`<div class="container page-space"><section class="panel center-form"><div class="eyebrow">${icon(reset?'lock':'mail','small')}SHAM’A</div><h1>${reset?tr('بداية جديدة لحسابك.','A fresh start for your account.'):tr('أهلًا، نؤكّد بريدك؟','Let’s confirm your email.')}</h1><p>${reset?tr('اختر كلمة مرور قوية وجديدة. ستنتهي جميع جلسات الحساب السابقة.','Choose a strong new password. All previous sessions will be revoked.'):tr('اضغط أدناه لتأكيد البريد. فتح الرابط وحده لا يغيّر حسابك.','Confirm below to verify your email. Opening the link alone does not change your account.')}</p><form id="${reset?'reset-form':'verify-form'}">${errorBox('token-error')}<input type="hidden" name="token" value="${esc(token)}">${reset?input('password',tr('كلمة مرور جديدة','New password'),{type:'password',min:10,max:128,autocomplete:'new-password',hint:tr('10 أحرف على الأقل، مع حروف وأرقام.','At least 10 characters, including letters and numbers.')}):''}<button type="submit" class="btn btn-primary btn-block" ${token?'':'disabled'}>${reset?tr('حفظ كلمة المرور الجديدة','Save new password'):tr('تأكيد بريدي الإلكتروني','Confirm my email')}${icon('check')}</button></form>${!token?`<p class="small-text gap-top danger-text">${tr('الرابط غير مكتمل. افتح الرابط من الرسالة.','The link is incomplete. Open the full link from your email.')}</p>`:''}</section></div>`;
 }
 
@@ -301,6 +303,7 @@ async function navigate(href,replace=false){
 async function renderRoute(){
  if(!S.boot){await init();return;}
  const route=++S.route;const path=location.pathname;
+ if(path!=='/verify-email'&&path!=='/reset-password')S.emailToken=null;
  renderHeader();renderFooter();loading();
  try{
   if(path==='/')await homeView(route);
@@ -407,10 +410,10 @@ document.addEventListener('submit',async e=>{
    }else{S.user=result.user;setCsrf(result.csrf_token);closeModal();await mergeGuest();const destination=S.afterAuth||'/account';S.afterAuth=null;toast(tr('أهلًا في شمعة. سعيدين بوجودك.','Welcome to SHAM’A. Lovely to have you here.'));navigate(destination);}
   }
   else if(form.id==='verify-form'){
-   await api('/api/auth/verify',{method:'POST',body:{token:v('token')}});await refreshUser();toast(tr('أكّدنا بريدك. أهلًا بخطوتك التالية!','Your email is confirmed. Here’s to your next step!'));navigate('/account',true);
+   await api('/api/auth/verify',{method:'POST',body:{token:v('token')}});S.emailToken=null;await refreshUser();toast(tr('أكّدنا بريدك. أهلًا بخطوتك التالية!','Your email is confirmed. Here’s to your next step!'));navigate('/account',true);
   }
   else if(form.id==='reset-form'){
-   await api('/api/auth/reset-password',{method:'POST',body:{token:v('token'),password:String(data.get('password')||'')}});S.user=null;setCsrf('');await getCart();navigate('/account',true);toast(tr('تغيّرت كلمة المرور وانتهت الجلسات القديمة. سجّل الدخول مجددًا.','Password updated and old sessions revoked. Please sign in again.'));openAuth();
+   await api('/api/auth/reset-password',{method:'POST',body:{token:v('token'),password:String(data.get('password')||'')}});S.emailToken=null;S.user=null;setCsrf('');await getCart();navigate('/account',true);toast(tr('تغيّرت كلمة المرور وانتهت الجلسات القديمة. سجّل الدخول مجددًا.','Password updated and old sessions revoked. Please sign in again.'));openAuth();
   }
   else if(form.id==='checkout-form'){
    if(!navigator.onLine)throw new Error(tr('لا يمكن تأكيد الطلب دون اتصال. أعد الاتصال وحاول من نفس الصفحة.','Orders cannot be confirmed offline. Reconnect and retry on this page.'));

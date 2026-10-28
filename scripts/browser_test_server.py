@@ -13,12 +13,16 @@ from server.application import create_app
 from server.database import now
 from server.security import encrypt, hash_password
 
+transport=os.getenv('SHAMAA_TEST_TRANSPORT','asgi')
+if transport not in ('asgi','wsgi'):
+    raise RuntimeError('SHAMAA_TEST_TRANSPORT must be asgi or wsgi')
 folder=ROOT/'data'/'browser-tests'
 if folder.exists():
     shutil.rmtree(folder) # this exact, dedicated directory only
 folder.mkdir(parents=True,mode=0o700)
 settings=Settings(env='development',db_path=folder/'marketplace.sqlite3',data_dir=folder,
                   demo=True,email_mode='file',encryption_key='',
+                  sqlite_journal_mode='DELETE' if transport=='wsgi' else 'WAL',
                   public_url='http://127.0.0.1:8011',allowed_hosts=['127.0.0.1','localhost','*.e2b.app'])
 app=create_app(settings)
 credentials={}
@@ -36,5 +40,19 @@ p=folder/'credentials.json'
 p.write_text(json.dumps(credentials));p.chmod(0o600)
 Image.new('RGB',(200,160),'#7c9379').save(folder/'product.png')
 if __name__=='__main__':
-    import uvicorn
-    uvicorn.run(app,host='0.0.0.0',port=8011,access_log=False)
+    if transport=='wsgi':
+        from socketserver import ThreadingMixIn
+        from wsgiref.simple_server import WSGIServer,WSGIRequestHandler,make_server
+        from server.wsgi import WSGIApplication
+        class Server(ThreadingMixIn,WSGIServer):
+            daemon_threads=True
+            request_queue_size=128
+        class QuietHandler(WSGIRequestHandler):
+            def log_message(self,*args):
+                pass # URLs may contain legacy verification tokens: do not log them.
+        with make_server('0.0.0.0',8011,WSGIApplication(app),
+                         server_class=Server,handler_class=QuietHandler) as server:
+            server.serve_forever()
+    else:
+        import uvicorn
+        uvicorn.run(app,host='0.0.0.0',port=8011,access_log=False)

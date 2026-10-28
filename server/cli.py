@@ -21,7 +21,7 @@ from .seed import initialize_catalog
 def setup():
     s = Settings()
     s.prepare()
-    db = Database(s.db_path)
+    db = Database(s.db_path,s.sqlite_journal_mode)
     db.initialize()
     initialize_catalog(db,s)
     return s,db

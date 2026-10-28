@@ -17,7 +17,7 @@ def email_token(c, request, user, purpose):
     c.execute('INSERT INTO auth_tokens VALUES(?,?,?,?,NULL)',
               (digest(token),user['id'],purpose,now()+(86400 if purpose=='verify' else 1800)))
     path = 'verify-email' if purpose=='verify' else 'reset-password'
-    link = f'{request.app.state.settings.public_url}/{path}?token={token}'
+    link = f'{request.app.state.settings.public_url}/{path}#token={token}'
     ar = 'أكّد بريدك الإلكتروني' if purpose=='verify' else 'استعادة كلمة المرور'
     en = 'Verify your email' if purpose=='verify' else 'Reset your password'
     body = (f'مرحبًا {user["name"]}،\n{ar} على شمعة عبر الرابط التالي:\n{link}\nإذا لم تطلب هذا الإجراء فتجاهل الرسالة.'
@@ -39,7 +39,7 @@ def start_session(c, request, user):
     c.execute('INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)',
               (digest(raw),user['id'],csrf,now(),now()+request.app.state.settings.session_seconds,ip,agent,now() if user['role']=='admin' else None))
     response = JSONResponse({'user':public_user(user),'csrf_token':csrf})
-    response.set_cookie(COOKIE,raw,httponly=True,secure=request.app.state.settings.production,
+    response.set_cookie(COOKIE,raw,httponly=True,secure=request.app.state.settings.secure_cookies,
                         samesite='lax',max_age=request.app.state.settings.session_seconds,path='/')
     return response
 

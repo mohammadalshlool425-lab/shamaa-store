@@ -11,7 +11,7 @@ def message_token(settings,purpose):
     for p in sorted((settings.data_dir/'mail').glob('*.eml'),reverse=True):
         msg=BytesParser(policy=policy.default).parsebytes(p.read_bytes())
         text=msg.get_body(preferencelist=('plain',)).get_content()
-        found=re.search(r'/'+purpose+r'\?token=([A-Za-z0-9_-]+)',text)
+        found=re.search(r'/'+purpose+r'#token=([A-Za-z0-9_-]+)',text)
         if found:return found.group(1)
     raise AssertionError('No matching private email')
 

@@ -124,9 +124,13 @@ test('email verification link is real and not consumed just by opening it',async
  const email='browser-'+randomBytes(6).toString('hex')+'@example.com',password=randomBytes(18).toString('hex')+'A9';
  await page.locator('#name').fill('Generated new user');await page.locator('#email').fill(email);await page.locator('#password').fill(password);
  await page.locator('#auth-form button[type=submit]').click();await expect(page).toHaveURL(/\/account$/);await expect(page.locator('.notice.warn')).toBeVisible();
- const code=`from email.parser import BytesParser\nfrom email import policy\nfrom pathlib import Path\nimport re,sys\nfor p in sorted(Path('data/browser-tests/mail').glob('*.eml'), reverse=True):\n m=BytesParser(policy=policy.default).parsebytes(p.read_bytes())\n if m['To']==sys.argv[1]:\n  body=m.get_body(preferencelist=('plain',)).get_content()\n  found=re.search(r'/verify-email\\?token=([A-Za-z0-9_-]+)',body)\n  if found:\n   print(found.group(1));break\n`;
+ const code=`from email.parser import BytesParser\nfrom email import policy\nfrom pathlib import Path\nimport re,sys\nfor p in sorted(Path('data/browser-tests/mail').glob('*.eml'), reverse=True):\n m=BytesParser(policy=policy.default).parsebytes(p.read_bytes())\n if m['To']==sys.argv[1]:\n  body=m.get_body(preferencelist=('plain',)).get_content()\n  found=re.search(r'/verify-email#token=([A-Za-z0-9_-]+)',body)\n  if found:\n   print(found.group(1));break\n`;
  const token=execFileSync(PY,['-c',code,email],{encoding:'utf8'}).trim();expect(token.length).toBeGreaterThan(20);
- await page.goto('/verify-email?token='+token);await expect(page.locator('#verify-form')).toBeVisible();
+ await page.goto('/verify-email#token='+token);await expect(page.locator('#verify-form')).toBeVisible();
+ await expect(page).toHaveURL(/\/verify-email$/);
+ // Legacy links still work; remove their query token before any further navigation.
+ await page.goto('/verify-email?token='+token);await expect(page.locator('#verify-form')).toBeVisible();await expect(page).toHaveURL(/\/verify-email$/);
+ await page.locator('.strip-links [data-action=language]').click();await expect(page.locator('#verify-form button[type=submit]')).toBeEnabled();
  const before=await page.request.get('/api/auth/me');expect((await before.json()).user.email_verified_at).toBeNull();
  await page.locator('#verify-form button[type=submit]').click();await expect(page).toHaveURL(/\/account$/);
  await expect(page.locator('.notice.warn')).toHaveCount(0);
@@ -136,12 +140,12 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.3');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
- const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return(await c.keys()).map(r=>new URL(r.url).pathname);});
+ const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.3');return(await c.keys()).map(r=>new URL(r.url).pathname);});
  expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);

@@ -1,0 +1,3 @@
+# Optional standard WSGI hosting, not the provider's experimental ASGI product.
+-r requirements.txt
+a2wsgi==1.10.10

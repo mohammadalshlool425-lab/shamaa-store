@@ -25,16 +25,23 @@ class Settings:
     smtp_password: str = field(default_factory=lambda: os.getenv('SHAMAA_SMTP_PASSWORD', ''))
     mail_from: str = field(default_factory=lambda: os.getenv('SHAMAA_MAIL_FROM', 'noreply@example.com'))
     encryption_key: str = field(default_factory=lambda: os.getenv('SHAMAA_ENCRYPTION_KEY', ''))
+    sqlite_journal_mode: str = field(default_factory=lambda: os.getenv('SHAMAA_SQLITE_JOURNAL_MODE', 'WAL').strip().upper())
     session_seconds: int = 7 * 86400
 
     @property
     def production(self):
         return self.env == 'production'
 
+    @property
+    def secure_cookies(self):
+        return self.production or urlsplit(self.public_url).scheme == 'https'
+
     def prepare(self):
         self.db_path = self.db_path.resolve()
         self.data_dir = self.data_dir.resolve()
         self.allowed_hosts = [v.strip() for v in self.allowed_hosts if v.strip()]
+        if self.sqlite_journal_mode not in ('WAL', 'DELETE'):
+            raise RuntimeError('SHAMAA_SQLITE_JOURNAL_MODE must be WAL or DELETE')
         if self.email_mode not in ('file', 'smtp'):
             raise RuntimeError('SHAMAA_EMAIL_MODE must be file or smtp')
         if self.production:

@@ -8,6 +8,7 @@
 
 ## ابدأ من هنا
 
+- **نشر معاينة مجانية بلا بطاقة (بشروط وحدود):** [PythonAnywhere وإعداد الحساب](docs/DEPLOY_FREE_PYTHONANYWHERE.md).
 - **للمبتدئ، Windows والهاتف:** [خطوات مصوغة خطوة بخطوة](docs/BEGINNER_AR.md).
 - **ما نُفّذ وما أُجّل:** [المراحل ومعايير القبول](docs/PHASES.md).
 - **للمطوّر:** [البنية والبيانات والصلاحيات](docs/ARCHITECTURE.md).
@@ -84,6 +85,8 @@ npm run test:browser
 SHAMAA_BUNDLED_BROWSER=1 npm run test:browser -- --reporter=line
 ```
 
+أُضيف مسار WSGI اختياري بـ`requirements-pythonanywhere.lock` لمعاينة PythonAnywhere المجانية العادية؛ لا يحتاجه تشغيل Uvicorn المعتاد. إعداد الحساب الخارجي وReload من لوحة المزود لم ينفذا بعد.
+
 اختبارات الخادم تستخدم قواعد مؤقتة. اختبارات المتصفح تدير خادمًا معزولًا على **8011** وتعيد إنشاء **`data/browser-tests/` فقط**. هذا المجلد خاص بالاختبار ويُحذف عند بدئه؛ لا تحفظ فيه أي شيء. أوقف أي نسخة اختبار قديمة على 8011 قبل إعادة المجموعة كاملة. لا تلمس الاختبارات قاعدة المتجر على 8000.
 
 ```bash
@@ -113,6 +116,8 @@ npm audit --audit-level=moderate
 ```text
 server/application.py      مصنع التطبيق، الحماية، الوسائط، صفحات الواجهة وSEO الأساسي
 server/main.py             مدخل Uvicorn (main.py وapp.py للتوافق)
+server/wsgi.py             مصنع WSGI اختياري للمعاينة المقيدة
+scripts/setup_pythonanywhere.py  تجهيز ملفات خاصة؛ لا ينشئ استضافة أو ينشر وحده
 server/schema.sql          مخطط v1 وقيود البيانات والسجلات append-only
 server/routes/             auth / catalog / seller / orders / admin
 server/commerce.py         الفلس، السلة، أولوية العمولة وحسابها
