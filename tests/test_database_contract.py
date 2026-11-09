@@ -154,7 +154,7 @@ def test_qmark_translation_handles_escaped_quotes_and_empty_dollar_tag():
     translated = qmark_to_format(sql)
 
     assert translated.startswith("SELECT %s,")
-    assert "E'escaped\\\\'? still literal'" in translated
+    assert r"E'escaped\'? still literal'" in translated
     assert "$$ ? $$" in translated
     assert '"identifier?"' in translated
 

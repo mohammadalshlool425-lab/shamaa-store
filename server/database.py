@@ -104,7 +104,7 @@ def qmark_to_format(sql: str) -> str:
             continue
 
         if sql.startswith("--", i):
-            end = sql.find("\\n", i)
+            end = sql.find("\n", i)
             if end == -1:
                 output.append(sql[i:])
                 break
