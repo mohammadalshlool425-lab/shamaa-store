@@ -165,3 +165,20 @@ def test_qmark_translation_leaves_question_mark_operators_out_of_scope():
     # PostgreSQL JSON question-mark operators are intentionally unsupported
     # in this SQLite-originated query contract and must be identified explicitly.
     assert qmark_to_format("SELECT payload ? 'key'") == "SELECT payload %s 'key'"
+
+def test_cursor_contract_exposes_affected_row_count(tmp_path):
+    db = Database(tmp_path / "cursor-rowcount.sqlite3")
+    db.initialize()
+    with db.transaction() as connection:
+        result = connection.execute(
+            "UPDATE settings SET value=? WHERE key=?",
+            ("updated", "commission_bps"),
+        )
+        assert result.rowcount == 1
+
+        missing = connection.execute(
+            "UPDATE settings SET value=? WHERE key=?",
+            ("updated", "missing-setting"),
+        )
+        assert missing.rowcount == 0
+\n
