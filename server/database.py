@@ -91,7 +91,7 @@ def qmark_to_format(sql: str) -> str:
             char = sql[i]
             output.append(char)
             i += 1
-            if char == "\\\\" and quote == "'":
+            if char == "\\" and quote == "'":
                 if i < length:
                     output.append(sql[i])
                     i += 1

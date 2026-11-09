@@ -150,7 +150,7 @@ def test_qmark_translation_replaces_only_parameter_placeholders():
 def test_qmark_translation_handles_escaped_quotes_and_empty_dollar_tag():
     from server.database import qmark_to_format
 
-    sql = r"SELECT ?, E'escaped\\'? still literal', $$ ? $$, \"identifier?\""
+    sql = r'''SELECT ?, E'escaped\'? still literal', $$ ? $$, "identifier?"'''
     translated = qmark_to_format(sql)
 
     assert translated.startswith("SELECT %s,")
