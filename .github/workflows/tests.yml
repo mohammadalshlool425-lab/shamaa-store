@@ -3,7 +3,7 @@ name: SHAM'A tests
 on:
   pull_request:
   push:
-    branches: [main, 'arena/**']
+    branches: [main, 'arena/**', 'agent/**']
   workflow_dispatch:
 
 permissions:
