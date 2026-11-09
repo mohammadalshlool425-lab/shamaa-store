@@ -33,6 +33,13 @@ class DatabaseProtocol(Protocol):
     def initialize(self) -> None: ...
 
 
+# Stable exception names exposed by the database adapter contract. Drivers must map
+# their native integrity/operational failures to these public exception types.
+# SQLite aliases preserve existing behavior while PostgreSQL support is developed.
+DatabaseIntegrityError = sqlite3.IntegrityError
+DatabaseOperationalError = sqlite3.OperationalError
+
+
 def now():
     return int(time.time())
 

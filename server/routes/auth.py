@@ -1,8 +1,7 @@
 import secrets
-import sqlite3
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
-from ..database import now
+from ..database import DatabaseIntegrityError, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import (COOKIE, DUMMY_HASH, audit, digest, hash_password, optional_user, public_user,
@@ -61,7 +60,7 @@ def register(body: schemas.Register, request: Request, tasks: BackgroundTasks):
             audit(c,u['id'],'register','user',u['id'])
             response = start_session(c,request,u)
             response.status_code = 201
-    except sqlite3.IntegrityError:
+    except DatabaseIntegrityError:
         fail('email_exists',409)
     schedule(tasks,request)
     return response

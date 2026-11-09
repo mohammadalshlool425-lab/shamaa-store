@@ -2,13 +2,12 @@ import hashlib
 from io import BytesIO
 import os
 import secrets
-import sqlite3
 import warnings
 from threading import BoundedSemaphore
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 from ..commerce import PRODUCT_SQL, product_dict, store_dict
-from ..database import now
+from ..database import DatabaseIntegrityError, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import audit, seller_user, throttle, verified_user
@@ -47,7 +46,7 @@ def create_store(body: schemas.StoreInput,request: Request,user=Depends(verified
             c.execute("UPDATE users SET role='seller' WHERE id=?",(user['id'],))
             audit(c,user['id'],'store_requested','store',cur.lastrowid)
             row = c.execute('SELECT * FROM stores WHERE id=?',(cur.lastrowid,)).fetchone()
-    except sqlite3.IntegrityError:
+    except DatabaseIntegrityError:
         fail('store_exists',409)
     return {'store':store_dict(row,True)}
 

@@ -4,7 +4,6 @@ import html
 import logging
 from pathlib import Path
 import secrets
-import sqlite3
 from typing import Literal
 from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -13,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import ROOT, Settings
-from .database import Database, DatabaseProtocol
+from .database import Database, DatabaseOperationalError, DatabaseProtocol
 from .errors import error_body, fail, language
 from .security import optional_user
 from .seed import initialize_catalog
@@ -125,7 +124,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
         fields = list(dict.fromkeys('.'.join(str(x) for x in e['loc'][1:]) for e in exc.errors()))
         return JSONResponse(error_body('invalid_input',language(request),fields=fields),status_code=422)
 
-    @app.exception_handler(sqlite3.OperationalError)
+    @app.exception_handler(DatabaseOperationalError)
     async def database_error(request,exc):
         log.error('Database operation failed (%s)',type(exc).__name__)
         return JSONResponse(error_body('database_busy',language(request)),status_code=503)

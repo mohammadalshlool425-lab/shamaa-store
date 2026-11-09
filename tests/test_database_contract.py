@@ -1,5 +1,12 @@
 from server.application import create_app
-from server.database import Database, DatabaseProtocol
+import sqlite3
+
+from server.database import (
+    Database,
+    DatabaseIntegrityError,
+    DatabaseOperationalError,
+    DatabaseProtocol,
+)
 from server.config import Settings
 from fastapi.testclient import TestClient
 
@@ -44,3 +51,8 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
         response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json()["database"] == "ready"
+
+
+def test_sqlite_exceptions_are_exposed_through_database_contract():
+    assert DatabaseIntegrityError is sqlite3.IntegrityError
+    assert DatabaseOperationalError is sqlite3.OperationalError
