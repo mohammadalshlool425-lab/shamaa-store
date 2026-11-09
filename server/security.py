@@ -75,7 +75,8 @@ def throttle(request, scope, limit=10, window=300, identifier=None):
                 fail('rate_limit', 429)
             c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
         else:
-            c.execute('INSERT OR REPLACE INTO rate_limits VALUES(?,?,1)', (key, t))
+            c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
+              ON CONFLICT(bucket) DO UPDATE SET window_start=excluded.window_start,count=excluded.count''', (key, t))
 
 
 def optional_user(request: Request):
