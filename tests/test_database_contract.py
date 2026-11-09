@@ -185,4 +185,4 @@ def test_cursor_contract_exposes_affected_row_count(tmp_path):
             ("updated", "missing-setting"),
         )
         assert missing.rowcount == 0
-\n
+
