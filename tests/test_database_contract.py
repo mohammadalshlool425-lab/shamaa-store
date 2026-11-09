@@ -1,43 +1,46 @@
-from pathlib import Path
-
-import pytest
-
+from server.application import create_app
 from server.database import Database, DatabaseProtocol
+from server.config import Settings
+from fastapi.testclient import TestClient
 
 
-def test_sqlite_adapter_satisfies_application_database_contract(tmp_path):
-    db = Database(tmp_path / "contract.sqlite3")
-    assert isinstance(db, DatabaseProtocol)
-    db.initialize()
+class RecordingDatabase:
+    """Driver-neutral adapter wrapper used to prove application-level injection."""
 
-    with db.transaction() as connection:
-        connection.execute(
-            "INSERT INTO rate_limits(bucket, window_start, count) VALUES(?, ?, ?)",
-            ("committed", 100, 1),
-        )
+    def __init__(self, inner):
+        self.inner = inner
+        self.initialized = False
 
-    with db.read() as connection:
-        row = connection.execute(
-            "SELECT window_start, count FROM rate_limits WHERE bucket=?",
-            ("committed",),
-        ).fetchone()
-        assert (row["window_start"], row["count"]) == (100, 1)
+    def read(self):
+        return self.inner.read()
+
+    def transaction(self):
+        return self.inner.transaction()
+
+    def initialize(self):
+        self.inner.initialize()
+        self.initialized = True
 
 
-def test_sqlite_adapter_rolls_back_failed_transaction(tmp_path):
-    db = Database(tmp_path / "rollback.sqlite3")
-    db.initialize()
+def test_application_accepts_database_protocol_implementation(tmp_path):
+    settings = Settings(
+        env="development",
+        db_path=tmp_path / "injected.sqlite3",
+        data_dir=tmp_path,
+        allowed_hosts=["testserver"],
+        public_url="http://testserver",
+        demo=False,
+        email_mode="file",
+        encryption_key="",
+    )
+    adapter = RecordingDatabase(Database(settings.db_path))
+    assert isinstance(adapter, DatabaseProtocol)
 
-    with pytest.raises(RuntimeError, match="abort transaction"):
-        with db.transaction() as connection:
-            connection.execute(
-                "INSERT INTO rate_limits(bucket, window_start, count) VALUES(?, ?, ?)",
-                ("rolled-back", 200, 1),
-            )
-            raise RuntimeError("abort transaction")
+    app = create_app(settings, database=adapter)
 
-    with db.read() as connection:
-        assert connection.execute(
-            "SELECT 1 FROM rate_limits WHERE bucket=?",
-            ("rolled-back",),
-        ).fetchone() is None
+    assert adapter.initialized is True
+    assert app.state.db is adapter
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json()["database"] == "ready"

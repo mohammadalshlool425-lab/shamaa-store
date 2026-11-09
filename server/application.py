@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import ROOT, Settings
-from .database import Database
+from .database import Database, DatabaseProtocol
 from .errors import error_body, fail, language
 from .security import optional_user
 from .seed import initialize_catalog
@@ -53,7 +53,7 @@ class RequestSizeLimit:
         await self.app(scope,replay,send)
 
 
-def create_app(settings=None):
+def create_app(settings=None, database: DatabaseProtocol | None = None):
     s = settings or Settings()
     s.prepare()
     db = Database(s.db_path)
