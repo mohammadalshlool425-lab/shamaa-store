@@ -7,7 +7,7 @@ from threading import BoundedSemaphore
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 from ..commerce import PRODUCT_SQL, product_dict, store_dict
-from ..database import DatabaseIntegrityError, now
+from ..database import DatabaseIntegrityError, insert_id, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import audit, seller_user, throttle, verified_user
@@ -41,11 +41,11 @@ def create_store(body: schemas.StoreInput,request: Request,user=Depends(verified
             data = body.model_dump()
             keys = ','.join(data)
             marks = ','.join('?' for _ in data)
-            cur = c.execute(f'INSERT INTO stores(owner_id,{keys},created_at) VALUES(?,{marks},?)',
-                            [user['id'],*data.values(),now()])
+            store_id = insert_id(c, f'INSERT INTO stores(owner_id,{keys},created_at) VALUES(?,{marks},?)',
+                                 [user['id'],*data.values(),now()])
             c.execute("UPDATE users SET role='seller' WHERE id=?",(user['id'],))
-            audit(c,user['id'],'store_requested','store',cur.lastrowid)
-            row = c.execute('SELECT * FROM stores WHERE id=?',(cur.lastrowid,)).fetchone()
+            audit(c,user['id'],'store_requested','store',store_id)
+            row = c.execute('SELECT * FROM stores WHERE id=?',(store_id,)).fetchone()
     except DatabaseIntegrityError:
         fail('store_exists',409)
     return {'store':store_dict(row,True)}
@@ -96,9 +96,8 @@ def create_product(body: schemas.ProductInput,request: Request,user=Depends(sell
             if c.execute('SELECT COUNT(*) FROM products WHERE store_id=?',(store['id'],)).fetchone()[0]>=10:
                 fail('seller_limit',409)
             data = body.model_dump(exclude={'expected_version'})
-            cur = c.execute('INSERT INTO products(store_id,'+','.join(data)+',created_at,updated_at) VALUES(?,'+','.join('?' for _ in data)+',?,?)',
-                            [store['id'],*data.values(),now(),now()])
-            product_id = cur.lastrowid
+            product_id = insert_id(c, 'INSERT INTO products(store_id,'+','.join(data)+',created_at,updated_at) VALUES(?,'+','.join('?' for _ in data)+',?,?)',
+                                   [store['id'],*data.values(),now(),now()])
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at) VALUES(?,?,?,?,?)',
                       (product_id,user['id'],body.stock,'initial',now()))
             audit(c,user['id'],'product_created','product',product_id)
@@ -217,9 +216,8 @@ def upload_image(request: Request,file: UploadFile=File(...),user=Depends(seller
                 with os.fdopen(fd,'wb') as f:
                     f.write(content)
                 written.append(p)
-            cur = c.execute('INSERT INTO media(owner_id,digest,storage_key,bytes,created_at) VALUES(?,?,?,?,?)',
-                            (user['id'],image_digest,key,size_bytes,now()))
-            media_id = cur.lastrowid
+            media_id = insert_id(c, 'INSERT INTO media(owner_id,digest,storage_key,bytes,created_at) VALUES(?,?,?,?,?)',
+                                 (user['id'],image_digest,key,size_bytes,now()))
     except BaseException:
         for p in written:
             p.unlink(missing_ok=True)

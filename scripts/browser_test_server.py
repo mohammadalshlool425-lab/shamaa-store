@@ -10,7 +10,7 @@ from PIL import Image
 import pyotp
 from server.config import ROOT, Settings
 from server.application import create_app
-from server.database import now
+from server.database import insert_id, now
 from server.security import encrypt, hash_password
 
 folder=ROOT/'data'/'browser-tests'
@@ -29,8 +29,8 @@ for role in ('buyer','seller','admin'):
     # The seller starts as a verified buyer, then applies for a store through the UI.
     db_role='buyer' if role=='seller' else role
     with app.state.db.transaction() as c:
-        uid=c.execute('INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,?,?,?,?)',
-                      ('Generated '+role,email,hash_password(password),db_role,now(),encrypt(settings,secret) if secret else None,now())).lastrowid
+        uid=insert_id(c, 'INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,?,?,?,?)',
+                      ('Generated '+role,email,hash_password(password),db_role,now(),encrypt(settings,secret) if secret else None,now()))
     credentials[role]={'id':uid,'email':email,'password':password,'secret':secret}
 p=folder/'credentials.json'
 p.write_text(json.dumps(credentials));p.chmod(0o600)

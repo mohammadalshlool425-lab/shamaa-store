@@ -12,8 +12,6 @@ SCHEMA_PATH = Path(__file__).with_name('schema.sql')
 
 class CursorProtocol(Protocol):
     """Small cursor surface consumed by marketplace repositories and routes."""
-    lastrowid: int | None
-
     def fetchone(self) -> Any: ...
     def fetchall(self) -> list[Any]: ...
     def __iter__(self) -> Iterator[Any]: ...
@@ -42,6 +40,17 @@ DatabaseOperationalError = sqlite3.OperationalError
 
 def now():
     return int(time.time())
+
+
+def insert_id(connection: ConnectionProtocol, sql: str, parameters: Sequence[object] = ()) -> int:
+    """Execute an INSERT and return its generated id using portable SQL RETURNING."""
+    statement = sql.rstrip().removesuffix(";")
+    if not statement.lstrip().upper().startswith("INSERT ") or " RETURNING " in statement.upper():
+        raise ValueError("insert_id requires one INSERT statement without an existing RETURNING clause")
+    row = connection.execute(statement + " RETURNING id", parameters).fetchone()
+    if row is None:
+        raise RuntimeError("INSERT did not return a generated id")
+    return int(row[0])
 
 
 class Database:

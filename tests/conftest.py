@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 from server.config import Settings
-from server.database import now
+from server.database import insert_id, now
 from server.application import create_app
 from server.security import encrypt, hash_password
 
@@ -46,9 +46,9 @@ class Factory:
         password=secrets.token_urlsafe(24)+'a9'
         secret=pyotp.random_base32() if role=='admin' else None
         with self.db.transaction() as c:
-            uid=c.execute('INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,?,?,?,?)',
+            uid=insert_id(c, 'INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,?,?,?,?)',
                           ('Generated user '+str(self.counter),email,hash_password(password),role,now() if verified else None,
-                           encrypt(self.settings,secret) if secret else None,now())).lastrowid
+                           encrypt(self.settings,secret) if secret else None,now()))
         client=self.client()
         body={'email':email,'password':password,'otp':pyotp.TOTP(secret).now() if secret else ''}
         response=client.post('/api/auth/login',json=body)
@@ -59,8 +59,8 @@ class Factory:
     def seller(self,shipping=2500):
         user=self.user('seller')
         with self.db.transaction() as c:
-            store=c.execute("INSERT INTO stores(owner_id,slug,name_ar,name_en,city,shipping_fils,status,created_at) VALUES(?,?,?,?,'irbid',?,'active',?)",
-                            (user['id'],f'store-{user["id"]}','متجر اختبار','Generated store',shipping,now())).lastrowid
+            store=insert_id(c, "INSERT INTO stores(owner_id,slug,name_ar,name_en,city,shipping_fils,status,created_at) VALUES(?,?,?,?,'irbid',?,'active',?)",
+                            (user['id'],f'store-{user["id"]}','متجر اختبار','Generated store',shipping,now()))
         user['store_id']=store
         return user
 

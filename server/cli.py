@@ -11,7 +11,7 @@ from email_validator import validate_email
 from pydantic import ValidationError
 from .backup import create_backup, restore_backup, rotate_backups
 from .config import Settings
-from .database import Database, now
+from .database import Database, insert_id, now
 from .mail import deliver_pending
 from .schemas import Register
 from .security import audit, encrypt, hash_password
@@ -78,8 +78,8 @@ def main():
                 raise SystemExit('Invalid code; account was not created')
             hashed = hash_password(password)
             with db.transaction() as c:
-                uid = c.execute("INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,'admin',?,?,?)",
-                                (name,email,hashed,now(),encrypt(s,secret),now())).lastrowid
+                uid = insert_id(c, "INSERT INTO users(name,email,password_hash,role,email_verified_at,mfa_secret,created_at) VALUES(?,?,?,'admin',?,?,?)",
+                                (name,email,hashed,now(),encrypt(s,secret),now()))
                 audit(c,uid,'admin_created_cli','user',uid)
         finally:
             image_path.unlink(missing_ok=True)

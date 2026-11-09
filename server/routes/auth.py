@@ -1,7 +1,7 @@
 import secrets
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
-from ..database import DatabaseIntegrityError, now
+from ..database import DatabaseIntegrityError, insert_id, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import (COOKIE, DUMMY_HASH, audit, digest, hash_password, optional_user, public_user,
@@ -53,9 +53,9 @@ def register(body: schemas.Register, request: Request, tasks: BackgroundTasks):
     hashed = hash_password(body.password)
     try:
         with request.app.state.db.transaction() as c:
-            cur = c.execute('INSERT INTO users(name,email,password_hash,locale,created_at) VALUES(?,?,?,?,?)',
-                            (body.name, str(body.email).lower(),hashed,body.locale,now()))
-            u = c.execute('SELECT * FROM users WHERE id=?',(cur.lastrowid,)).fetchone()
+            user_id = insert_id(c, 'INSERT INTO users(name,email,password_hash,locale,created_at) VALUES(?,?,?,?,?)',
+                                (body.name, str(body.email).lower(),hashed,body.locale,now()))
+            u = c.execute('SELECT * FROM users WHERE id=?',(user_id,)).fetchone()
             email_token(c,request,u,'verify')
             audit(c,u['id'],'register','user',u['id'])
             response = start_session(c,request,u)

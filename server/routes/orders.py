@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from ..commerce import (PRODUCT_SQL, PUBLIC_WHERE, canonical_hash, cart_quote, commission, commission_rate)
-from ..database import now
+from ..database import insert_id, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import audit, require_user, seller_user, throttle, verified_user
@@ -79,11 +79,10 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
         is_demo = not settings.production or any(g['is_demo'] for g in quote['groups'])
         if is_demo and settings.production:
             fail('demo_disabled',403)
-        cur = c.execute('''INSERT INTO orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
+        order_id = insert_id(c, '''INSERT INTO orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
           subtotal_fils,shipping_fils,total_fils,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
           ('pending-'+secrets.token_hex(12),user['id'],idempotency_key,request_hash,body.recipient,body.phone,body.city,body.address,
            quote['subtotal_fils'],quote['shipping_fils'],quote['total_fils'],int(is_demo),now()))
-        order_id = cur.lastrowid
         number = f'SH-{time.strftime("%Y",time.gmtime())}-{order_id:07}'
         c.execute('UPDATE orders SET number=? WHERE id=?',(number,order_id))
         for group in quote['groups']:
@@ -94,9 +93,9 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
                 amount = commission(item['line_total_fils'],bps)
                 items.append((item,bps,amount))
             commission_fils = sum(amount for _,_,amount in items)
-            sub = c.execute('''INSERT INTO seller_orders(order_id,store_id,subtotal_fils,shipping_fils,commission_fils,net_fils,updated_at)
+            sub = insert_id(c, '''INSERT INTO seller_orders(order_id,store_id,subtotal_fils,shipping_fils,commission_fils,net_fils,updated_at)
               VALUES(?,?,?,?,?,?,?)''',(order_id,group['store_id'],group['subtotal_fils'],group['shipping_fils'],commission_fils,
-              group['subtotal_fils']+group['shipping_fils']-commission_fils,now())).lastrowid
+              group['subtotal_fils']+group['shipping_fils']-commission_fils,now()))
             for item,bps,amount in items:
                 result = c.execute("UPDATE products SET stock=stock-?,updated_at=?,version=version+1 WHERE id=? AND stock>=? AND status='active'",
                                    (item['quantity'],now(),item['id'],item['quantity']))
