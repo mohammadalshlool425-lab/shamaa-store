@@ -64,7 +64,7 @@ def edit_store(body: schemas.StoreInput,request: Request,user=Depends(seller_use
                       [*data.values(),status,store['id']])
             audit(c,user['id'],'store_updated','store',store['id'])
             row = c.execute('SELECT * FROM stores WHERE id=?',(store['id'],)).fetchone()
-    except sqlite3.IntegrityError:
+    except DatabaseIntegrityError:
         fail('store_exists',409)
     return {'store':store_dict(row,True)}
 
@@ -103,7 +103,7 @@ def create_product(body: schemas.ProductInput,request: Request,user=Depends(sell
                       (product_id,user['id'],body.stock,'initial',now()))
             audit(c,user['id'],'product_created','product',product_id)
             r = c.execute(PRODUCT_SQL+' WHERE p.id=?',(product_id,)).fetchone()
-    except sqlite3.IntegrityError:
+    except DatabaseIntegrityError:
         fail('sku_exists',409)
     return {'product':product_dict(r,True)}
 
@@ -127,7 +127,7 @@ def edit_product(product_id: int,body: schemas.ProductInput,request: Request,use
                           (product_id,user['id'],body.stock-r['stock'],'adjustment',now()))
             audit(c,user['id'],'product_updated','product',product_id)
             result = c.execute(PRODUCT_SQL+' WHERE p.id=?',(product_id,)).fetchone()
-    except sqlite3.IntegrityError:
+    except DatabaseIntegrityError:
         fail('sku_exists',409)
     return {'product':product_dict(result,True)}
 
