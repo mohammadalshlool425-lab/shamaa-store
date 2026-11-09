@@ -29,6 +29,9 @@ class RecordingDatabase:
         self.inner.initialize()
         self.initialized = True
 
+    def schema_version(self):
+        return self.inner.schema_version()
+
 
 def test_application_accepts_database_protocol_implementation(tmp_path):
     settings = Settings(
@@ -47,6 +50,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
+    assert adapter.schema_version() == 1
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")

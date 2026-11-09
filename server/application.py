@@ -143,7 +143,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     @app.get('/healthz')
     def health():
         with db.read() as c:
-            if c.execute('PRAGMA user_version').fetchone()[0]!=1 or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
+            if db.schema_version()!=1 or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
                 fail('database_busy',503)
         return {'ok':True,'version':'1.0.0','database':'ready'}
 

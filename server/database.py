@@ -29,6 +29,7 @@ class DatabaseProtocol(Protocol):
     def read(self) -> ContextManager[ConnectionProtocol]: ...
     def transaction(self) -> ContextManager[ConnectionProtocol]: ...
     def initialize(self) -> None: ...
+    def schema_version(self) -> int: ...
 
 
 # Stable exception names exposed by the database adapter contract. Drivers must map
@@ -84,6 +85,11 @@ class Database:
             raise
         finally:
             c.close()
+
+    def schema_version(self) -> int:
+        """Return the installed schema version without leaking driver SQL to callers."""
+        with self.read() as c:
+            return int(c.execute('PRAGMA user_version').fetchone()[0])
 
     def initialize(self):
         with self.read() as c:
