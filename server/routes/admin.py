@@ -119,7 +119,7 @@ def settings(request: Request,user=Depends(admin_user)):
         result['commission_bps'] = int(result['commission_bps'])
         # Private settings only: public bootstrap deliberately omits commission overrides.
         result['category_commissions'] = [dict(r) for r in c.execute(
-            'SELECT id,name_ar,name_en,parent_id,commission_bps FROM categories ORDER BY rowid')]
+            'SELECT id,name_ar,name_en,parent_id,commission_bps FROM categories ORDER BY id')]
     return result
 
 
