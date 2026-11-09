@@ -170,6 +170,10 @@ def test_cursor_contract_exposes_affected_row_count(tmp_path):
     db = Database(tmp_path / "cursor-rowcount.sqlite3")
     db.initialize()
     with db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO settings(key,value) VALUES(?,?)",
+            ("commission_bps", "500"),
+        )
         result = connection.execute(
             "UPDATE settings SET value=? WHERE key=?",
             ("updated", "commission_bps"),
