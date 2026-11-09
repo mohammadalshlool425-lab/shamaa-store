@@ -2,7 +2,7 @@
 This adapter supports a single-host deployment, NOT PostgreSQL by environment switch.
 """
 from contextlib import contextmanager
-from typing import Any, ContextManager, Iterator, Protocol, Sequence
+from typing import Any, ContextManager, Iterator, Protocol, Sequence, runtime_checkable
 import sqlite3
 import time
 from pathlib import Path
@@ -24,6 +24,7 @@ class ConnectionProtocol(Protocol):
     def execute(self, sql: str, parameters: Sequence[object] = ()) -> CursorProtocol: ...
 
 
+@runtime_checkable
 class DatabaseProtocol(Protocol):
     """Contract required by the application, independent of a database driver."""
 
@@ -75,5 +76,5 @@ class Database:
             if version > 1:
                 raise RuntimeError('Database is newer than this application. Do not downgrade the schema.')
             if version == 0:
-                c.executescript('BEGIN IMMEDIATE;\\n' + SCHEMA_PATH.read_text(encoding='utf-8') + '\\nPRAGMA user_version=1; COMMIT;')
+                c.executescript('BEGIN IMMEDIATE;\n' + SCHEMA_PATH.read_text(encoding='utf-8') + '\nPRAGMA user_version=1; COMMIT;')
         Path(self.path).chmod(0o600)
