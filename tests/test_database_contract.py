@@ -172,17 +172,17 @@ def test_cursor_contract_exposes_affected_row_count(tmp_path):
     with db.transaction() as connection:
         connection.execute(
             "INSERT INTO settings(key,value) VALUES(?,?)",
-            ("commission_bps", "500"),
+            ("rowcount_contract_test", "before"),
         )
         result = connection.execute(
             "UPDATE settings SET value=? WHERE key=?",
-            ("updated", "commission_bps"),
+            ("after", "rowcount_contract_test"),
         )
         assert result.rowcount == 1
 
         missing = connection.execute(
             "UPDATE settings SET value=? WHERE key=?",
-            ("updated", "missing-setting"),
+            ("after", "missing-rowcount-contract-test"),
         )
         assert missing.rowcount == 0
 
