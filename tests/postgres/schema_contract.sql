@@ -142,10 +142,28 @@ DECLARE
   fixture_product_id bigint;
   fixture_store_id bigint;
   fixture_audit_id bigint;
+  affected integer;
 BEGIN
   SELECT id INTO fixture_user_id FROM shamaa_app.users WHERE email='constraints@example.invalid';
   SELECT id INTO fixture_store_id FROM shamaa_app.stores WHERE slug='constraint-fixture';
   SELECT id INTO fixture_product_id FROM shamaa_app.products WHERE sku='VALID-1';
+
+  -- Match the application's atomic stock-decrement predicate. PostgreSQL must
+  -- report one affected row when stock is sufficient and zero when it is not.
+  UPDATE shamaa_app.products
+     SET stock=stock-2
+   WHERE id=fixture_product_id AND stock>=2;
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 1 THEN RAISE EXCEPTION 'Conditional stock decrement should affect exactly one row'; END IF;
+
+  UPDATE shamaa_app.products
+     SET stock=stock-1
+   WHERE id=fixture_product_id AND stock>=1;
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 0 THEN RAISE EXCEPTION 'Conditional stock decrement must reject overselling'; END IF;
+  IF (SELECT stock FROM shamaa_app.products WHERE id=fixture_product_id) <> 0 THEN
+    RAISE EXCEPTION 'Conditional stock decrement produced an unexpected stock balance';
+  END IF;
 
   rejected := false;
   BEGIN
