@@ -2,11 +2,34 @@
 This adapter supports a single-host deployment, NOT PostgreSQL by environment switch.
 """
 from contextlib import contextmanager
+from typing import Any, ContextManager, Iterator, Protocol, Sequence
 import sqlite3
 import time
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name('schema.sql')
+
+
+class CursorProtocol(Protocol):
+    """Small cursor surface consumed by marketplace repositories and routes."""
+    lastrowid: int | None
+
+    def fetchone(self) -> Any: ...
+    def fetchall(self) -> list[Any]: ...
+    def __iter__(self) -> Iterator[Any]: ...
+
+
+class ConnectionProtocol(Protocol):
+    """Portable SQL connection surface; driver-specific APIs stay inside adapters."""
+    def execute(self, sql: str, parameters: Sequence[object] = ()) -> CursorProtocol: ...
+
+
+class DatabaseProtocol(Protocol):
+    """Contract required by the application, independent of a database driver."""
+
+    def read(self) -> ContextManager[ConnectionProtocol]: ...
+    def transaction(self) -> ContextManager[ConnectionProtocol]: ...
+    def initialize(self) -> None: ...
 
 
 def now():
@@ -52,5 +75,5 @@ class Database:
             if version > 1:
                 raise RuntimeError('Database is newer than this application. Do not downgrade the schema.')
             if version == 0:
-                c.executescript('BEGIN IMMEDIATE;\n' + SCHEMA_PATH.read_text(encoding='utf-8') + '\nPRAGMA user_version=1; COMMIT;')
+                c.executescript('BEGIN IMMEDIATE;\\n' + SCHEMA_PATH.read_text(encoding='utf-8') + '\\nPRAGMA user_version=1; COMMIT;')
         Path(self.path).chmod(0o600)
