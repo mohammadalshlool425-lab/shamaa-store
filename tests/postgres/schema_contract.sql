@@ -118,3 +118,88 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+
+-- Exercise negative paths as well as the happy-path fixtures. Every attempted
+-- invalid write is isolated in a PL/pgSQL subtransaction and must be rejected.
+BEGIN;
+INSERT INTO shamaa_app.users(name,email,password_hash,created_at)
+VALUES ('Constraint fixture','constraints@example.invalid','not-a-real-password-hash',2);
+INSERT INTO shamaa_app.stores(owner_id,slug,name_ar,name_en,city,created_at)
+SELECT id,'constraint-fixture','اختبار القيود','Constraint fixture','Irbid',2
+FROM shamaa_app.users WHERE email='constraints@example.invalid';
+INSERT INTO shamaa_app.categories(id,name_ar,name_en,icon)
+VALUES ('constraint-fixture','اختبار القيود','Constraint fixture','test');
+INSERT INTO shamaa_app.products(store_id,category_id,title_ar,title_en,description_ar,description_en,
+ price_fils,stock,sku,created_at,updated_at)
+SELECT s.id,'constraint-fixture','منتج','Product','وصف','Description',1000,2,'VALID-1',2,2
+FROM shamaa_app.stores s WHERE s.slug='constraint-fixture';
+
+DO $$
+DECLARE
+  rejected boolean;
+  fixture_user_id bigint;
+  fixture_product_id bigint;
+  fixture_store_id bigint;
+  fixture_audit_id bigint;
+BEGIN
+  SELECT id INTO fixture_user_id FROM shamaa_app.users WHERE email='constraints@example.invalid';
+  SELECT id INTO fixture_store_id FROM shamaa_app.stores WHERE slug='constraint-fixture';
+  SELECT id INTO fixture_product_id FROM shamaa_app.products WHERE sku='VALID-1';
+
+  rejected := false;
+  BEGIN
+    INSERT INTO shamaa_app.users(name,email,password_hash,created_at)
+    VALUES ('Duplicate','CONSTRAINTS@example.invalid','not-a-real-password-hash',3);
+  EXCEPTION WHEN unique_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Case-insensitive unique email constraint was not enforced'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO shamaa_app.products(store_id,category_id,title_ar,title_en,description_ar,description_en,
+      price_fils,stock,sku,created_at,updated_at)
+    VALUES (fixture_store_id,'constraint-fixture','سيئ','Invalid','وصف','Description',1000,-1,'BAD-STOCK',3,3);
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Negative product stock was accepted'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO shamaa_app.carts(user_id,product_id,quantity)
+    VALUES (fixture_user_id,fixture_product_id,0);
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Invalid cart quantity was accepted'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO shamaa_app.orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
+      subtotal_fils,shipping_fils,total_fils,payment_method,created_at)
+    VALUES ('BAD-TOTAL',fixture_user_id,'bad-total','hash','Buyer','0790000000','Irbid','Test address',
+      1000,1000,2500,'cod',3);
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Inconsistent order total was accepted'; END IF;
+
+  INSERT INTO shamaa_app.audit_log(actor_id,action,entity,entity_id,created_at)
+  VALUES (fixture_user_id,'ci_contract_test','user',fixture_user_id::text,3)
+  RETURNING id INTO fixture_audit_id;
+
+  rejected := false;
+  BEGIN
+    UPDATE shamaa_app.audit_log SET detail='tampered' WHERE id=fixture_audit_id;
+  EXCEPTION WHEN raise_exception THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Audit log UPDATE was not rejected'; END IF;
+
+  rejected := false;
+  BEGIN
+    DELETE FROM shamaa_app.audit_log WHERE id=fixture_audit_id;
+  EXCEPTION WHEN raise_exception THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Audit log DELETE was not rejected'; END IF;
+END $$;
+ROLLBACK;
+
+SELECT 'SHAM''A PostgreSQL negative-constraint contract: PASS' AS result;
