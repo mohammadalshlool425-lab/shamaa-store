@@ -48,6 +48,104 @@ class HybridRow(Mapping[str, Any]):
         return len(self._columns)
 
 
+def qmark_to_format(sql: str) -> str:
+    """Translate DB-API qmark placeholders to psycopg %s placeholders.
+
+    Question marks inside SQL strings, quoted identifiers, comments, and
+    PostgreSQL dollar-quoted bodies are preserved. This deliberately handles
+    only the application's qmark parameter style, not PostgreSQL JSON '?' ops.
+    """
+    output: list[str] = []
+    i = 0
+    length = len(sql)
+    block_depth = 0
+    dollar_tag: str | None = None
+    quote: str | None = None
+
+    while i < length:
+        if dollar_tag is not None:
+            if sql.startswith(dollar_tag, i):
+                output.append(dollar_tag)
+                i += len(dollar_tag)
+                dollar_tag = None
+            else:
+                output.append(sql[i])
+                i += 1
+            continue
+
+        if block_depth:
+            if sql.startswith("/*", i):
+                output.append("/*")
+                i += 2
+                block_depth += 1
+            elif sql.startswith("*/", i):
+                output.append("*/")
+                i += 2
+                block_depth -= 1
+            else:
+                output.append(sql[i])
+                i += 1
+            continue
+
+        if quote is not None:
+            char = sql[i]
+            output.append(char)
+            i += 1
+            if char == "\\\\" and quote == "'":
+                if i < length:
+                    output.append(sql[i])
+                    i += 1
+            elif char == quote:
+                if i < length and sql[i] == quote:
+                    output.append(sql[i])
+                    i += 1
+                else:
+                    quote = None
+            continue
+
+        if sql.startswith("--", i):
+            end = sql.find("\\n", i)
+            if end == -1:
+                output.append(sql[i:])
+                break
+            output.append(sql[i:end + 1])
+            i = end + 1
+            continue
+
+        if sql.startswith("/*", i):
+            output.append("/*")
+            i += 2
+            block_depth = 1
+            continue
+
+        char = sql[i]
+        if char in ("'", '"'):
+            quote = char
+            output.append(char)
+            i += 1
+            continue
+
+        if char == "$":
+            end = sql.find("$", i + 1)
+            if end != -1:
+                tag_body = sql[i + 1:end]
+                if tag_body == "" or (tag_body[0].isalpha() or tag_body[0] == "_") and all(
+                    c.isalnum() or c == "_" for c in tag_body
+                ):
+                    dollar_tag = sql[i:end + 1]
+                    output.append(dollar_tag)
+                    i = end + 1
+                    continue
+
+        if char == "?":
+            output.append("%s")
+        else:
+            output.append(char)
+        i += 1
+
+    return "".join(output)
+
+
 class CursorProtocol(Protocol):
     """Small cursor surface consumed by marketplace repositories and routes."""
     def fetchone(self) -> Any: ...

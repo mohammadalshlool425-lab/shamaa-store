@@ -125,3 +125,43 @@ def test_insert_id_rejects_non_insert_and_existing_returning_clause(tmp_path):
                 pass
             else:
                 raise AssertionError("insert_id must reject unsupported statements")
+
+
+
+def test_qmark_translation_replaces_only_parameter_placeholders():
+    from server.database import qmark_to_format
+
+    sql = """SELECT ?, '?', "?", column
+             FROM items
+             WHERE id=? AND note='it''s ?'
+             -- ignore ?
+             AND label=? /* outer ? /* nested ? */ still ? */
+             AND body=$tag$ ? is literal $tag$"""
+    translated = qmark_to_format(sql)
+
+    assert translated.count("%s") == 3
+    assert "'?'" in translated
+    assert '"?"' in translated
+    assert "-- ignore ?" in translated
+    assert "/* outer ? /* nested ? */ still ? */" in translated
+    assert "$tag$ ? is literal $tag$" in translated
+
+
+def test_qmark_translation_handles_escaped_quotes_and_empty_dollar_tag():
+    from server.database import qmark_to_format
+
+    sql = r"SELECT ?, E'escaped\\'? still literal', $$ ? $$, \"identifier?\""
+    translated = qmark_to_format(sql)
+
+    assert translated.startswith("SELECT %s,")
+    assert "E'escaped\\\\'? still literal'" in translated
+    assert "$$ ? $$" in translated
+    assert '"identifier?"' in translated
+
+
+def test_qmark_translation_leaves_question_mark_operators_out_of_scope():
+    from server.database import qmark_to_format
+
+    # PostgreSQL JSON question-mark operators are intentionally unsupported
+    # in this SQLite-originated query contract and must be identified explicitly.
+    assert qmark_to_format("SELECT payload ? 'key'") == "SELECT payload %s 'key'"
