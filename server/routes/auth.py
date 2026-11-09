@@ -131,7 +131,7 @@ def forgot(body: schemas.EmailInput, request: Request, tasks: BackgroundTasks):
     throttle(request,'forgot',5,3600)
     throttle(request,'forgot_email',3,3600,str(body.email).lower())
     with request.app.state.db.transaction() as c:
-        u = c.execute('SELECT * FROM users WHERE email=? AND active=1',(str(body.email).lower(),)).fetchone()
+        u = c.execute('SELECT * FROM users WHERE email=? AND active=TRUE',(str(body.email).lower(),)).fetchone()
         if u:
             email_token(c,request,u,'reset')
     schedule(tasks,request)

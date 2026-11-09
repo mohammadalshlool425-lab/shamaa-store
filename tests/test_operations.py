@@ -189,6 +189,17 @@ def test_cli_never_echoes_an_invalid_password(factory,monkeypatch,capsys):
 
 
 
+def test_reference_categories_use_idempotent_conflict_handling(factory):
+    from server.seed import initialize_catalog
+    before = None
+    with factory.db.read() as c:
+        before = c.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    initialize_catalog(factory.db, factory.settings)
+    with factory.db.read() as c:
+        after = c.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    assert after == before
+
+
 def test_expired_rate_limit_bucket_uses_portable_upsert(factory,monkeypatch):
     from types import SimpleNamespace
     from server import security

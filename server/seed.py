@@ -53,7 +53,7 @@ PRODUCTS = [
 def initialize_catalog(db, settings):
     with db.transaction() as c:
         for row in CATEGORIES:
-            c.execute('INSERT OR IGNORE INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?)',row)
+            c.execute('INSERT INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING',row)
     if not settings.demo:
         return
     with db.read() as c:

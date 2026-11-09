@@ -11,7 +11,7 @@ router = APIRouter(prefix='/api', tags=['Catalog'])
 def bootstrap(request: Request):
     with request.app.state.db.read() as c:
         categories = [dict(r) for r in c.execute('''SELECT c.*,(SELECT COUNT(*) FROM products p JOIN stores s ON s.id=p.store_id
-          JOIN users u ON u.id=s.owner_id WHERE p.status='active' AND s.status='active' AND u.active=1
+          JOIN users u ON u.id=s.owner_id WHERE p.status='active' AND s.status='active' AND u.active=TRUE
           AND (p.category_id=c.id OR p.category_id IN (SELECT id FROM categories WHERE parent_id=c.id))) AS product_count FROM categories c''')]
         content = dict(c.execute('SELECT key,value FROM settings').fetchall())
     s = request.app.state.settings
@@ -68,14 +68,14 @@ def product(product_id: int,request: Request):
 @router.get('/stores')
 def stores(request: Request):
     with request.app.state.db.read() as c:
-        rows = c.execute("SELECT s.*,(SELECT COUNT(*) FROM products p WHERE p.store_id=s.id AND p.status='active') AS product_count FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=1 ORDER BY s.id LIMIT 60").fetchall()
+        rows = c.execute("SELECT s.*,(SELECT COUNT(*) FROM products p WHERE p.store_id=s.id AND p.status='active') AS product_count FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=TRUE ORDER BY s.id LIMIT 60").fetchall()
     return {'stores':[{**store_dict(r),'product_count':r['product_count']} for r in rows]}
 
 
 @router.get('/stores/{slug}')
 def store(slug: str,request: Request):
     with request.app.state.db.read() as c:
-        r = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=1",(slug,)).fetchone()
+        r = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=TRUE",(slug,)).fetchone()
         if not r:
             fail('not_found',404)
     return {'store':store_dict(r)}

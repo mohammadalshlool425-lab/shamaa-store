@@ -58,8 +58,8 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     db = database if database is not None else Database(s.db_path)
     db.initialize()
     with db.read() as c:
-        if s.production and (c.execute('SELECT COUNT(*) FROM stores WHERE is_demo=1').fetchone()[0]
-                             or c.execute('SELECT COUNT(*) FROM orders WHERE is_demo=1').fetchone()[0]):
+        if s.production and (c.execute('SELECT COUNT(*) FROM stores WHERE is_demo=TRUE').fetchone()[0]
+                             or c.execute('SELECT COUNT(*) FROM orders WHERE is_demo=TRUE').fetchone()[0]):
             raise RuntimeError('Illustrative catalog or development orders exist. Use a clean production database.')
     initialize_catalog(db,s)
     app = FastAPI(title='SHAM’A · شمعة',version='1.0.0',docs_url=None,redoc_url=None,openapi_url=None)
@@ -184,7 +184,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
         urls = [s.public_url+'/',s.public_url+'/stores']
         with db.read() as c:
             urls += [s.public_url+f"/product/{r['id']}" for r in c.execute(PRODUCT_SQL+' WHERE '+PUBLIC_WHERE)]
-            urls += [s.public_url+'/store/'+r['slug'] for r in c.execute("SELECT s.slug FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=1")]
+            urls += [s.public_url+'/store/'+r['slug'] for r in c.execute("SELECT s.slug FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=TRUE")]
         xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>'+html.escape(u)+'</loc></url>' for u in urls)+'</urlset>'
         return Response(xml,media_type='application/xml')
 
@@ -216,7 +216,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
                     if row:
                         title,description = row['title_'+lang]+' | شمعة SHAM’A',row['description_'+lang][:180]
                 else:
-                    row = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=1",(slug,)).fetchone()
+                    row = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=TRUE",(slug,)).fetchone()
                     if row:
                         title,description = row['name_'+lang]+' | شمعة SHAM’A',row['description_'+lang][:180]
                 if not row:

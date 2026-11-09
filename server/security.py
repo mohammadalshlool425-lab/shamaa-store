@@ -88,7 +88,7 @@ def optional_user(request: Request):
         with request.app.state.db.read() as c:
             row = c.execute('''SELECT u.*,s.token_hash AS session_id,s.csrf_token,s.mfa_at,s.created_at AS session_created
               FROM sessions s JOIN users u ON u.id=s.user_id
-              WHERE s.token_hash=? AND s.expires_at>? AND u.active=1''', (digest(token), now())).fetchone()
+              WHERE s.token_hash=? AND s.expires_at>? AND u.active=TRUE''', (digest(token), now())).fetchone()
             user = dict(row) if row else None
     request.state.user = user
     return user

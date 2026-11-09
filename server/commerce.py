@@ -14,7 +14,7 @@ PRODUCT_SQL = '''SELECT p.*,s.name_ar AS store_name_ar,s.name_en AS store_name_e
  c.name_ar AS category_name_ar,c.name_en AS category_name_en,c.parent_id,c.commission_bps AS category_commission_bps
  FROM products p JOIN stores s ON s.id=p.store_id JOIN users u ON u.id=s.owner_id
  JOIN categories c ON c.id=p.category_id'''
-PUBLIC_WHERE = "p.status='active' AND s.status='active' AND u.active=1"
+PUBLIC_WHERE = "p.status='active' AND s.status='active' AND u.active=TRUE"
 DEMO_IMAGES = {'headphones','shoes','bag','lamp','coffee','watch','ceramics','skincare'}
 
 
