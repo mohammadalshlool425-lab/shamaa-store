@@ -6,6 +6,7 @@ from server.database import (
     DatabaseIntegrityError,
     DatabaseOperationalError,
     DatabaseProtocol,
+    HybridRow,
     insert_id,
 )
 from server.config import Settings
@@ -31,6 +32,44 @@ class RecordingDatabase:
 
     def schema_version(self):
         return self.inner.schema_version()
+
+
+def test_hybrid_row_supports_mapping_and_positional_access():
+    row = HybridRow(("id", "name", "total"), (17, "Sample", 2500))
+
+    assert row["id"] == 17
+    assert row[0] == 17
+    assert row[-1] == 2500
+    assert dict(row) == {"id": 17, "name": "Sample", "total": 2500}
+    assert list(row) == ["id", "name", "total"]
+
+
+def test_hybrid_row_preserves_first_duplicate_column_and_rejects_invalid_access():
+    row = HybridRow(("id", "id"), (17, 18))
+
+    assert row["id"] == 17
+    assert row[1] == 18
+    try:
+        row["missing"]
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("Unknown column names must raise KeyError")
+    try:
+        row[1.5]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("Unsupported row key types must raise TypeError")
+
+
+def test_hybrid_row_rejects_mismatched_column_and_value_counts():
+    try:
+        HybridRow(("id", "name"), (17,))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Column and value counts must match")
 
 
 def test_application_accepts_database_protocol_implementation(tmp_path):
@@ -61,7 +100,6 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
 def test_sqlite_exceptions_are_exposed_through_database_contract():
     assert DatabaseIntegrityError is sqlite3.IntegrityError
     assert DatabaseOperationalError is sqlite3.OperationalError
-
 
 
 def test_insert_id_uses_returning_and_returns_generated_identifier(tmp_path):

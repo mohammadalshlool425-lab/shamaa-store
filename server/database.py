@@ -1,6 +1,7 @@
 """SQLite, one connection per operation. BEGIN IMMEDIATE serializes stock writes.
 This adapter supports a single-host deployment, NOT PostgreSQL by environment switch.
 """
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import Any, ContextManager, Iterator, Protocol, Sequence, runtime_checkable
 import sqlite3
@@ -8,6 +9,43 @@ import time
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name('schema.sql')
+
+
+class HybridRow(Mapping[str, Any]):
+    """Immutable row supporting both SQLite-style indexes and mapping access.
+
+    Existing application code uses row[0], row["column"], and dict(row).
+    PostgreSQL drivers commonly expose mapping rows, so this small adapter
+    establishes one explicit result-row contract for both database backends.
+    """
+
+    __slots__ = ("_columns", "_values", "_first_index")
+
+    def __init__(self, columns: Sequence[str], values: Sequence[Any]):
+        if len(columns) != len(values):
+            raise ValueError("Row column and value counts must match")
+        self._columns = tuple(columns)
+        self._values = tuple(values)
+        first_index: dict[str, int] = {}
+        for index, column in enumerate(self._columns):
+            first_index.setdefault(column, index)
+        self._first_index = first_index
+
+    def __getitem__(self, key: str | int) -> Any:
+        if isinstance(key, int):
+            return self._values[key]
+        if isinstance(key, str):
+            try:
+                return self._values[self._first_index[key]]
+            except KeyError:
+                raise KeyError(key) from None
+        raise TypeError("Row keys must be column names or integer indexes")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._columns)
+
+    def __len__(self) -> int:
+        return len(self._columns)
 
 
 class CursorProtocol(Protocol):
