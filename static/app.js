@@ -7,7 +7,7 @@ const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function readLocal(key,fallback) { try { return JSON.parse(localStorage.getItem(key))??fallback; } catch { return fallback; } }
 function saveLocal(key,value) { try { localStorage.setItem(key,JSON.stringify(value)); } catch { /* private browsing may disable storage */ } }
-const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,detailImages:[],detailImageIndex:0,detailVariants:[],selectedVariantId:null,variantDraft:[],editing:null,editingImages:[],editingImagesInitial:[],store:null,afterAuth:null,checkout:null,install:null};
+const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),variants:new Map(),route:0,quantity:1,detail:null,detailImages:[],detailImageIndex:0,detailVariants:[],selectedVariantId:null,variantDraft:[],editing:null,editingImages:[],editingImagesInitial:[],store:null,afterAuth:null,checkout:null,install:null};
 if(!Array.isArray(S.favorites)) S.favorites=[];
 if(!S.guest||typeof S.guest!=='object'||Array.isArray(S.guest)) S.guest={};
 const main=$('#main');
