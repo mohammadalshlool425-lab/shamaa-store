@@ -85,3 +85,10 @@ a[href="/search?sort=recent"],a[href="/?collection=featured"]{display:inline-fle
 .message-form textarea{width:100%;min-height:94px;resize:vertical;padding:12px;border:1px solid var(--line);border-radius:8px;font:inherit}
 .shipment-footer{flex-wrap:wrap}
 @media(max-width:680px){.messages-layout{grid-template-columns:1fr}.messages-list{max-height:210px}.message-thread{min-height:300px}.message-feed{max-height:50vh}.message-thread-head h2{font-size:1rem}}
+
+
+/* Preserve WCAG AA contrast on the selected conversation and own-message tint. */
+.message-conversation[aria-pressed="true"] span,
+.message-conversation[aria-pressed="true"] small,
+.message-row.own .message-body,
+.message-row.own .message-meta{color:#566056}
