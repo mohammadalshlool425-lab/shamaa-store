@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictInt, field_validator, model_validator
 
@@ -116,7 +117,7 @@ class ProductImagesInput(Input):
 
 class ProductVariantInput(Input):
     id: int | None = Field(default=None, ge=1, strict=True)
-    sku: str = Field(min_length=1, max_length=60, pattern=r'^[\\w.\\-]+
+    sku: str = Field(min_length=1, max_length=60, pattern=r'^[\w.\-]+
     stock: int = Field(ge=0, le=1000000, strict=True)
     expected_version: int = Field(ge=1, strict=True)
 
@@ -191,18 +192,18 @@ class ProductVariantsInput(Input):
 
     @model_validator(mode='after')
     def unique_variant_definitions(self):
-        skus = [v.sku.casefold() for v in self.variants]
+        skus = [variant.sku.casefold() for variant in self.variants]
         attributes = [
-            json.dumps(v.attributes, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
-            for v in self.variants
+            json.dumps(variant.attributes, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+            for variant in self.variants
         ]
         if len(set(skus)) != len(skus):
             raise ValueError('Variant SKUs must be unique')
         if len(set(attributes)) != len(attributes):
             raise ValueError('Variant attribute combinations must be unique')
-        if sum(v.stock for v in self.variants) > 1000000:
+        if sum(variant.stock for variant in self.variants) > 1000000:
             raise ValueError('Total variant stock exceeds the product stock limit')
-        ids = [v.id for v in self.variants if v.id is not None]
+        ids = [variant.id for variant in self.variants if variant.id is not None]
         if len(set(ids)) != len(ids):
             raise ValueError('Variant identifiers must be unique')
         return self

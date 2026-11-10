@@ -69,15 +69,23 @@ def commission(amount_fils, bps):
 
 
 def cart_quote(c, user_id, strict=False):
-    rows = c.execute(PRODUCT_SQL + ''' JOIN carts ca ON ca.product_id=p.id
-      LEFT JOIN product_variants pv ON pv.id=ca.variant_id
-      WHERE ca.user_id=? ORDER BY s.id,p.id,ca.variant_key''',(user_id,)).fetchall()
+    rows = c.execute(
+        "SELECT product_rows.*, ca.quantity AS cart_quantity, ca.variant_id AS cart_variant_id, "
+        "pv.sku AS cart_variant_sku, pv.attributes_json AS cart_variant_attributes_json, "
+        "pv.price_fils AS cart_variant_price_fils, pv.stock AS cart_variant_stock, "
+        "pv.active AS cart_variant_active "
+        "FROM (" + PRODUCT_SQL + ") AS product_rows "
+        "JOIN carts ca ON ca.product_id=product_rows.id "
+        "LEFT JOIN product_variants pv ON pv.id=ca.variant_id "
+        "WHERE ca.user_id=? ORDER BY product_rows.store_id,product_rows.id,ca.variant_key",
+        (user_id,),
+    ).fetchall()
     groups = {}
     total_quantity = 0
     for r in rows:
         p = dict(r)
-        qty = int(p['quantity'])
-        variant_id = p['variant_id']
+        qty = int(p['cart_quantity'])
+        variant_id = p['cart_variant_id']
         has_variants = int(p.get('variant_count') or 0) > 0
         available = p['status']=='active' and p['store_status']=='active'
         owner = c.execute('SELECT active FROM users WHERE id=?',(p['owner_id'],)).fetchone()
@@ -85,12 +93,12 @@ def cart_quote(c, user_id, strict=False):
         attributes = None
         variant_sku = None
         if variant_id is not None:
-            variant_active = bool(p['variant_active'])
+            variant_active = bool(p['cart_variant_active'])
             available = available and variant_active
-            unit_price = int(p['variant_price_fils'])
-            stock = int(p['variant_stock'])
-            attributes = json.loads(p['variant_attributes_json'])
-            variant_sku = p['variant_sku']
+            unit_price = int(p['cart_variant_price_fils'])
+            stock = int(p['cart_variant_stock'])
+            attributes = json.loads(p['cart_variant_attributes_json'])
+            variant_sku = p['cart_variant_sku']
         else:
             # Variant-configured products must never silently use their legacy base stock.
             available = available and not has_variants
