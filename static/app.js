@@ -609,7 +609,7 @@ document.addEventListener('submit',async e=>{
    closeModal();toast(tr('حُفظ المنتج ومعرض صوره. راجع حالة المراجعة في لوحة المنتجات.','Product and image gallery saved. Check its review status in your dashboard.'));navigate('/seller?tab=products');
   }
   else if(form.id==='variants-form'){
-   const rows=$('.variant-editor-row',form);
+   const rows=$$('.variant-editor-row',form);
    if(!rows.length)throw new Error(tr('أضف متغيرًا واحدًا على الأقل.','Add at least one option.'));
    const variants=rows.map(row=>{
     const rawAttributes=$('[name="variant_attributes"]',row).value;
