@@ -1,4 +1,5 @@
 from typing import Literal
+import json
 from fastapi import APIRouter, Query, Request, Depends
 from ..commerce import CITIES, PRODUCT_SQL, PUBLIC_WHERE, product_dict, store_dict
 from ..errors import fail
@@ -63,6 +64,9 @@ def product(product_id: int,request: Request):
         gallery = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
           JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
                             (product_id,)).fetchall()
+        variants = c.execute('''SELECT id,attributes_json,price_fils,compare_at_fils,stock
+          FROM product_variants WHERE product_id=? AND active=TRUE ORDER BY price_fils,id''',
+                             (product_id,)).fetchall()
         similar = c.execute(PRODUCT_SQL+' WHERE p.id<>? AND (p.category_id=? OR c.parent_id=?) AND '+PUBLIC_WHERE+' LIMIT 4',
                             (product_id,row['category_id'],row['parent_id'])).fetchall()
     images = [{'media_id':r['media_id'],'position':r['position'],'url':f"/media/{r['media_id']}/480.webp"}
@@ -71,7 +75,11 @@ def product(product_id: int,request: Request):
         images = [{'media_id':row['media_id'],'position':0,'url':f"/media/{row['media_id']}/480.webp"}]
     if not images and product_dict(row)['image_url']:
         images = [{'media_id':None,'position':0,'url':product_dict(row)['image_url']}]
-    return {'product':product_dict(row),'images':images,'similar':[product_dict(r) for r in similar]}
+    return {'product':product_dict(row),'images':images,
+            'variants':[{'id':v['id'],'attributes':json.loads(v['attributes_json']),
+                         'price_fils':v['price_fils'],'compare_at_fils':v['compare_at_fils'],
+                         'stock':v['stock']} for v in variants],
+            'similar':[product_dict(r) for r in similar]}
 
 
 @router.get('/stores')

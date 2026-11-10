@@ -137,15 +137,18 @@ class PostgresDatabase:
             ).fetchone()
             variant_columns = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.columns
-                   WHERE table_schema=? AND table_name='carts'
-                     AND column_name IN ('variant_id','variant_key')""",
+                   WHERE table_schema=? AND (
+                     (table_name='carts' AND column_name IN ('variant_id','variant_key'))
+                     OR
+                     (table_name='order_items' AND column_name IN ('variant_id','variant_key','variant_sku','variant_attributes'))
+                   )""",
                 (self.schema,),
             ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
                     and gallery and int(gallery[0]) == 4
                     and variant_table and int(variant_table[0]) == 1
-                    and variant_columns and int(variant_columns[0]) == 2)
+                    and variant_columns and int(variant_columns[0]) == 6)
         return 4 if complete else 0
 
     def initialize(self) -> None:

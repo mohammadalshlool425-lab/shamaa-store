@@ -1,4 +1,5 @@
 import hashlib
+import json
 from io import BytesIO
 import os
 import secrets
@@ -74,7 +75,13 @@ def my_products(request: Request,user=Depends(seller_user)):
     with request.app.state.db.read() as c:
         store = own_store(c,user)
         rows = c.execute(PRODUCT_SQL+' WHERE p.store_id=? ORDER BY p.id DESC',(store['id'],)).fetchall()
-    return {'products':[product_dict(r,True) for r in rows]}
+    result = []
+    for row in rows:
+        item = product_dict(row,True)
+        variants = c.execute("SELECT * FROM product_variants WHERE product_id=? ORDER BY id",(row['id'],)).fetchall()
+        item['variants'] = [variant_dict(v,True) for v in variants]
+        result.append(item)
+    return {'products':result}
 
 
 def validate_product(c, body, store, user):
@@ -121,6 +128,12 @@ def edit_product(product_id: int,body: schemas.ProductInput,request: Request,use
             if r['version'] != body.expected_version:
                 fail('invalid_status',409)
             validate_product(c,body,store,user)
+            has_variants = c.execute(
+                "SELECT 1 FROM product_variants WHERE product_id=? AND active=TRUE LIMIT 1",
+                (product_id,),
+            ).fetchone()
+            if has_variants and (body.stock != r['stock'] or body.price_fils != r['price_fils']):
+                fail('invalid_input',422)
             data = body.model_dump(exclude={'expected_version'})
             c.execute('UPDATE products SET '+','.join(k+'=?' for k in data)+',updated_at=?,version=version+1,review_note=\'\' WHERE id=?',
                       [*data.values(),now(),product_id])
@@ -190,6 +203,113 @@ def set_product_images(product_id: int,body: schemas.ProductImagesInput,
     return {'ok':True,'media_ids':body.media_ids,'version':body.expected_version + 1}
 
 
+
+def variant_dict(row, private=False):
+    result = {
+        'id':row['id'],
+        'attributes':json.loads(row['attributes_json']),
+        'price_fils':row['price_fils'],
+        'compare_at_fils':row['compare_at_fils'],
+        'stock':row['stock'],
+        'active':bool(row['active']),
+    }
+    if private:
+        result.update(sku=row['sku'],version=row['version'])
+    return result
+
+
+@router.get('/products/{product_id}/variants')
+def get_product_variants(product_id: int,request: Request,user=Depends(seller_user)):
+    with request.app.state.db.read() as c:
+        store = own_store(c,user)
+        product = c.execute('SELECT id FROM products WHERE id=? AND store_id=?',
+                            (product_id,store['id'])).fetchone()
+        if not product:
+            fail('not_found',404)
+        rows = c.execute('SELECT * FROM product_variants WHERE product_id=? ORDER BY id',
+                         (product_id,)).fetchall()
+    return {'variants':[variant_dict(row,True) for row in rows]}
+
+
+@router.put('/products/{product_id}/variants')
+def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
+                         request: Request,user=Depends(seller_user)):
+    try:
+        with request.app.state.db.transaction() as c:
+            store = own_store(c,user)
+            product = c.execute('SELECT * FROM products WHERE id=? AND store_id=?',
+                                (product_id,store['id'])).fetchone()
+            if not product:
+                fail('not_found',404)
+            if product['version'] != body.expected_version:
+                fail('invalid_status',409)
+            existing = c.execute('SELECT * FROM product_variants WHERE product_id=?',
+                                 (product_id,)).fetchall()
+            existing_by_id = {row['id']:row for row in existing}
+            requested_ids = {item.id for item in body.variants if item.id is not None}
+            if any(identifier not in existing_by_id for identifier in requested_ids):
+                fail('forbidden',403)
+
+            stamp = now()
+            total_stock = sum(item.stock for item in body.variants)
+            if total_stock > 1000000:
+                fail('invalid_input',422)
+            saved_ids = set()
+            for item in body.variants:
+                attributes_json = json.dumps(item.attributes,sort_keys=True,ensure_ascii=False,separators=(',',':'))
+                collision = c.execute(
+                    '''SELECT 1 FROM products WHERE store_id=? AND sku=? AND id<>?
+                       UNION ALL
+                       SELECT 1 FROM product_variants WHERE store_id=? AND sku=? AND product_id<>? LIMIT 1''',
+                    (store['id'],item.sku,product_id,store['id'],item.sku,product_id),
+                ).fetchone()
+                if collision:
+                    fail('sku_exists',409)
+                if item.id is None:
+                    variant_id = insert_id(c,'''INSERT INTO product_variants(
+                      product_id,store_id,sku,attributes_json,price_fils,compare_at_fils,stock,active,version,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,TRUE,1,?,?)''',
+                    (product_id,store['id'],item.sku,attributes_json,item.price_fils,
+                     item.compare_at_fils,item.stock,stamp,stamp))
+                    delta = item.stock
+                    reason = f'variant_initial_{variant_id}'
+                else:
+                    old = existing_by_id[item.id]
+                    variant_id = item.id
+                    delta = item.stock - old['stock']
+                    reason = f'variant_adjust_{variant_id}_{old["version"]+1}'
+                    c.execute('''UPDATE product_variants SET sku=?,attributes_json=?,price_fils=?,
+                      compare_at_fils=?,stock=?,active=TRUE,version=version+1,updated_at=?
+                      WHERE id=? AND product_id=?''',
+                      (item.sku,attributes_json,item.price_fils,item.compare_at_fils,
+                       item.stock,stamp,variant_id,product_id))
+                if delta:
+                    c.execute('''INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at)
+                      VALUES(?,?,?,?,?)''',(product_id,user['id'],delta,reason,stamp))
+                saved_ids.add(variant_id)
+
+            for old in existing:
+                if old['id'] not in saved_ids:
+                    c.execute('UPDATE product_variants SET active=FALSE,version=version+1,updated_at=? WHERE id=?',
+                              (stamp,old['id']))
+            low_price = min(item.price_fils for item in body.variants)
+            changed = c.execute('''UPDATE products SET stock=?,price_fils=?,compare_at_fils=NULL,
+              status=CASE WHEN status='active' THEN 'pending' ELSE status END,
+              review_note='',version=version+1,updated_at=? WHERE id=? AND version=?''',
+                                (total_stock,low_price,stamp,product_id,body.expected_version))
+            if changed.rowcount != 1:
+                fail('invalid_status',409)
+            audit(c,user['id'],'product_variants_updated','product',product_id,
+                  f'{len(body.variants)} active variants')
+            result = c.execute('SELECT version FROM products WHERE id=?',(product_id,)).fetchone()
+            saved_rows = c.execute('SELECT * FROM product_variants WHERE product_id=? ORDER BY id',
+                                   (product_id,)).fetchall()
+    except DatabaseIntegrityError:
+        fail('sku_exists',409)
+    return {'ok':True,'version':result['version'],
+            'variants':[variant_dict(row,True) for row in saved_rows]}
+
+
 @router.patch('/products/{product_id}/stock')
 def update_stock(product_id: int,body: schemas.StockInput,request: Request,user=Depends(seller_user)):
     with request.app.state.db.transaction() as c:
@@ -197,6 +317,8 @@ def update_stock(product_id: int,body: schemas.StockInput,request: Request,user=
         r = c.execute('SELECT * FROM products WHERE id=? AND store_id=?',(product_id,store['id'])).fetchone()
         if not r:
             fail('not_found',404)
+        if c.execute("SELECT 1 FROM product_variants WHERE product_id=? AND active=TRUE LIMIT 1",(product_id,)).fetchone():
+            fail('invalid_input',422)
         if r['version'] != body.expected_version:
             fail('invalid_status',409)
         c.execute('UPDATE products SET stock=?,updated_at=?,version=version+1 WHERE id=?',(body.stock,now(),product_id))
