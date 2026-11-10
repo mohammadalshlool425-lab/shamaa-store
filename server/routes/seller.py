@@ -309,12 +309,13 @@ def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
                 fail('invalid_status',409)
             audit(c,user['id'],'product_variants_updated','product',product_id,
                   f'{len(body.variants)} active variants')
-            result = c.execute('SELECT version FROM products WHERE id=?',(product_id,)).fetchone()
+            result = c.execute('SELECT version,status,stock,price_fils FROM products WHERE id=?',(product_id,)).fetchone()
             saved_rows = c.execute('SELECT * FROM product_variants WHERE product_id=? ORDER BY id',
                                    (product_id,)).fetchall()
     except DatabaseIntegrityError:
         fail('sku_exists',409)
-    return {'ok':True,'version':result['version'],
+    return {'ok':True,'version':result['version'],'status':result['status'],
+            'stock':result['stock'],'price_fils':result['price_fils'],
             'variants':[variant_dict(row,True) for row in saved_rows]}
 
 
