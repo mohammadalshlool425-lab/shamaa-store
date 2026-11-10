@@ -20,7 +20,7 @@ SCHEMA_TABLES = (
     "users", "sessions", "auth_tokens", "rate_limits", "categories", "stores",
     "media", "products", "carts", "orders", "seller_orders", "order_items",
     "order_events", "inventory_movements", "ledger", "notifications",
-    "audit_log", "settings", "mail_outbox",
+    "audit_log", "settings", "mail_outbox", "product_images",
 )
 
 
@@ -108,7 +108,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 2 only when the foundation and used-item snapshot columns exist."""
+        """Return 3 only when the foundation and product-image gallery migration exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -126,11 +126,11 @@ class PostgresDatabase:
             ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4)
-        return 2 if complete else 0
+        return 3 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 2:
+        if self.schema_version() != 3:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
                 "apply all reviewed Supabase migrations before starting the app."

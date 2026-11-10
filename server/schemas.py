@@ -100,6 +100,19 @@ class ProductInput(Input):
         return self
 
 
+class ProductImagesInput(Input):
+    media_ids: list[int] = Field(min_length=1, max_length=8)
+
+    @field_validator('media_ids')
+    @classmethod
+    def unique_media_ids(cls, value):
+        if any(not isinstance(item, int) or item < 1 for item in value):
+            raise ValueError('Media identifiers must be positive integers')
+        if len(set(value)) != len(value):
+            raise ValueError('A product gallery cannot repeat the same image')
+        return value
+
+
 class StockInput(Input):
     stock: int = Field(ge=0, le=1000000, strict=True)
     expected_version: int = Field(ge=1, strict=True)

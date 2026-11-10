@@ -60,9 +60,18 @@ def product(product_id: int,request: Request):
         row = c.execute(PRODUCT_SQL+' WHERE p.id=? AND '+PUBLIC_WHERE,(product_id,)).fetchone()
         if not row:
             fail('not_found',404)
+        gallery = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
+          JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
+                            (product_id,)).fetchall()
         similar = c.execute(PRODUCT_SQL+' WHERE p.id<>? AND (p.category_id=? OR c.parent_id=?) AND '+PUBLIC_WHERE+' LIMIT 4',
                             (product_id,row['category_id'],row['parent_id'])).fetchall()
-    return {'product':product_dict(row),'similar':[product_dict(r) for r in similar]}
+    images = [{'media_id':r['media_id'],'position':r['position'],'url':f"/media/{r['media_id']}/480.webp"}
+              for r in gallery]
+    if not images and row['media_id']:
+        images = [{'media_id':row['media_id'],'position':0,'url':f"/media/{row['media_id']}/480.webp"}]
+    if not images and product_dict(row)['image_url']:
+        images = [{'media_id':None,'position':0,'url':product_dict(row)['image_url']}]
+    return {'product':product_dict(row),'images':images,'similar':[product_dict(r) for r in similar]}
 
 
 @router.get('/stores')

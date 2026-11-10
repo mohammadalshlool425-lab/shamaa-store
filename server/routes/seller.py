@@ -100,6 +100,9 @@ def create_product(body: schemas.ProductInput,request: Request,user=Depends(sell
                                    [store['id'],*data.values(),now(),now()])
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at) VALUES(?,?,?,?,?)',
                       (product_id,user['id'],body.stock,'initial',now()))
+            if body.media_id:
+                c.execute('INSERT INTO product_images(product_id,media_id,position,created_at) VALUES(?,?,0,?)',
+                          (product_id,body.media_id,now()))
             audit(c,user['id'],'product_created','product',product_id)
             r = c.execute(PRODUCT_SQL+' WHERE p.id=?',(product_id,)).fetchone()
     except DatabaseIntegrityError:
@@ -121,6 +124,11 @@ def edit_product(product_id: int,body: schemas.ProductInput,request: Request,use
             data = body.model_dump(exclude={'expected_version'})
             c.execute('UPDATE products SET '+','.join(k+'=?' for k in data)+',updated_at=?,version=version+1,review_note=\'\' WHERE id=?',
                       [*data.values(),now(),product_id])
+            if body.media_id != r['media_id']:
+                c.execute('DELETE FROM product_images WHERE product_id=?',(product_id,))
+                if body.media_id:
+                    c.execute('INSERT INTO product_images(product_id,media_id,position,created_at) VALUES(?,?,0,?)',
+                              (product_id,body.media_id,now()))
             if body.stock != r['stock']:
                 c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at) VALUES(?,?,?,?,?)',
                           (product_id,user['id'],body.stock-r['stock'],'adjustment',now()))
@@ -129,6 +137,53 @@ def edit_product(product_id: int,body: schemas.ProductInput,request: Request,use
     except DatabaseIntegrityError:
         fail('sku_exists',409)
     return {'product':product_dict(result,True)}
+
+
+
+@router.get('/products/{product_id}/images')
+def get_product_images(product_id: int,request: Request,user=Depends(seller_user)):
+    with request.app.state.db.read() as c:
+        store = own_store(c,user)
+        product = c.execute('SELECT id,media_id FROM products WHERE id=? AND store_id=?',
+                            (product_id,store['id'])).fetchone()
+        if not product:
+            fail('not_found',404)
+        rows = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
+          JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
+                         (product_id,)).fetchall()
+        if not rows and product['media_id']:
+            rows = [{'media_id':product['media_id'],'position':0}]
+    images = [{'media_id':r['media_id'],'position':r['position'],
+               'url':f"/media/{r['media_id']}/480.webp"} for r in rows]
+    return {'images':images,'media_ids':[r['media_id'] for r in rows]}
+
+
+@router.put('/products/{product_id}/images')
+def set_product_images(product_id: int,body: schemas.ProductImagesInput,
+                       request: Request,user=Depends(seller_user)):
+    with request.app.state.db.transaction() as c:
+        store = own_store(c,user)
+        product = c.execute('SELECT * FROM products WHERE id=? AND store_id=?',
+                            (product_id,store['id'])).fetchone()
+        if not product:
+            fail('not_found',404)
+        placeholders = ','.join('?' for _ in body.media_ids)
+        owned = c.execute(
+            f'SELECT id FROM media WHERE owner_id=? AND id IN ({placeholders})',
+            [user['id'],*body.media_ids],
+        ).fetchall()
+        if len(owned) != len(body.media_ids):
+            fail('forbidden',403)
+        c.execute('DELETE FROM product_images WHERE product_id=?',(product_id,))
+        stamp = now()
+        for position,media_id in enumerate(body.media_ids):
+            c.execute('INSERT INTO product_images(product_id,media_id,position,created_at) VALUES(?,?,?,?)',
+                      (product_id,media_id,position,stamp))
+        c.execute('''UPDATE products SET media_id=?,status=CASE WHEN status='active' THEN 'pending' ELSE status END,
+          review_note='',updated_at=?,version=version+1 WHERE id=?''',
+                  (body.media_ids[0],stamp,product_id))
+        audit(c,user['id'],'product_gallery_updated','product',product_id)
+    return {'ok':True,'media_ids':body.media_ids}
 
 
 @router.patch('/products/{product_id}/stock')
