@@ -86,3 +86,12 @@ The matrix is a policy design target, not an installed policy set. All policies 
 - Gate F: migrate a sanitized SQLite copy, run parity and checkout/stock/ledger tests, then plan a controlled cutover with rollback.
   
 Until all gates pass, SQLite remains the active application database and the live `shamaa_app` schema remains closed by default.
+
+
+## Gate A — Psycopg adapter foundation
+
+The first adapter implementation is isolated in `server/postgres_database.py`. It uses Psycopg 3 with autocommit connections and explicit transaction contexts, maps application qmark placeholders to Psycopg placeholders, returns the shared `HybridRow` contract, and translates integrity/operational exceptions into the application's existing database exception contract. It sets a validated, fixed-schema `search_path` at connection startup and disables automatic prepared statements for compatibility with transaction-pooling endpoints.
+
+`PostgresDatabase.initialize()` is intentionally validation-only: migrations are applied out-of-band and the adapter refuses to start unless all 19 foundation tables exist. It does not create roles, grant privileges, open RLS, or change the live Supabase project. SQLite remains the default application backend; runtime switching is not enabled in this gate.
+
+The PostgreSQL CI job now runs a real Psycopg integration test against its isolated PostgreSQL 17 service. The test covers schema validation, generated IDs via `RETURNING`, positional and named row access, qmark parameter binding, affected-row counts, commit, rollback, and integrity-error translation. It uses a disposable test table and removes it afterward.
