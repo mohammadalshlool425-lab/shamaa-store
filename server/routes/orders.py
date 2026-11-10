@@ -1,3 +1,4 @@
+import json
 import re
 import secrets
 import time
@@ -17,7 +18,14 @@ NEXT = {'new':{'confirmed','cancelled'},'confirmed':{'preparing','cancelled'},
 
 def shipment_dict(c, row):
     d = dict(row)
-    d['items'] = [dict(r) for r in c.execute('SELECT product_id,title_ar,title_en,unit_price_fils,quantity,image_url,condition,condition_note,commission_bps,commission_fils FROM order_items WHERE seller_order_id=?',(row['id'],))]
+    d['items'] = []
+    for item in c.execute('''SELECT product_id,variant_id,variant_sku,variant_attributes,title_ar,title_en,
+      unit_price_fils,quantity,image_url,condition,condition_note,commission_bps,commission_fils
+      FROM order_items WHERE seller_order_id=?''',(row['id'],)):
+        saved = dict(item)
+        saved['variant_attributes'] = json.loads(saved['variant_attributes'])
+        saved['variant_label'] = ' · '.join(str(value) for value in saved['variant_attributes'].values())
+        d['items'].append(saved)
     d['events'] = [dict(r) for r in c.execute('SELECT from_status,to_status,note,created_at FROM order_events WHERE seller_order_id=? ORDER BY id',(row['id'],))]
     s = c.execute('SELECT name_ar,name_en,slug FROM stores WHERE id=?',(row['store_id'],)).fetchone()
     d['store_name_ar'], d['store_name_en'], d['store_slug'] = s['name_ar'],s['name_en'],s['slug']
@@ -40,20 +48,48 @@ def get_cart(request: Request,user=Depends(require_user)):
 @router.put('/cart')
 def set_cart(body: schemas.CartItem,request: Request,user=Depends(require_user)):
     with request.app.state.db.transaction() as c:
+        variant_key = body.variant_id or 0
         if body.quantity==0:
-            c.execute('DELETE FROM carts WHERE user_id=? AND product_id=?',(user['id'],body.product_id))
+            c.execute('DELETE FROM carts WHERE user_id=? AND product_id=? AND variant_key=?',
+                      (user['id'],body.product_id,variant_key))
         else:
             p = c.execute(PRODUCT_SQL+' WHERE p.id=? AND '+PUBLIC_WHERE,(body.product_id,)).fetchone()
             if not p:
                 fail('not_found',404)
             if p['owner_id']==user['id']:
                 fail('own_product',409)
-            if p['stock']<body.quantity:
+            variant_count = int(c.execute(
+                'SELECT COUNT(*) FROM product_variants WHERE product_id=? AND active=TRUE',
+                (body.product_id,),
+            ).fetchone()[0])
+            if variant_count:
+                if body.variant_id is None:
+                    fail('invalid_input',422)
+                variant = c.execute(
+                    'SELECT stock FROM product_variants WHERE id=? AND product_id=? AND active=TRUE',
+                    (body.variant_id,body.product_id),
+                ).fetchone()
+                if not variant:
+                    fail('stock',409)
+                available_stock = int(variant['stock'])
+            else:
+                if body.variant_id is not None:
+                    fail('invalid_input',422)
+                available_stock = int(p['stock'])
+            if available_stock < body.quantity:
                 fail('stock',409)
-            if c.execute('SELECT COUNT(*) FROM carts WHERE user_id=?',(user['id'],)).fetchone()[0]>=50 and not c.execute('SELECT 1 FROM carts WHERE user_id=? AND product_id=?',(user['id'],body.product_id)).fetchone():
+            exists = c.execute(
+                'SELECT 1 FROM carts WHERE user_id=? AND product_id=? AND variant_key=?',
+                (user['id'],body.product_id,variant_key),
+            ).fetchone()
+            line_count = c.execute('SELECT COUNT(*) FROM carts WHERE user_id=?',(user['id'],)).fetchone()[0]
+            if line_count>=50 and not exists:
                 fail('invalid_input',422)
-            c.execute('INSERT INTO carts VALUES(?,?,?) ON CONFLICT(user_id,product_id) DO UPDATE SET quantity=excluded.quantity',
-                      (user['id'],body.product_id,body.quantity))
+            c.execute('''INSERT INTO carts(user_id,product_id,variant_id,variant_key,quantity)
+              VALUES(?,?,?,?,?)
+              ON CONFLICT(user_id,product_id,variant_key)
+              DO UPDATE SET variant_id=excluded.variant_id,quantity=excluded.quantity''',
+              (user['id'],body.product_id,body.variant_id,variant_key,body.quantity))
         return cart_quote(c,user['id'])
 
 
@@ -97,14 +133,37 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
               VALUES(?,?,?,?,?,?,?)''',(order_id,group['store_id'],group['subtotal_fils'],group['shipping_fils'],commission_fils,
               group['subtotal_fils']+group['shipping_fils']-commission_fils,now()))
             for item,bps,amount in items:
-                result = c.execute("UPDATE products SET stock=stock-?,updated_at=?,version=version+1 WHERE id=? AND stock>=? AND status='active'",
-                                   (item['quantity'],now(),item['id'],item['quantity']))
-                if result.rowcount!=1:
-                    fail('stock',409)
-                c.execute('''INSERT INTO order_items(seller_order_id,product_id,title_ar,title_en,unit_price_fils,quantity,commission_bps,commission_fils,image_url,condition,condition_note)
-                  VALUES(?,?,?,?,?,?,?,?,?,?,?)''',(sub,item['id'],item['title_ar'],item['title_en'],item['price_fils'],item['quantity'],bps,amount,item['image_url'],item['condition'],item['condition_note']))
+                if item['variant_id'] is not None:
+                    result = c.execute('''UPDATE product_variants SET stock=stock-?,version=version+1,updated_at=?
+                      WHERE id=? AND product_id=? AND active=TRUE AND stock>=?''',
+                      (item['quantity'],now(),item['variant_id'],item['id'],item['quantity']))
+                    if result.rowcount!=1:
+                        fail('stock',409)
+                    aggregate = c.execute('''UPDATE products SET stock=stock-?,updated_at=?,version=version+1
+                      WHERE id=? AND stock>=? AND status='active' ''',
+                      (item['quantity'],now(),item['id'],item['quantity']))
+                    if aggregate.rowcount!=1:
+                        fail('stock',409)
+                    inventory_reason = f"sale_variant_{item['variant_id']}"
+                else:
+                    result = c.execute('''UPDATE products SET stock=stock-?,updated_at=?,version=version+1
+                      WHERE id=? AND stock>=? AND status='active'
+                        AND NOT EXISTS (SELECT 1 FROM product_variants WHERE product_id=? AND active=TRUE)''',
+                      (item['quantity'],now(),item['id'],item['quantity'],item['id']))
+                    if result.rowcount!=1:
+                        fail('stock',409)
+                    inventory_reason = 'sale'
+                c.execute('''INSERT INTO order_items(
+                  seller_order_id,product_id,variant_id,variant_key,variant_sku,variant_attributes,
+                  title_ar,title_en,unit_price_fils,quantity,commission_bps,commission_fils,image_url,condition,condition_note
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                  sub,item['id'],item['variant_id'],item['variant_id'] or 0,item['variant_sku'] or '',
+                  json.dumps(item['variant_attributes'] or {},sort_keys=True,ensure_ascii=False,separators=(',',':')),
+                  item['title_ar'],item['title_en'],item['price_fils'],item['quantity'],bps,amount,
+                  item['image_url'],item['condition'],item['condition_note']
+                ))
                 c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
-                          (item['id'],user['id'],-item['quantity'],'sale',sub,now()))
+                          (item['id'],user['id'],-item['quantity'],inventory_reason,sub,now()))
             c.execute('INSERT INTO order_events(seller_order_id,actor_id,to_status,created_at) VALUES(?,?,?,?)',(sub,user['id'],'new',now()))
             owner_id = c.execute('SELECT owner_id FROM stores WHERE id=?',(group['store_id'],)).fetchone()[0]
             mail.notify(c,settings,owner_id,'order',f'طلب جديد {number} في متجرك. راجع لوحة الطلبات.',f'New order {number}. Review it in your seller dashboard.')
@@ -149,10 +208,19 @@ def change_status(c,request,user,sub,status,expected,note,buyer=False):
     if old!=expected or status not in NEXT[old] or (buyer and not (old in ('new','confirmed') and status=='cancelled')):
         fail('invalid_status',409)
     if status=='cancelled':
-        for item in c.execute('SELECT product_id,quantity FROM order_items WHERE seller_order_id=?',(sub['id'],)).fetchall():
-            c.execute('UPDATE products SET stock=stock+?,updated_at=?,version=version+1 WHERE id=?',(item['quantity'],now(),item['product_id']))
+        for item in c.execute('SELECT product_id,variant_id,quantity FROM order_items WHERE seller_order_id=?',(sub['id'],)).fetchall():
+            if item['variant_id'] is not None:
+                c.execute('UPDATE product_variants SET stock=stock+?,version=version+1,updated_at=? WHERE id=?',
+                          (item['quantity'],now(),item['variant_id']))
+                c.execute('UPDATE products SET stock=stock+?,updated_at=?,version=version+1 WHERE id=?',
+                          (item['quantity'],now(),item['product_id']))
+                reason = f"cancel_variant_{item['variant_id']}"
+            else:
+                c.execute('UPDATE products SET stock=stock+?,updated_at=?,version=version+1 WHERE id=?',
+                          (item['quantity'],now(),item['product_id']))
+                reason = 'cancel'
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
-                      (item['product_id'],user['id'],item['quantity'],'cancel',sub['id'],now()))
+                      (item['product_id'],user['id'],item['quantity'],reason,sub['id'],now()))
     if status=='delivered':
         # COD: a commission debt is accrued. This is NOT a payment or a seller payout.
         c.execute("INSERT INTO ledger(seller_order_id,store_id,kind,amount_fils,created_at) VALUES(?,?,'cod_commission_due',?,?)",

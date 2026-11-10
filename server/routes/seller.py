@@ -258,10 +258,10 @@ def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
             for item in body.variants:
                 attributes_json = json.dumps(item.attributes,sort_keys=True,ensure_ascii=False,separators=(',',':'))
                 collision = c.execute(
-                    '''SELECT 1 FROM products WHERE store_id=? AND sku=? AND id<>?
+                    '''SELECT 1 FROM products WHERE store_id=? AND sku=?
                        UNION ALL
                        SELECT 1 FROM product_variants WHERE store_id=? AND sku=? AND product_id<>? LIMIT 1''',
-                    (store['id'],item.sku,product_id,store['id'],item.sku,product_id),
+                    (store['id'],item.sku,store['id'],item.sku,product_id),
                 ).fetchone()
                 if collision:
                     fail('sku_exists',409)
@@ -288,10 +288,16 @@ def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
                       VALUES(?,?,?,?,?)''',(product_id,user['id'],delta,reason,stamp))
                 saved_ids.add(variant_id)
 
+            if not existing and product['stock']:
+                c.execute('''INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at)
+                  VALUES(?,?,?,?,?)''',(product_id,user['id'],-product['stock'],'variant_mode_transfer',stamp))
             for old in existing:
-                if old['id'] not in saved_ids:
+                if old['id'] not in saved_ids and old['active']:
                     c.execute('UPDATE product_variants SET active=FALSE,version=version+1,updated_at=? WHERE id=?',
                               (stamp,old['id']))
+                    if old['stock']:
+                        c.execute('''INSERT INTO inventory_movements(product_id,actor_id,delta,reason,created_at)
+                          VALUES(?,?,?,?,?)''',(product_id,user['id'],-old['stock'],f'variant_disabled_{old["id"]}_{old["version"]+1}',stamp))
             low_price = min(item.price_fils for item in body.variants)
             changed = c.execute('''UPDATE products SET stock=?,price_fils=?,compare_at_fils=NULL,
               status=CASE WHEN status='active' THEN 'pending' ELSE status END,

@@ -40,7 +40,7 @@ CREATE TABLE order_items (
  id INTEGER PRIMARY KEY,
  seller_order_id INTEGER NOT NULL REFERENCES seller_orders(id),
  product_id INTEGER NOT NULL REFERENCES products(id),
- variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL,
+ variant_id INTEGER REFERENCES product_variants(id),
  variant_key INTEGER NOT NULL DEFAULT 0,
  variant_sku TEXT NOT NULL DEFAULT '',
  variant_attributes TEXT NOT NULL DEFAULT '{}',

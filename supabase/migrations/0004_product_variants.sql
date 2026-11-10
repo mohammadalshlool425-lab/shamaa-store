@@ -31,7 +31,7 @@ ALTER TABLE shamaa_app.carts ADD CONSTRAINT carts_variant_key_check
 ALTER TABLE shamaa_app.carts ADD PRIMARY KEY(user_id,product_id,variant_key);
 
 ALTER TABLE shamaa_app.order_items
-  ADD COLUMN variant_id BIGINT REFERENCES shamaa_app.product_variants(id) ON DELETE SET NULL,
+  ADD COLUMN variant_id BIGINT REFERENCES shamaa_app.product_variants(id),
   ADD COLUMN variant_key BIGINT NOT NULL DEFAULT 0,
   ADD COLUMN variant_sku TEXT NOT NULL DEFAULT '',
   ADD COLUMN variant_attributes TEXT NOT NULL DEFAULT '{}';
