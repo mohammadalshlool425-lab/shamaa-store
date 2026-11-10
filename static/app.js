@@ -114,7 +114,7 @@ async function storesView(slug,route){
 
 function guestLineKey(id,variantId=null){return String(id)+(variantId?':'+String(variantId):'');}
 function parseGuestLineKey(key){
- const match=/^(\\d+)(?::(\\d+))?$/.exec(String(key));
+ const match=/^(\d+)(?::(\d+))?$/.exec(String(key));
  return match?{productId:Number(match[1]),variantId:match[2]?Number(match[2]):null}:null;
 }
 function normalizeGuest(){
@@ -213,9 +213,16 @@ async function addCart(id,quantity=1,variantId=null){
 function updateCartCount(){const el=$('#cart-count');if(el)el.textContent=number(S.cart.quantity);}
 async function mergeGuest(){
  const remote=await api('/api/cart');S.cart=remote;normalizeGuest();let failed=false;
- for(const [id,qty]of Object.entries(S.guest)){
-  try{const existing=cartItemQuantity(Number(id));S.cart=await api('/api/cart',{method:'PUT',body:{product_id:Number(id),quantity:Math.min(99,existing+qty)}});delete S.guest[id];}
-  catch{failed=true;}
+ for(const [key,qty]of Object.entries(S.guest)){
+  const line=parseGuestLineKey(key);
+  if(!line){failed=true;continue;}
+  try{
+   const existing=cartItemQuantity(line.productId,line.variantId);
+   S.cart=await api('/api/cart',{method:'PUT',body:{
+    product_id:line.productId,variant_id:line.variantId,quantity:Math.min(99,existing+qty)
+   }});
+   delete S.guest[key];
+  }catch{failed=true;}
  }
  saveLocal('shamaa.cart',S.guest);if(failed)toast(tr('بعض الاختيارات المحلية لم تُدمج لتغيّر توفرها. راجع السلة.','Some local items could not be merged because availability changed. Review your bag.'),true);
  updateCartCount();
