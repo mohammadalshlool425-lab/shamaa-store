@@ -29,7 +29,7 @@ def test_fastapi_application_smoke_on_postgresql(tmp_path):
     )
     database = PostgresDatabase(conninfo)
     app = create_app(settings=settings, database=database)
-    email = f"pg-smoke-{uuid4().hex}@example.invalid"
+    email = f"pg-smoke-{uuid4().hex}@example.com"
     payload = {
         "name": "PostgreSQL Smoke Test",
         "email": email,
@@ -56,7 +56,7 @@ def test_fastapi_application_smoke_on_postgresql(tmp_path):
             json=payload,
             headers={"x-requested-with": "shamaa"},
         )
-        assert registered.status_code == 201
+        assert registered.status_code == 201, registered.text
         body = registered.json()
         assert body["user"]["email"] == email
         assert body["user"]["locale"] == "en"
