@@ -1,0 +1,5 @@
+[run]
+# PostgreSQL adapter has its own live PostgreSQL 17 integration job. Keep it
+# out of the SQLite backend's aggregate coverage denominator.
+omit =
+    server/postgres_database.py
