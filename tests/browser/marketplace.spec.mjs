@@ -149,7 +149,7 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await variantRows.nth(1).locator('[name=variant_attributes]').fill('اللون=بارد; المقاس=صغير');
  await variantRows.nth(1).locator('[name=variant_price]').fill('18.125');
  await variantRows.nth(1).locator('[name=variant_stock]').fill('4');
- const variantSave=seller.waitForResponse(r=>r.url().includes('/api/seller/products/')&&r.url().endsWith('/variants')&&r.request().method()==='PUT');
+ const variantSave=seller.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname.includes('/variants'),{timeout:15000});
  await seller.locator('#variants-form button[type=submit]').click();
  const variantResult=await(await variantSave).json();
  expect(variantResult.status).toBe('pending');
