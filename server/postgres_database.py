@@ -108,28 +108,30 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 1 only when every table in the reviewed foundation exists.
-
-        The SQL migration remains the source of truth. This is a health/contract
-        check, not a migration runner or a claim that later versions are applied.
-        """
+        """Return 2 only when the foundation and used-item snapshot columns exist."""
         with self.read() as connection:
-            row = connection.execute(
-                """
-                SELECT COUNT(*)
-                  FROM information_schema.tables
-                 WHERE table_schema=?
-                   AND table_type='BASE TABLE'
-                   AND table_name = ANY(?)
-                """,
+            tables = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.tables
+                   WHERE table_schema=? AND table_type='BASE TABLE' AND table_name = ANY(?)""",
                 (self.schema, list(SCHEMA_TABLES)),
             ).fetchone()
-        return 1 if row and int(row[0]) == len(SCHEMA_TABLES) else 0
+            columns = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND (
+                     (table_name='products' AND column_name IN ('condition','condition_note'))
+                     OR
+                     (table_name='order_items' AND column_name IN ('condition','condition_note'))
+                   )""",
+                (self.schema,),
+            ).fetchone()
+        complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
+                    and columns and int(columns[0]) == 4)
+        return 2 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 1:
+        if self.schema_version() != 2:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply the reviewed Supabase migration before starting the app."
+                "apply all reviewed Supabase migrations before starting the app."
             )

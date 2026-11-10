@@ -29,7 +29,7 @@ def product_image(p):
 def product_dict(row, private=False):
     p = dict(row)
     keys = ('id','store_id','category_id','title_ar','title_en','description_ar','description_en',
-            'price_fils','compare_at_fils','stock','store_name_ar','store_name_en','store_slug',
+            'price_fils','compare_at_fils','stock','condition','condition_note','store_name_ar','store_name_en','store_slug',
             'city','shipping_fils','delivery_days','is_demo','category_name_ar','category_name_en','featured')
     result = {k:p[k] for k in keys if k in p}
     result['image_url'] = product_image(p)

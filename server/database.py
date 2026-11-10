@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name('schema.sql')
+MIGRATION_DIR = Path(__file__).with_name('migrations')
+LATEST_SCHEMA_VERSION = 2
 
 
 class HybridRow(Mapping[str, Any]):
@@ -233,8 +235,21 @@ class Database:
         with self.read() as c:
             c.execute('PRAGMA journal_mode=WAL')
             version = c.execute('PRAGMA user_version').fetchone()[0]
-            if version > 1:
+            if version > LATEST_SCHEMA_VERSION:
                 raise RuntimeError('Database is newer than this application. Do not downgrade the schema.')
             if version == 0:
                 c.executescript('BEGIN IMMEDIATE;\n' + SCHEMA_PATH.read_text(encoding='utf-8') + '\nPRAGMA user_version=1; COMMIT;')
+                version = 1
+            if version == 1:
+                migration = MIGRATION_DIR / '0002_product_condition.sql'
+                try:
+                    c.executescript('BEGIN IMMEDIATE;\n' + migration.read_text(encoding='utf-8')
+                                    + '\nPRAGMA user_version=2; COMMIT;')
+                except BaseException:
+                    if c.in_transaction:
+                        c.rollback()
+                    raise
+                version = 2
+            if version != LATEST_SCHEMA_VERSION:
+                raise RuntimeError('Database schema is incomplete; apply all numbered migrations.')
         Path(self.path).chmod(0o600)

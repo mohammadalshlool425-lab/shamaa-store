@@ -82,6 +82,8 @@ class ProductInput(Input):
     stock: int = Field(ge=0, le=1000000, strict=True)
     sku: str = Field(min_length=1, max_length=60, pattern=r'^[\w.\-]+$')
     media_id: int | None = Field(default=None, ge=1, strict=True)
+    condition: Literal['new','used'] = 'new'
+    condition_note: str = Field(default='', max_length=500)
     status: Literal['pending','draft','paused'] = 'pending'
     expected_version: int | None = Field(default=None, ge=1, strict=True)
 
@@ -89,6 +91,10 @@ class ProductInput(Input):
     def valid_discount(self):
         if self.compare_at_fils is not None and self.compare_at_fils <= self.price_fils:
             raise ValueError('Original price must exceed the sale price')
+        if self.condition == 'used' and len(self.condition_note.strip()) < 10:
+            raise ValueError('Used products require an honest condition note of at least 10 characters')
+        if self.condition == 'new' and self.condition_note:
+            raise ValueError('Condition notes are only valid for used products')
         if self.status == 'pending' and self.media_id is None:
             raise ValueError('A product image is required for review')
         return self

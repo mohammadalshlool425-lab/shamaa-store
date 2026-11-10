@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import ROOT, Settings
-from .database import Database, DatabaseOperationalError, DatabaseProtocol
+from .database import Database, DatabaseOperationalError, DatabaseProtocol, LATEST_SCHEMA_VERSION
 from .errors import error_body, fail, language
 from .security import optional_user
 from .seed import initialize_catalog
@@ -143,7 +143,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     @app.get('/healthz')
     def health():
         with db.read() as c:
-            if db.schema_version()!=1 or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
+            if db.schema_version()!=LATEST_SCHEMA_VERSION or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
                 fail('database_busy',503)
         return {'ok':True,'version':'1.0.0','database':'ready'}
 

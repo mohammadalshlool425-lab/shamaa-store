@@ -17,7 +17,7 @@ NEXT = {'new':{'confirmed','cancelled'},'confirmed':{'preparing','cancelled'},
 
 def shipment_dict(c, row):
     d = dict(row)
-    d['items'] = [dict(r) for r in c.execute('SELECT product_id,title_ar,title_en,unit_price_fils,quantity,image_url,commission_bps,commission_fils FROM order_items WHERE seller_order_id=?',(row['id'],))]
+    d['items'] = [dict(r) for r in c.execute('SELECT product_id,title_ar,title_en,unit_price_fils,quantity,image_url,condition,condition_note,commission_bps,commission_fils FROM order_items WHERE seller_order_id=?',(row['id'],))]
     d['events'] = [dict(r) for r in c.execute('SELECT from_status,to_status,note,created_at FROM order_events WHERE seller_order_id=? ORDER BY id',(row['id'],))]
     s = c.execute('SELECT name_ar,name_en,slug FROM stores WHERE id=?',(row['store_id'],)).fetchone()
     d['store_name_ar'], d['store_name_en'], d['store_slug'] = s['name_ar'],s['name_en'],s['slug']
@@ -101,8 +101,8 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
                                    (item['quantity'],now(),item['id'],item['quantity']))
                 if result.rowcount!=1:
                     fail('stock',409)
-                c.execute('''INSERT INTO order_items(seller_order_id,product_id,title_ar,title_en,unit_price_fils,quantity,commission_bps,commission_fils,image_url)
-                  VALUES(?,?,?,?,?,?,?,?,?)''',(sub,item['id'],item['title_ar'],item['title_en'],item['price_fils'],item['quantity'],bps,amount,item['image_url']))
+                c.execute('''INSERT INTO order_items(seller_order_id,product_id,title_ar,title_en,unit_price_fils,quantity,commission_bps,commission_fils,image_url,condition,condition_note)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?)''',(sub,item['id'],item['title_ar'],item['title_en'],item['price_fils'],item['quantity'],bps,amount,item['image_url'],item['condition'],item['condition_note']))
                 c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
                           (item['id'],user['id'],-item['quantity'],'sale',sub,now()))
             c.execute('INSERT INTO order_events(seller_order_id,actor_id,to_status,created_at) VALUES(?,?,?,?)',(sub,user['id'],'new',now()))
