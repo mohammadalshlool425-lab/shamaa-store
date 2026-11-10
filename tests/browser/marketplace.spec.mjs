@@ -20,7 +20,17 @@ async function login(page,role,{destination='/account'}={}){
  if(destination!=='/account')await page.goto(destination);
  return u;
 }
-async function assertNoOverflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
+async function assertNoOverflow(page){
+ const metrics=await page.evaluate(()=>{
+  const viewport=innerWidth;
+  const offenders=[...document.querySelectorAll('body *')].map(el=>{
+   const r=el.getBoundingClientRect(),style=getComputedStyle(el);
+   return {tag:el.tagName,selector:(el.id?'#'+el.id:'')+(typeof el.className==='string'&&el.className?'.'+el.className.trim().split(/\\s+/).join('.'):''),left:Math.round(r.left),right:Math.round(r.right),width:Math.round(r.width),position:style.position};
+  }).filter(x=>x.right>viewport+1||x.left< -1).sort((a,b)=>b.right-a.right).slice(0,8);
+  return {viewport,documentWidth:document.documentElement.scrollWidth,offenders};
+ });
+ expect(metrics.documentWidth<=metrics.viewport,JSON.stringify(metrics)).toBe(true);
+}
 async function accessible(page){
  const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']).analyze();
  expect(results.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);
@@ -32,7 +42,15 @@ test('Arabic/English storefront, real search, stores, saved items and keyboard d
  await expect(page.locator('html')).toHaveAttribute('dir','rtl');
  await expect(page.locator('.product-card')).toHaveCount(8);
  await page.locator('.product-card').first().scrollIntoViewIfNeeded();
- await page.evaluate(()=>Promise.all([...document.querySelectorAll('.product-card img')].slice(0,4).map(i=>i.decode())));
+ await page.evaluate(async()=>{
+  const images=[...document.querySelectorAll('.product-card img')].slice(0,4);
+  for(const image of images){
+   image.loading='eager';
+   if(!image.complete)await new Promise((resolve,reject)=>{image.addEventListener('load',resolve,{once:true});image.addEventListener('error',()=>reject(new Error('Could not load '+image.currentSrc)),{once:true});});
+   if(!image.naturalWidth)throw new Error('Image has no decoded pixels: '+image.currentSrc);
+   await image.decode();
+  }
+ });
  await accessible(page);
  await page.locator('.product-card [data-action=favorite]').first().click();
  await page.goto('/favorites');await expect(page.locator('.product-card')).toHaveCount(1);
@@ -99,14 +117,29 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await seller.locator('#description_en').fill('Generated product details for testing a real application flow.');
  await seller.locator('#sku').fill('GENERATED-LAMP');await seller.locator('#price').fill('17.125');await seller.locator('#stock').fill('4');
  await seller.locator('#product-image').setInputFiles('data/browser-tests/product.png');
+ const extraImage=await seller.evaluate(()=>{
+  const canvas=document.createElement('canvas');canvas.width=48;canvas.height=48;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#315b42';ctx.fillRect(0,0,48,48);
+  ctx.fillStyle='#e8c78d';ctx.fillRect(8,8,32,32);
+  return canvas.toDataURL('image/png').split(',')[1];
+ });
+ await seller.locator('#gallery-images').setInputFiles([{
+  name:'extra-gallery-image.png',mimeType:'image/png',buffer:Buffer.from(extraImage,'base64')
+ }]);
  await seller.locator('#product-form button[type=submit]').click();
  await expect(seller.locator('tbody .pill')).toHaveText('قيد المراجعة');
  await admin.goto('/admin?tab=products');const product=admin.locator('.review-card').filter({hasText:'Isolated test lamp'});
+ await expect(product.locator('.review-gallery a')).toHaveCount(2);
  await product.locator('button[value=approve]').click();await expect(product.locator('.pill')).toHaveText('نشط');
  await seller.reload();await expect(seller.locator('tbody .pill')).toHaveText('نشط');
  await seller.locator('[data-action=stock]').click();await seller.locator('#new-stock').fill('7');await seller.locator('#stock-form button[type=submit]').click();
  await expect(seller.locator('tbody tr td').nth(3)).toHaveText('٧');
  await seller.goto('/store/isolated-browser-store');await expect(seller.locator('.product-card')).toHaveCount(1);
+ await seller.locator('.product-card .product-name').click();
+ await expect(seller.locator('.detail-thumbnails button')).toHaveCount(2);
+ const primarySrc=await seller.locator('#detail-image').getAttribute('src');
+ await seller.locator('.detail-thumbnails button').nth(1).click();
+ await expect(seller.locator('#detail-image')).not.toHaveAttribute('src',primarySrc);
  await accessible(seller);
  await admin.goto('/admin?tab=settings');await expect(admin.locator('#commission-percent')).toHaveValue('5');await accessible(admin);
  await admin.locator('#category-commission-id').selectOption('home');await expect(admin.locator('#category-percent')).toHaveValue('');
@@ -136,7 +169,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.3');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();

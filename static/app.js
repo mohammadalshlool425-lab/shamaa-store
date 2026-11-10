@@ -461,7 +461,7 @@ document.addEventListener('submit',async e=>{
     const mediaId=await uploadMedia(file);
     if(mediaId&&!galleryIds.includes(mediaId))galleryIds.push(mediaId);
    }
-   galleryIds=galleryIds.slice(0,8);
+   galleryIds=Array.from(new Set(galleryIds)).slice(0,8);
    if(!mediaId&&galleryIds.length)mediaId=galleryIds[0];
    const body={category_id:v('category_id'),title_ar:v('title_ar'),title_en:v('title_en'),description_ar:v('description_ar'),description_en:v('description_en'),sku:v('sku'),price_fils:fils(v('price')),compare_at_fils:v('compare_at')?fils(v('compare_at')):null,stock:Number(v('stock')),media_id:mediaId,condition:v('condition'),condition_note:v('condition_note'),status:v('status'),expected_version:S.editing?.version||null};
    if(body.status==='pending'&&!mediaId)throw new Error(tr('أضف صورة قبل الإرسال للمراجعة.','Add an image before submitting for review.'));
