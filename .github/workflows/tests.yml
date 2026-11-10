@@ -89,6 +89,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0002_product_condition.sql
       - name: Apply phase 2 product image gallery migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0003_product_images.sql
+      - name: Apply phase 2 product variant migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0004_product_variants.sql
       - name: Verify schema, RLS, append-only guards and core constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/schema_contract.sql
       - name: Run Psycopg 3 adapter integration contract

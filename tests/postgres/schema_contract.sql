@@ -16,8 +16,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 20 OR rls_count <> 20 OR forced_count <> 20 THEN
-    RAISE EXCEPTION 'Expected 20 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 21 OR rls_count <> 21 OR forced_count <> 21 THEN
+    RAISE EXCEPTION 'Expected 21 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -267,5 +267,35 @@ BEGIN
   ) INTO gallery_public_grant;
   IF gallery_public_grant THEN
     RAISE EXCEPTION 'Product gallery must not have PUBLIC table grants';
+  END IF;
+END $$;
+
+-- Phase 2 batch 3: variants are server-only data under FORCE RLS and no policies.
+DO $$
+DECLARE
+  variants_rls boolean;
+  variants_force boolean;
+  variants_policy_count integer;
+  variant_columns integer;
+BEGIN
+  SELECT c.relrowsecurity,c.relforcerowsecurity
+    INTO variants_rls,variants_force
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND c.relname='product_variants';
+  IF variants_rls IS DISTINCT FROM true OR variants_force IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Product variants must have ENABLE and FORCE RLS';
+  END IF;
+  SELECT count(*) INTO variants_policy_count
+    FROM pg_policies WHERE schemaname='shamaa_app' AND tablename='product_variants';
+  IF variants_policy_count <> 0 THEN
+    RAISE EXCEPTION 'Product variants must remain private until reviewed RLS policies exist';
+  END IF;
+  SELECT count(*) INTO variant_columns
+    FROM information_schema.columns
+   WHERE table_schema='shamaa_app'
+     AND ((table_name='carts' AND column_name IN ('variant_id','variant_key'))
+       OR (table_name='order_items' AND column_name IN ('variant_id','variant_key','variant_sku','variant_attributes')));
+  IF variant_columns <> 6 THEN
+    RAISE EXCEPTION 'Expected six variant-aware cart/order columns; found %',variant_columns;
   END IF;
 END $$;

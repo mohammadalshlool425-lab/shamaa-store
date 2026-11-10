@@ -263,8 +263,8 @@ class Database:
             if version == 3:
                 migration = MIGRATION_DIR / '0004_product_variants.sql'
                 try:
-                    c.executescript('BEGIN IMMEDIATE;\\n' + migration.read_text(encoding='utf-8')
-                                    + '\\nPRAGMA user_version=4; COMMIT;')
+                    c.executescript('BEGIN IMMEDIATE;\n' + migration.read_text(encoding='utf-8')
+                                    + '\nPRAGMA user_version=4; COMMIT;')
                 except BaseException:
                     if c.in_transaction:
                         c.rollback()
