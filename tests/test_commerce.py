@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import secrets
 import pytest
 from server.commerce import commission
+from conftest import png_bytes
 
 
 def create_order(market):
@@ -178,3 +179,76 @@ def test_cart_ownership_and_input_validation(market):
     f.cart(market['buyer'],market['p'])
     other=f.user()['client'];assert other.get('/api/cart').json()['quantity']==0
     assert client.put('/api/cart',json={'product_id':market['p']['id'],'quantity':0}).json()['quantity']==0
+
+def test_used_item_condition_is_required_public_and_snapshotted_in_order(factory):
+    seller = factory.seller()
+    upload = seller["client"].post(
+        "/api/seller/media",
+        files={"file": ("used-item.png", png_bytes(), "image/png")},
+    )
+    assert upload.status_code == 201
+
+    body = {
+        "category_id": "home",
+        "title_ar": "كرسي خشبي مستعمل",
+        "title_en": "Used wooden chair",
+        "description_ar": "كرسي مستعمل بحالة جيدة مع آثار استخدام بسيطة.",
+        "description_en": "A used chair in good condition with minor signs of wear.",
+        "price_fils": 18000,
+        "stock": 1,
+        "sku": "USED-CHAIR-01",
+        "media_id": upload.json()["id"],
+        "condition": "used",
+    }
+    missing_note = seller["client"].post("/api/seller/products", json=body)
+    assert missing_note.status_code == 422
+
+    body["condition_note"] = "خدوش بسيطة على الأرجل، والهيكل ثابت وسليم."
+    created = seller["client"].post("/api/seller/products", json=body)
+    assert created.status_code == 201, created.text
+    product = created.json()["product"]
+    assert product["condition"] == "used"
+    assert product["condition_note"] == body["condition_note"]
+
+    with factory.db.transaction() as connection:
+        connection.execute("UPDATE products SET status='active' WHERE id=?", (product["id"],))
+
+    public = factory.client().get(f"/api/products/{product['id']}")
+    assert public.status_code == 200
+    assert public.json()["product"]["condition"] == "used"
+    assert public.json()["product"]["condition_note"] == body["condition_note"]
+
+    buyer = factory.user()
+    quote = factory.cart(buyer, product)
+    result, _, _ = factory.checkout(buyer, quote)
+    assert result.status_code == 201, result.text
+    order_item = result.json()["order"]["shipments"][0]["items"][0]
+    assert order_item["condition"] == "used"
+    assert order_item["condition_note"] == body["condition_note"]
+
+    with factory.db.transaction() as connection:
+        connection.execute(
+            "UPDATE products SET condition_note=? WHERE id=?",
+            ("وصف إعلان لاحق مختلف بعد البيع.", product["id"]),
+        )
+    orders = buyer["client"].get("/api/orders")
+    assert orders.status_code == 200
+    saved_item = orders.json()["orders"][0]["shipments"][0]["items"][0]
+    assert saved_item["condition"] == "used"
+    assert saved_item["condition_note"] == body["condition_note"]
+
+
+def test_new_product_rejects_used_condition_note(factory):
+    seller = factory.seller()
+    product = factory.product(seller)
+    payload = {
+        key: product[key]
+        for key in (
+            "category_id", "title_ar", "title_en", "description_ar", "description_en",
+            "price_fils", "stock", "sku", "media_id",
+        )
+    }
+    payload["sku"] = "NEW-WITH-NOTE"
+    payload["condition_note"] = "هذه الملاحظة لا تخص منتجًا جديدًا."
+    response = seller["client"].post("/api/seller/products", json=payload)
+    assert response.status_code == 422

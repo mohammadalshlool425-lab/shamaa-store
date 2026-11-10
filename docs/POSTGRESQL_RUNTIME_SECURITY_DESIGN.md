@@ -112,3 +112,13 @@ test proves SQL/application compatibility only. It is NOT evidence that
 RLS policies, runtime grants, or cross-user isolation work. Those remain Gate B
 and Gate C requirements and must be tested with a dedicated non-owner
 NOBYPASSRLS role before any production cutover.
+
+## Gate A3 — used-item data migration
+
+Migration `0002_product_condition.sql` adds `condition` and `condition_note`
+to listings and order-line snapshots. Existing listings default to `new`;
+used listings require an honest condition description in server-side validation.
+The order stores the condition facts present at checkout so later listing edits
+cannot rewrite what a buyer agreed to purchase. The migration changes no role,
+grant, RLS policy, or Supabase Data API exposure. SQLite's matching numbered
+migration upgrades existing version-1 databases transactionally.

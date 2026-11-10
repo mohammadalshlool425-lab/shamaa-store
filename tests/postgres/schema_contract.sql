@@ -221,3 +221,21 @@ END $$;
 ROLLBACK;
 
 SELECT 'SHAM''A PostgreSQL negative-constraint contract: PASS' AS result;
+
+-- Phase 2 batch 1: condition fields exist on listings and immutable order snapshots.
+DO $$
+DECLARE
+  condition_columns integer;
+BEGIN
+  SELECT count(*) INTO condition_columns
+    FROM information_schema.columns
+   WHERE table_schema='shamaa_app'
+     AND (
+       (table_name='products' AND column_name IN ('condition','condition_note'))
+       OR
+       (table_name='order_items' AND column_name IN ('condition','condition_note'))
+     );
+  IF condition_columns <> 4 THEN
+    RAISE EXCEPTION 'Expected condition and condition_note on products and order_items; found % columns', condition_columns;
+  END IF;
+END $$;

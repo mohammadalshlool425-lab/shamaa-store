@@ -85,6 +85,8 @@ jobs:
           python -m pip check
       - name: Apply isolated PostgreSQL foundation
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0001_shamaa_app_foundation.sql
+      - name: Apply phase 2 product condition migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0002_product_condition.sql
       - name: Verify schema, RLS, append-only guards and core constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/schema_contract.sql
       - name: Run Psycopg 3 adapter integration contract

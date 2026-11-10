@@ -89,7 +89,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
-    assert adapter.schema_version() == 1
+    assert adapter.schema_version() == 2
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")
@@ -186,3 +186,30 @@ def test_cursor_contract_exposes_affected_row_count(tmp_path):
         )
         assert missing.rowcount == 0
 
+def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
+    from server.database import SCHEMA_PATH
+
+    path = tmp_path / "existing-v1.sqlite3"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        SCHEMA_PATH.read_text(encoding="utf-8")
+        + "\nINSERT INTO settings(key,value) VALUES('migration-fixture','preserved');"
+        + "\nPRAGMA user_version=1;"
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = Database(path)
+    assert db.schema_version() == 1
+    db.initialize()
+    assert db.schema_version() == 2
+
+    with db.read() as connection:
+        assert connection.execute(
+            "SELECT value FROM settings WHERE key='migration-fixture'"
+        ).fetchone()[0] == "preserved"
+        for table in ("products", "order_items"):
+            columns = {row["name"]: row for row in connection.execute(f"PRAGMA table_info({table})")}
+            assert columns["condition"]["notnull"] == 1
+            assert columns["condition_note"]["notnull"] == 1
+            assert columns["condition"]["dflt_value"] == "'new'"
