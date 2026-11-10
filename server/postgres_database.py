@@ -20,7 +20,7 @@ SCHEMA_TABLES = (
     "users", "sessions", "auth_tokens", "rate_limits", "categories", "stores",
     "media", "products", "carts", "orders", "seller_orders", "order_items",
     "order_events", "inventory_movements", "ledger", "notifications",
-    "audit_log", "settings", "mail_outbox", "product_images",
+    "audit_log", "settings", "mail_outbox", "product_images", "product_variants",
 )
 
 
@@ -108,7 +108,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 3 only when all foundation, condition and gallery columns exist."""
+        """Return 4 only when foundation, condition, gallery and variant columns exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -130,14 +130,27 @@ class PostgresDatabase:
                      AND column_name IN ('product_id','media_id','position','created_at')""",
                 (self.schema,),
             ).fetchone()
+            variant_table = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.tables
+                   WHERE table_schema=? AND table_name='product_variants' AND table_type='BASE TABLE'""",
+                (self.schema,),
+            ).fetchone()
+            variant_columns = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND table_name='carts'
+                     AND column_name IN ('variant_id','variant_key')""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
-                    and gallery and int(gallery[0]) == 4)
-        return 3 if complete else 0
+                    and gallery and int(gallery[0]) == 4
+                    and variant_table and int(variant_table[0]) == 1
+                    and variant_columns and int(variant_columns[0]) == 2)
+        return 4 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 3:
+        if self.schema_version() != 4:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
                 "apply all reviewed Supabase migrations before starting the app."
