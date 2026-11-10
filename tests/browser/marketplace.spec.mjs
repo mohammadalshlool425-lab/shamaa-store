@@ -78,6 +78,7 @@ test('phone layout has no overflow and the two-store guest bag becomes a persist
  await page.locator('[data-action=add-cart][data-id="1"]').click();
  await expect(page.locator('#cart-count')).toHaveText('١');
  await page.locator('[data-action=add-cart][data-id="4"]').click();
+ await expect(page.locator('#cart-count')).toHaveText('٢');
  await page.goto('/cart');await expect(page.locator('.cart-group')).toHaveCount(2);await assertNoOverflow(page);
  await page.reload();await expect(page.locator('.cart-group')).toHaveCount(2);
  await page.locator('[data-action=checkout]').click();
