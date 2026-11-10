@@ -75,12 +75,12 @@ def my_products(request: Request,user=Depends(seller_user)):
     with request.app.state.db.read() as c:
         store = own_store(c,user)
         rows = c.execute(PRODUCT_SQL+' WHERE p.store_id=? ORDER BY p.id DESC',(store['id'],)).fetchall()
-    result = []
-    for row in rows:
-        item = product_dict(row,True)
-        variants = c.execute("SELECT * FROM product_variants WHERE product_id=? ORDER BY id",(row['id'],)).fetchall()
-        item['variants'] = [variant_dict(v,True) for v in variants]
-        result.append(item)
+        result = []
+        for row in rows:
+            item = product_dict(row,True)
+            variants = c.execute("SELECT * FROM product_variants WHERE product_id=? ORDER BY id",(row['id'],)).fetchall()
+            item['variants'] = [variant_dict(v,True) for v in variants]
+            result.append(item)
     return {'products':result}
 
 
