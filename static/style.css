@@ -54,3 +54,8 @@ a[href="/search?sort=recent"],a[href="/?collection=featured"]{display:inline-fle
 .variant-editor-row{border:1px solid var(--line);border-radius:10px;padding:13px;margin:10px 0;background:#fff}
 .variant-editor-row .form-row{margin-bottom:0}
 .variant-editor-row input{width:100%}
+
+.variant-review{margin:10px 0;padding:10px 13px;border:1px solid var(--line);border-radius:8px;background:#fafbf8}
+.variant-review strong{font-size:.8125rem}
+.variant-review ul{margin:6px 0 0;padding-inline-start:20px}
+.variant-review li{font-size:.75rem;line-height:1.8;margin:2px 0;overflow-wrap:anywhere}

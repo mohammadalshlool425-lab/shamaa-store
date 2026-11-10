@@ -134,6 +134,48 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await seller.reload();await expect(seller.locator('tbody .pill')).toHaveText('نشط');
  await seller.locator('[data-action=stock]').click();await seller.locator('#new-stock').fill('7');await seller.locator('#stock-form button[type=submit]').click();
  await expect(seller.locator('tbody tr td').nth(3)).toHaveText('٧');
+
+ // Configure two physical variants with independent SKUs, prices and stock.
+ await seller.locator('button[data-action=variants]').click();
+ await seller.locator('#variants-form [data-action=add-variant-row]').click();
+ await seller.locator('#variants-form [data-action=add-variant-row]').click();
+ const variantRows=seller.locator('.variant-editor-row');
+ await expect(variantRows).toHaveCount(2);
+ await variantRows.nth(0).locator('[name=variant_sku]').fill('BROWSER-LAMP-WARM');
+ await variantRows.nth(0).locator('[name=variant_attributes]').fill('اللون=دافئ; المقاس=صغير');
+ await variantRows.nth(0).locator('[name=variant_price]').fill('17.125');
+ await variantRows.nth(0).locator('[name=variant_stock]').fill('3');
+ await variantRows.nth(1).locator('[name=variant_sku]').fill('BROWSER-LAMP-COOL');
+ await variantRows.nth(1).locator('[name=variant_attributes]').fill('اللون=بارد; المقاس=صغير');
+ await variantRows.nth(1).locator('[name=variant_price]').fill('18.125');
+ await variantRows.nth(1).locator('[name=variant_stock]').fill('4');
+ await seller.locator('#variants-form button[type=submit]').click();
+ await expect(seller.locator('tbody .pill')).toHaveText('قيد المراجعة');
+
+ await admin.goto('/admin?tab=products');
+ const variantProduct=admin.locator('.review-card').filter({hasText:'Isolated test lamp'});
+ await expect(variantProduct).toContainText('BROWSER-LAMP-WARM');
+ await expect(variantProduct).toContainText('BROWSER-LAMP-COOL');
+ await variantProduct.locator('button[value=approve]').click();
+ await expect(variantProduct.locator('.pill')).toHaveText('نشط');
+
+ const buyerContext=await browser.newContext({locale:'ar-JO'});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'buyer',{destination:'/store/isolated-browser-store'});
+ await buyer.locator('.product-card .product-name').click();
+ await buyer.locator('#detail-variant').selectOption({index:1});
+ await expect(buyer.locator('#variant-price-info')).toContainText('17.125');
+ await buyer.locator('[data-action=detail-add]').click();
+ await buyer.locator('#detail-variant').selectOption({index:2});
+ await expect(buyer.locator('#variant-price-info')).toContainText('18.125');
+ await buyer.locator('[data-action=detail-add]').click();
+ await buyer.goto('/cart');
+ await expect(buyer.locator('.cart-item')).toHaveCount(2);
+ await expect(buyer.locator('.cart-item')).toContainText('دافئ');
+ await expect(buyer.locator('.cart-item')).toContainText('بارد');
+ await accessible(buyer);
+ await buyerContext.close();
+
  await seller.goto('/store/isolated-browser-store');await expect(seller.locator('.product-card')).toHaveCount(1);
  await seller.locator('.product-card .product-name').click();
  await expect(seller.locator('.detail-thumbnails button')).toHaveCount(2);
@@ -169,12 +211,12 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.3');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.4');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
- const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return(await c.keys()).map(r=>new URL(r.url).pathname);});
+ const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.4');return(await c.keys()).map(r=>new URL(r.url).pathname);});
  expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);
