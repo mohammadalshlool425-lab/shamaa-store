@@ -108,7 +108,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 3 only when the foundation and product-image gallery migration exist."""
+        """Return 3 only when all foundation, condition and gallery columns exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -124,8 +124,15 @@ class PostgresDatabase:
                    )""",
                 (self.schema,),
             ).fetchone()
+            gallery = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND table_name='product_images'
+                     AND column_name IN ('product_id','media_id','position','created_at')""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
-                    and columns and int(columns[0]) == 4)
+                    and columns and int(columns[0]) == 4
+                    and gallery and int(gallery[0]) == 4)
         return 3 if complete else 0
 
     def initialize(self) -> None:

@@ -14,7 +14,7 @@ def test_psycopg_adapter_executes_portable_contract_against_postgresql():
     from server.postgres_database import PostgresDatabase
 
     db = PostgresDatabase(conninfo)
-    assert db.schema_version() == 2
+    assert db.schema_version() == 3
     db.initialize()
 
     # This table is test-only and is removed even if an assertion fails.

@@ -16,8 +16,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 19 OR rls_count <> 19 OR forced_count <> 19 THEN
-    RAISE EXCEPTION 'Expected 19 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 20 OR rls_count <> 20 OR forced_count <> 20 THEN
+    RAISE EXCEPTION 'Expected 20 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -237,5 +237,35 @@ BEGIN
      );
   IF condition_columns <> 4 THEN
     RAISE EXCEPTION 'Expected condition and condition_note on products and order_items; found % columns', condition_columns;
+  END IF;
+END $$;
+
+-- Phase 2 batch 2: the image gallery remains inaccessible until a future reviewed policy.
+DO $$
+DECLARE
+  gallery_rls boolean;
+  gallery_force boolean;
+  gallery_policy_count integer;
+  gallery_public_grant boolean;
+BEGIN
+  SELECT c.relrowsecurity,c.relforcerowsecurity
+    INTO gallery_rls,gallery_force
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND c.relname='product_images';
+  IF gallery_rls IS DISTINCT FROM true OR gallery_force IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Product gallery must have ENABLE and FORCE RLS';
+  END IF;
+  SELECT count(*) INTO gallery_policy_count
+    FROM pg_policies WHERE schemaname='shamaa_app' AND tablename='product_images';
+  IF gallery_policy_count <> 0 THEN
+    RAISE EXCEPTION 'Product gallery must remain closed until reviewed RLS policies are installed';
+  END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_class c, LATERAL aclexplode(COALESCE(c.relacl, acldefault('r',c.relowner))) acl
+     WHERE c.oid='shamaa_app.product_images'::regclass
+       AND acl.grantee=0
+  ) INTO gallery_public_grant;
+  IF gallery_public_grant THEN
+    RAISE EXCEPTION 'Product gallery must not have PUBLIC table grants';
   END IF;
 END $$;

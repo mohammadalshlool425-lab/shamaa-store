@@ -89,7 +89,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
-    assert adapter.schema_version() == 2
+    assert adapter.schema_version() == 3
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")
@@ -202,7 +202,7 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
     db = Database(path)
     assert db.schema_version() == 1
     db.initialize()
-    assert db.schema_version() == 2
+    assert db.schema_version() == 3
 
     with db.read() as connection:
         assert connection.execute(
@@ -213,3 +213,7 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
             assert columns["condition"]["notnull"] == 1
             assert columns["condition_note"]["notnull"] == 1
             assert columns["condition"]["dflt_value"] == "'new'"
+        gallery = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='product_images'"
+        ).fetchone()[0]
+        assert gallery == 1

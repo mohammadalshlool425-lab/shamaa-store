@@ -102,6 +102,7 @@ class ProductInput(Input):
 
 class ProductImagesInput(Input):
     media_ids: list[StrictInt] = Field(min_length=1, max_length=8)
+    expected_version: int = Field(ge=1, strict=True)
 
     @field_validator('media_ids')
     @classmethod

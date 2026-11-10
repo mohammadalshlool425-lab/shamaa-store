@@ -167,6 +167,8 @@ def set_product_images(product_id: int,body: schemas.ProductImagesInput,
                             (product_id,store['id'])).fetchone()
         if not product:
             fail('not_found',404)
+        if product['version'] != body.expected_version:
+            fail('invalid_status',409)
         placeholders = ','.join('?' for _ in body.media_ids)
         owned = c.execute(
             f'SELECT id FROM media WHERE owner_id=? AND id IN ({placeholders})',
@@ -180,10 +182,10 @@ def set_product_images(product_id: int,body: schemas.ProductImagesInput,
             c.execute('INSERT INTO product_images(product_id,media_id,position,created_at) VALUES(?,?,?,?)',
                       (product_id,media_id,position,stamp))
         c.execute('''UPDATE products SET media_id=?,status=CASE WHEN status='active' THEN 'pending' ELSE status END,
-          review_note='',updated_at=?,version=version+1 WHERE id=?''',
-                  (body.media_ids[0],stamp,product_id))
+          review_note='',updated_at=?,version=version+1 WHERE id=? AND version=?''',
+                  (body.media_ids[0],stamp,product_id,body.expected_version))
         audit(c,user['id'],'product_gallery_updated','product',product_id)
-    return {'ok':True,'media_ids':body.media_ids}
+    return {'ok':True,'media_ids':body.media_ids,'version':body.expected_version + 1}
 
 
 @router.patch('/products/{product_id}/stock')
