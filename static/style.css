@@ -47,3 +47,10 @@ body.dialog-open{overflow:hidden}html[dir=ltr] .hero-copy h1{font-size:2.625rem;
 .mobile-only{min-width:26px;min-height:26px}
 .save-product{width:36px;height:36px;min-width:36px;min-height:36px}
 a[href="/search?sort=recent"],a[href="/?collection=featured"]{display:inline-flex;align-items:center;min-height:26px}
+
+.variant-picker{margin:15px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.variant-picker select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:8px;padding:8px}
+.variant-label{font-weight:700;color:var(--green);font-size:.8125rem}
+.variant-editor-row{border:1px solid var(--line);border-radius:10px;padding:13px;margin:10px 0;background:#fff}
+.variant-editor-row .form-row{margin-bottom:0}
+.variant-editor-row input{width:100%}

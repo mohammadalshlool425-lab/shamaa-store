@@ -7,7 +7,7 @@ const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function readLocal(key,fallback) { try { return JSON.parse(localStorage.getItem(key))??fallback; } catch { return fallback; } }
 function saveLocal(key,value) { try { localStorage.setItem(key,JSON.stringify(value)); } catch { /* private browsing may disable storage */ } }
-const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,detailImages:[],detailImageIndex:0,editing:null,editingImages:[],editingImagesInitial:[],store:null,afterAuth:null,checkout:null,install:null};
+const S={boot:null,user:null,cart:{groups:[],quantity:0},guest:readLocal('shamaa.cart',{}),favorites:readLocal('shamaa.favorites',[]),products:new Map(),route:0,quantity:1,detail:null,detailImages:[],detailImageIndex:0,detailVariants:[],selectedVariantId:null,variantDraft:[],editing:null,editingImages:[],editingImagesInitial:[],store:null,afterAuth:null,checkout:null,install:null};
 if(!Array.isArray(S.favorites)) S.favorites=[];
 if(!S.guest||typeof S.guest!=='object'||Array.isArray(S.guest)) S.guest={};
 const main=$('#main');
@@ -75,7 +75,7 @@ function renderFooter(){
 }
 function renderProduct(p){
  S.products.set(p.id,p);const saved=S.favorites.includes(p.id);const discount=p.compare_at_fils?Math.floor((1-p.price_fils/p.compare_at_fils)*100):0;
- return `<article class="product-card"><div class="product-picture">${link('/product/'+p.id,`<img src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="640" height="640" loading="lazy" decoding="async">`)}<button class="save-product${saved?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${saved}" aria-label="${tr('حفظ','Save')} ${esc(field(p,'title'))}">${icon('heart')}</button>${discount?`<span class="discount">${tr('خصم','Save')} ${number(discount)}٪</span>`:''}${p.is_demo?`<span class="demo-tag">${tr('للمعاينة','Preview')}</span>`:''}</div><div class="product-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name')),'product-store')}${link('/product/'+p.id,esc(field(p,'title')),'product-name')}<span class="pill">${p.condition==='used'?tr('مستعمل','Used'):tr('جديد','New')}</span><div class="product-bottom"><div class="product-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)}</span>`:''}</div><button class="add-product" data-action="add-cart" data-id="${p.id}" aria-label="${tr('أضف للسلة:','Add to bag:')} ${esc(field(p,'title'))}" ${p.stock<=0?'disabled':''}>${icon(p.stock?'bag':'close')}</button></div></div></article>`;
+ return `<article class="product-card"><div class="product-picture">${link('/product/'+p.id,`<img src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="640" height="640" loading="lazy" decoding="async">`)}<button class="save-product${saved?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${saved}" aria-label="${tr('حفظ','Save')} ${esc(field(p,'title'))}">${icon('heart')}</button>${discount?`<span class="discount">${tr('خصم','Save')} ${number(discount)}٪</span>`:''}${p.is_demo?`<span class="demo-tag">${tr('للمعاينة','Preview')}</span>`:''}</div><div class="product-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name')),'product-store')}${link('/product/'+p.id,esc(field(p,'title')),'product-name')}<span class="pill">${p.condition==='used'?tr('مستعمل','Used'):tr('جديد','New')}</span><div class="product-bottom"><div class="product-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)}</span>`:''}</div><button class="add-product" data-action="${p.has_variants?'choose-variant':'add-cart'}" data-id="${p.id}" aria-label="${p.has_variants?tr('اختر متغير المنتج:','Choose product options:'):tr('أضف للسلة:','Add to bag:')} ${esc(field(p,'title'))}" ${!p.has_variants&&p.stock<=0?'disabled':''}>${icon(p.has_variants?'sliders-horizontal':(p.stock?'bag':'close'))}</button></div></div></article>`;
 }
 function renderStore(s){return link('/store/'+s.slug,`<div class="store-avatar ${esc(s.accent)}">${esc(field(s,'name').slice(0,1))}</div><div><h3>${esc(field(s,'name'))}</h3><p>${esc(cityName(s.city))} · ${s.is_demo?tr('متجر توضيحي','Illustrative store'):tr('متجر محلي','Local store')}</p><span class="store-meta">${icon('package','small')}${number(s.product_count||0)} ${tr('منتجات','products')}</span></div>${icon('arrow','directional')}`,'store-card');}
 function grid(products){return products.length?`<div class="products-grid">${products.map(renderProduct).join('')}</div>`:empty(tr('بدايات جميلة في الطريق','Good finds are on their way'),tr('لا توجد منتجات مطابقة حاليًا. جرّب فئة أخرى أو افتح متجرك لتكون من أوائل البائعين.','No matching products yet. Try another category or open your store to become one of our first sellers.'),link('/search',tr('تصفّح المنتجات','Browse products'),'btn btn-outline'));}
@@ -103,8 +103,8 @@ async function searchView(route){
 
 async function productView(id,route){
  const data=await api('/api/products/'+id);if(route!==S.route)return;
- const p=data.product;S.products.set(p.id,p);S.detail=p;S.detailImages=data.images?.length?data.images:[{url:p.image_url,media_id:p.media_id||null}];S.detailImageIndex=0;S.quantity=1;title(field(p,'title'));
- main.innerHTML=`<div class="container">${breadcrumb([{text:field(p,'category_name'),href:'/search?category='+p.category_id},{text:field(p,'title')}])}<section class="product-detail"><div class="detail-photo"><img id="detail-image" src="${esc((S.detailImages[0]?.url||p.image_url).replace('/480.webp','/960.webp'))}" alt="${esc(field(p,'title'))}" width="640" height="610"><button class="save-product${S.favorites.includes(p.id)?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${S.favorites.includes(p.id)}" aria-label="${tr('حفظ المنتج','Save this product')}">${icon('heart')}</button>${p.is_demo?`<span class="demo-tag">${tr('صورة مولّدة ومنتج توضيحي','AI-generated image · illustrative product')}</span>`:''}</div>${S.detailImages.length>1?`<div class="detail-thumbnails" aria-label="${tr('صور المنتج','Product images')}">${S.detailImages.map((image,index)=>`<button type="button" data-action="gallery-image" data-index="${index}" aria-pressed="${index===0}" aria-label="${tr('الصورة','Image')} ${index+1}"><img src="${esc(image.url)}" alt=""></button>`).join('')}</div>`:''}<div class="detail-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name'))+icon('arrow','directional small'),'detail-store')}<h1>${esc(field(p,'title'))}</h1><div class="detail-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)} ${currency()}</span><span class="pill">${tr('وفّر','Save')} ${money(p.compare_at_fils-p.price_fils)} ${currency()}</span>`:''}</div><div class="notice">${icon('info')}<p><strong>${p.condition==='used'?tr('منتج مستعمل','Used item'):tr('منتج جديد','New item')}</strong>${p.condition==='used'?' · '+esc(p.condition_note):''}</p></div><p class="detail-description">${esc(field(p,'description'))}</p><div class="stock-line${p.stock?'':' out'}">${icon(p.stock?'check':'info')}${p.stock?tr('متوفر','In stock')+' · '+number(p.stock)+' '+tr('قطعة','available'):tr('غير متوفر حاليًا','Currently out of stock')}</div><div class="buy-controls"><div class="quantity-control"><button data-action="detail-minus" aria-label="${tr('تقليل الكمية','Decrease quantity')}">${icon('minus')}</button><span id="detail-quantity" aria-live="polite">${number(1)}</span><button data-action="detail-plus" aria-label="${tr('زيادة الكمية','Increase quantity')}">${icon('plus')}</button></div><button class="btn btn-primary" data-action="detail-add" data-id="${p.id}" ${p.stock?'':'disabled'}>${icon('bag')}${tr('أضف إلى السلة','Add to bag')}</button></div><div class="delivery-info"><div class="delivery-row">${icon('truck')}<div>${tr('التوصيل من','Delivery from')} ${esc(cityName(p.city))} · ${money(p.shipping_fils)} ${currency()}<small>${tr('المدة التقديرية:','Estimated delivery:')} ${number(p.delivery_days)} ${tr('أيام، يحددها المتجر لكل شحنة.','days, set by this store for each shipment.')}</small></div></div><div class="delivery-row">${icon('wallet')}<div>${tr('الدفع عند الاستلام','Cash on delivery')}<small>${tr('لا تحتاج إلى إدخال أي بيانات بطاقة.','No card details are needed.')}</small></div></div><div class="delivery-row">${icon('help')}<div>${link('/help#returns',tr('تعرّف على سياسة الإلغاء والإرجاع','About cancellation and returns'))}<small>${tr('راجع تفاصيل المنتج قبل تأكيد الطلب.','Review the product details before ordering.')}</small></div></div></div></div></section>${data.similar.length?`<section class="section"><div class="section-heading"><h2>${tr('قد تعجبك أيضًا','You might also love')}</h2></div>${grid(data.similar)}</section>`:''}</div>`;
+ const p=data.product;S.products.set(p.id,p);S.detail=p;S.detailVariants=data.variants||[];S.variants.set(p.id,S.detailVariants);S.selectedVariantId=null;S.detailImages=data.images?.length?data.images:[{url:p.image_url,media_id:p.media_id||null}];S.detailImageIndex=0;S.quantity=1;title(field(p,'title'));
+ main.innerHTML=`<div class="container">${breadcrumb([{text:field(p,'category_name'),href:'/search?category='+p.category_id},{text:field(p,'title')}])}<section class="product-detail"><div class="detail-photo"><img id="detail-image" src="${esc((S.detailImages[0]?.url||p.image_url).replace('/480.webp','/960.webp'))}" alt="${esc(field(p,'title'))}" width="640" height="610"><button class="save-product${S.favorites.includes(p.id)?' saved':''}" data-action="favorite" data-id="${p.id}" aria-pressed="${S.favorites.includes(p.id)}" aria-label="${tr('حفظ المنتج','Save this product')}">${icon('heart')}</button>${p.is_demo?`<span class="demo-tag">${tr('صورة مولّدة ومنتج توضيحي','AI-generated image · illustrative product')}</span>`:''}</div>${S.detailImages.length>1?`<div class="detail-thumbnails" aria-label="${tr('صور المنتج','Product images')}">${S.detailImages.map((image,index)=>`<button type="button" data-action="gallery-image" data-index="${index}" aria-pressed="${index===0}" aria-label="${tr('الصورة','Image')} ${index+1}"><img src="${esc(image.url)}" alt=""></button>`).join('')}</div>`:''}<div class="detail-info">${link('/store/'+p.store_slug,icon('store')+esc(field(p,'store_name'))+icon('arrow','directional small'),'detail-store')}<h1>${esc(field(p,'title'))}</h1><div class="detail-prices">${price(p.price_fils)}${p.compare_at_fils?`<span class="old-price">${money(p.compare_at_fils)} ${currency()}</span><span class="pill">${tr('وفّر','Save')} ${money(p.compare_at_fils-p.price_fils)} ${currency()}</span>`:''}</div>${S.detailVariants.length?'<div class="form-field variant-picker"><label for="detail-variant">'+tr('اختر اللون أو المقاس','Choose colour or size')+'</label><select id="detail-variant" required><option value="">'+tr('اختر الخيار المناسب','Select an option')+'</option>'+S.detailVariants.map(option=>'<option value="'+option.id+'">'+esc(Object.values(option.attributes).join(' · '))+' — '+money(option.price_fils)+' '+currency()+' · '+number(option.stock)+' '+tr('متاح','available')+'</option>').join('')+'</select><p class="small-text" id="variant-price-info">'+tr('اختر المتغير لعرض سعره ومخزونه.','Choose an option to see its price and stock.')+'</p></div>':''}<div class="notice">${icon('info')}<p><strong>${p.condition==='used'?tr('منتج مستعمل','Used item'):tr('منتج جديد','New item')}</strong>${p.condition==='used'?' · '+esc(p.condition_note):''}</p></div><p class="detail-description">${esc(field(p,'description'))}</p><div class="stock-line${p.stock?'':' out'}" id="detail-stock-line">${icon(p.stock?'check':'info')}${p.stock?tr('متوفر','In stock')+' · '+number(p.stock)+' '+tr('قطعة','available'):tr('غير متوفر حاليًا','Currently out of stock')}</div><div class="buy-controls"><div class="quantity-control"><button data-action="detail-minus" aria-label="${tr('تقليل الكمية','Decrease quantity')}">${icon('minus')}</button><span id="detail-quantity" aria-live="polite">${number(1)}</span><button data-action="detail-plus" aria-label="${tr('زيادة الكمية','Increase quantity')}">${icon('plus')}</button></div><button class="btn btn-primary" data-action="detail-add" data-id="${p.id}" ${S.detailVariants.length?'disabled':(p.stock?'':'disabled')}>${icon('bag')}${tr('أضف إلى السلة','Add to bag')}</button></div><div class="delivery-info"><div class="delivery-row">${icon('truck')}<div>${tr('التوصيل من','Delivery from')} ${esc(cityName(p.city))} · ${money(p.shipping_fils)} ${currency()}<small>${tr('المدة التقديرية:','Estimated delivery:')} ${number(p.delivery_days)} ${tr('أيام، يحددها المتجر لكل شحنة.','days, set by this store for each shipment.')}</small></div></div><div class="delivery-row">${icon('wallet')}<div>${tr('الدفع عند الاستلام','Cash on delivery')}<small>${tr('لا تحتاج إلى إدخال أي بيانات بطاقة.','No card details are needed.')}</small></div></div><div class="delivery-row">${icon('help')}<div>${link('/help#returns',tr('تعرّف على سياسة الإلغاء والإرجاع','About cancellation and returns'))}<small>${tr('راجع تفاصيل المنتج قبل تأكيد الطلب.','Review the product details before ordering.')}</small></div></div></div></div></section>${data.similar.length?`<section class="section"><div class="section-heading"><h2>${tr('قد تعجبك أيضًا','You might also love')}</h2></div>${grid(data.similar)}</section>`:''}</div>`;
 }
 async function storesView(slug,route){
  if(!slug){const data=await api('/api/stores');if(route!==S.route)return;title(tr('اكتشف المتاجر','Discover local stores'));main.innerHTML=`<div class="container">${breadcrumb([{text:tr('المتاجر','Stores')}])}<div class="page-heading"><div><div class="eyebrow">${tr('حكايات من هنا','STORIES FROM HERE')}</div><h1>${tr('أهلًا بالمتاجر المحلية.','Meet the local stores.')}</h1><p>${tr('أسماء مختلفة، وأشياء تستحق أن تكتشفها.','Different stories. Thoughtful things to discover.')}</p></div>${link('/seller',tr('مكان لمتجرك','A place for your store')+icon('plus'),'btn btn-outline btn-small')}</div>${data.stores.length?`<div class="stores-grid">${data.stores.map(renderStore).join('')}</div>`:empty(tr('أول الحكاية','The beginning of a story'),tr('المتاجر الجديدة ستظهر هنا بعد مراجعتها.','New stores will appear here after review.'),link('/seller',tr('ابدأ البيع','Start selling'),'btn btn-primary'),'store')}</div>`;return;}
@@ -112,31 +112,103 @@ async function storesView(slug,route){
  const s=data.store;title(field(s,'name'));main.innerHTML=`<div class="container">${breadcrumb([{text:tr('المتاجر','Stores'),href:'/stores'},{text:field(s,'name')}])}<div class="store-cover ${esc(s.accent)}"><div class="store-avatar">${esc(field(s,'name').slice(0,1))}</div><div><h1>${esc(field(s,'name'))}</h1><p>${esc(field(s,'description'))}</p><div class="store-facts"><span>${icon('pin')}${esc(cityName(s.city))}</span><span>${icon('truck')}${tr('شحن','Shipping')} ${money(s.shipping_fils)} ${currency()}</span><span>${icon('clock')}${tr('تقديريًا','Estimated')} ${number(s.delivery_days)} ${tr('أيام','days')}</span>${s.is_demo?`<span>${tr('متجر للمعاينة، وليس بائعًا موثّقًا','Illustrative store, not a verified seller')}</span>`:''}</div></div></div><div class="section-heading"><h2>${tr('من رفوف المتجر','From the store')}</h2><span class="muted small-text">${number(products.total)} ${tr('منتج','products')}</span></div>${grid(products.products)}</div>`;
 }
 
+function guestLineKey(id,variantId=null){return String(id)+(variantId?':'+String(variantId):'');}
+function parseGuestLineKey(key){
+ const match=/^(\\d+)(?::(\\d+))?$/.exec(String(key));
+ return match?{productId:Number(match[1]),variantId:match[2]?Number(match[2]):null}:null;
+}
 function normalizeGuest(){
- const clean={};Object.entries(S.guest).slice(0,50).forEach(([id,qty])=>{if(/^\d+$/.test(id)&&Number.isInteger(qty)&&qty>0&&qty<100)clean[id]=qty;});S.guest=clean;
+ const clean={};
+ Object.entries(S.guest).slice(0,50).forEach(([key,qty])=>{
+  if(parseGuestLineKey(key)&&Number.isInteger(qty)&&qty>0&&qty<100)clean[key]=qty;
+ });
+ S.guest=clean;
 }
 async function getCart(){
  if(S.user){S.cart=await api('/api/cart');return S.cart;}
  normalizeGuest();const groups=new Map();
- const entries=await Promise.all(Object.entries(S.guest).map(async([id,quantity])=>{
-  try{const data=await api('/api/products/'+id);S.products.set(data.product.id,data.product);return {...data.product,quantity,line_total_fils:data.product.price_fils*quantity,available:true};}
-  catch{return {id:Number(id),quantity,title_ar:'منتج غير متاح',title_en:'Unavailable product',price_fils:0,line_total_fils:0,stock:0,available:false,image_url:'/static/images/placeholder.svg',store_id:0,store_name_ar:'غير متاح',store_name_en:'Unavailable',shipping_fils:0,delivery_days:0};}
+ const entries=await Promise.all(Object.entries(S.guest).map(async([key,quantity])=>{
+  const line=parseGuestLineKey(key);
+  if(!line)return null;
+  try{
+   const data=await api('/api/products/'+line.productId),product=data.product;
+   S.products.set(product.id,product);
+   const variants=data.variants||[];S.variants.set(product.id,variants);
+   let selected=null;
+   if(variants.length){
+    selected=variants.find(option=>option.id===line.variantId);
+    if(!selected)throw new Error('Unavailable option');
+   }else if(line.variantId!==null)throw new Error('Unavailable option');
+   const unitPrice=selected?selected.price_fils:product.price_fils;
+   const stock=selected?selected.stock:product.stock;
+   const attributes=selected?selected.attributes:null;
+   return {...product,variant_id:selected?selected.id:null,variant_sku:null,
+    variant_attributes:attributes,variant_label:attributes?Object.values(attributes).join(' · '):'',
+    price_fils:unitPrice,unit_price_fils:unitPrice,stock,quantity,
+    line_total_fils:unitPrice*quantity,available:stock>=quantity};
+  }catch{
+   return {id:line.productId,variant_id:line.variantId,quantity,title_ar:'منتج غير متاح',
+    title_en:'Unavailable product',price_fils:0,unit_price_fils:0,line_total_fils:0,
+    stock:0,available:false,image_url:'/static/images/placeholder.svg',store_id:0,
+    store_name_ar:'غير متاح',store_name_en:'Unavailable',shipping_fils:0,
+    delivery_days:0,variant_label:''};
+  }
  }));
- for(const item of entries){if(!groups.has(item.store_id))groups.set(item.store_id,{store_id:item.store_id,name_ar:item.store_name_ar,name_en:item.store_name_en,shipping_fils:item.shipping_fils,delivery_days:item.delivery_days,subtotal_fils:0,slug:item.store_slug,items:[]});const g=groups.get(item.store_id);g.items.push(item);g.subtotal_fils+=item.line_total_fils;}
- const list=[...groups.values()],subtotal=list.reduce((a,g)=>a+g.subtotal_fils,0),shipping=list.reduce((a,g)=>a+g.shipping_fils,0);
- S.cart={groups:list,subtotal_fils:subtotal,shipping_fils:shipping,total_fils:subtotal+shipping,quantity:entries.reduce((a,p)=>a+p.quantity,0)};return S.cart;
+ for(const item of entries.filter(Boolean)){
+  if(!groups.has(item.store_id))groups.set(item.store_id,{
+   store_id:item.store_id,name_ar:item.store_name_ar,name_en:item.store_name_en,
+   shipping_fils:item.shipping_fils,delivery_days:item.delivery_days,
+   subtotal_fils:0,slug:item.store_slug,items:[]
+  });
+  const group=groups.get(item.store_id);group.items.push(item);group.subtotal_fils+=item.line_total_fils;
+ }
+ const list=[...groups.values()],subtotal=list.reduce((sum,group)=>sum+group.subtotal_fils,0),
+  shipping=list.reduce((sum,group)=>sum+group.shipping_fils,0);
+ S.cart={groups:list,subtotal_fils:subtotal,shipping_fils:shipping,total_fils:subtotal+shipping,
+  quantity:entries.filter(Boolean).reduce((sum,item)=>sum+item.quantity,0)};
+ return S.cart;
 }
-function cartItemQuantity(id){for(const g of S.cart.groups)for(const item of g.items)if(item.id===id)return item.quantity;return 0;}
-async function setCart(id,quantity){
- if(S.user)S.cart=await api('/api/cart',{method:'PUT',body:{product_id:id,quantity}});
- else {if(quantity>0){const p=S.products.get(id);if(p&&quantity>p.stock)throw new Error(tr('هذه الكمية غير متوفرة.','This quantity is not available.'));S.guest[id]=quantity;}else delete S.guest[id];saveLocal('shamaa.cart',S.guest);await getCart();}
+function cartItemQuantity(id,variantId=null){
+ for(const group of S.cart.groups)for(const item of group.items)
+  if(item.id===id&&(item.variant_id??null)===(variantId??null))return item.quantity;
+ return 0;
+}
+async function setCart(id,variantId,quantity){
+ const key=guestLineKey(id,variantId);
+ if(S.user){
+  S.cart=await api('/api/cart',{method:'PUT',body:{product_id:id,variant_id:variantId,quantity}});
+ }else{
+  if(quantity>0){
+   const product=S.products.get(id),variants=S.variants.get(id)||[];
+   const selected=variantId?variants.find(option=>option.id===variantId):null;
+   if(variants.length&&!selected)throw new Error(tr('اختر متغير المنتج أولًا.','Choose a product option first.'));
+   const available=selected?selected.stock:product?product.stock:0;
+   if(product&&quantity>available)throw new Error(tr('هذه الكمية غير متوفرة.','This quantity is not available.'));
+   S.guest[key]=quantity;
+  }else delete S.guest[key];
+  saveLocal('shamaa.cart',S.guest);await getCart();
+ }
  updateCartCount();
 }
-async function addCart(id,quantity=1){
+async function addCart(id,quantity=1,variantId=null){
  if(!navigator.onLine)throw new Error(tr('أعد الاتصال قبل تعديل السلة؛ يمكنك متابعة التصفح.','Reconnect before changing your bag. You can keep browsing.'));
- let p=S.products.get(id);if(!p){p=(await api('/api/products/'+id)).product;S.products.set(id,p);}
- const next=cartItemQuantity(id)+quantity;if(next>Math.min(p.stock,99))throw new Error(tr('الكمية المطلوبة أكبر من المتوفر.','The requested quantity exceeds available stock.'));
- await setCart(id,next);toast(tr('اختيار جميل! أُضيف إلى سلتك.','Lovely choice! Added to your bag.'));
+ let product=S.products.get(id),variants=S.variants.get(id);
+ if(!product||!variants){
+  const detail=await api('/api/products/'+id);
+  product=detail.product;variants=detail.variants||[];
+  S.products.set(id,product);S.variants.set(id,variants);
+ }
+ let selected=null;
+ if(variants.length){
+  if(variantId===null)throw new Error(tr('افتح المنتج واختر اللون أو المقاس أولًا.','Open the product and choose a colour or size first.'));
+  selected=variants.find(option=>option.id===variantId);
+  if(!selected)throw new Error(tr('هذا الخيار لم يعد متاحًا. حدّث صفحة المنتج.','This option is no longer available. Refresh the product page.'));
+ }else if(variantId!==null)throw new Error(tr('هذا المنتج لا يحتوي على هذا الخيار.','This product does not have that option.'));
+ const stock=selected?selected.stock:product.stock;
+ const next=cartItemQuantity(id,variantId)+quantity;
+ if(next>Math.min(stock,99))throw new Error(tr('الكمية المطلوبة أكبر من المتوفر لهذا الخيار.','The requested quantity exceeds stock for this option.'));
+ await setCart(id,variantId,next);
+ toast(tr('اختيار جميل! أُضيف إلى سلتك.','Lovely choice! Added to your bag.'));
 }
 function updateCartCount(){const el=$('#cart-count');if(el)el.textContent=number(S.cart.quantity);}
 async function mergeGuest(){
@@ -148,11 +220,11 @@ async function mergeGuest(){
  saveLocal('shamaa.cart',S.guest);if(failed)toast(tr('بعض الاختيارات المحلية لم تُدمج لتغيّر توفرها. راجع السلة.','Some local items could not be merged because availability changed. Review your bag.'),true);
  updateCartCount();
 }
-function miniItems(items){return items.map(p=>`<div class="mini-item"><img src="${esc(p.image_url)}" alt="" width="45" height="45" loading="lazy"><span>${esc(field(p,'title'))}<br><small>${number(p.quantity)} × ${money(p.unit_price_fils??p.price_fils)} ${currency()}</small></span></div>`).join('');}
+function miniItems(items){return items.map(p=>`<div class="mini-item"><img src="${esc(p.image_url)}" alt="" width="45" height="45" loading="lazy"><span>${esc(field(p,'title'))}<br><small>${p.variant_label?esc(p.variant_label)+' · ':''}${number(p.quantity)} × ${money(p.unit_price_fils??p.price_fils)} ${currency()}</small></span></div>`).join('');}
 function summary(cart,action=''){return `<aside class="panel order-summary"><h2>${tr('ملخص اختياراتك','Your bag, at a glance')}</h2><div class="summary-row"><span>${tr('المنتجات','Items')} (${number(cart.quantity)})</span><strong>${money(cart.subtotal_fils)} ${currency()}</strong></div><div class="summary-row"><span>${tr('الشحن','Shipping')} (${number(cart.groups.length)} ${tr('شحنات','shipments')})</span><strong>${money(cart.shipping_fils)} ${currency()}</strong></div><div class="summary-row total"><span>${tr('الإجمالي','Total')}</span>${price(cart.total_fils)}</div>${action}<p class="summary-caption">${icon('wallet')} ${tr('الدفع عند الاستلام · دون بيانات بطاقة','Cash on delivery · No card details')}</p><p class="summary-caption">${tr('تُحسب رسوم كل متجر بشكل مستقل. لا يُحجز المخزون حتى تأكيد الطلب على الخادم. لا تُضاف ضريبة منفصلة في هذه النسخة التجريبية.','Each store ships separately. Stock is not reserved until the server confirms your order. No separate tax is added in this development version.')}</p></aside>`;}
 async function cartView(route){
  const cart=await getCart();if(route!==S.route)return;title(tr('سلة اختياراتك','Your shopping bag'));updateCartCount();
- main.innerHTML=`<div class="container">${breadcrumb([{text:tr('سلة التسوق','Shopping bag')}])}<div class="page-heading"><div><h1>${tr('كل اختياراتك الجميلة.','Your lovely little finds.')}</h1><p>${number(cart.quantity)} ${tr('منتجات في سلتك','items in your bag')}</p></div>${link('/search',tr('نكمل الاكتشاف؟','Keep exploring')+icon('arrow','directional'),'text-link')}</div>${cart.groups.length?`${!S.user?`<div class="notice">${icon('info')}<p>${tr('سلتك محفوظة على هذا المتصفح فقط. سجّل الدخول لمزامنتها وإتمام الطلب.','Your bag is saved only in this browser. Sign in to sync it and check out.')}</p></div>`:''}<div class="cart-layout"><div>${cart.groups.map(g=>`<section class="cart-group"><div class="cart-group-heading">${g.slug?link('/store/'+g.slug,icon('store','small')+esc(field(g,'name'))):esc(field(g,'name'))}<span class="small-text">${tr('شحنة مستقلة','Separate shipment')}</span></div>${g.items.map(p=>`<div class="cart-item"><a href="/product/${p.id}" data-link><img class="cart-thumb" src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="91" height="93"></a><div class="cart-item-info"><h3>${link('/product/'+p.id,esc(field(p,'title')))}</h3><p>${p.condition==='used'?tr('مستعمل: ','Used: ')+esc(p.condition_note):tr('منتج جديد','New item')}</p><p>${p.available?tr('متوفر حاليًا','Currently available'):tr('غير متاح حاليًا','Currently unavailable')}</p><div class="quantity-control"><button data-action="cart-minus" data-id="${p.id}" aria-label="${tr('تقليل كمية','Decrease quantity for')} ${esc(field(p,'title'))}">${icon('minus')}</button><span>${number(p.quantity)}</span><button data-action="cart-plus" data-id="${p.id}" aria-label="${tr('زيادة كمية','Increase quantity for')} ${esc(field(p,'title'))}" ${p.quantity>=Math.min(p.stock,99)?'disabled':''}>${icon('plus')}</button></div></div><div class="cart-item-price">${price(p.line_total_fils)}<button class="icon-btn" data-action="cart-remove" data-id="${p.id}" aria-label="${tr('إزالة','Remove')} ${esc(field(p,'title'))}">${icon('trash')}</button></div></div>`).join('')}<div class="cart-shipping"><span>${tr('شحن هذا المتجر','This store’s shipping')} · ${tr('تقديريًا','Estimated')} ${number(g.delivery_days)} ${tr('أيام','days')}</span><span>${money(g.shipping_fils)} ${currency()}</span></div></section>`).join('')}</div>${summary(cart,`<button class="btn btn-primary btn-block" data-action="checkout" ${navigator.onLine?'':'disabled'}>${tr('نكمل الطلب','Continue to checkout')}${icon('arrow','directional')}</button>`)}</div>`:empty(tr('سلتك تنتظر أول اختيار','Your next find is waiting'),tr('خذ وقتك، في أشياء جميلة بانتظارك.','Take your time. There are good things waiting to be found.'),link('/search',tr('ابدأ الاكتشاف','Explore the collection'),'btn btn-primary'),'bag')}</div>`;
+ main.innerHTML=`<div class="container">${breadcrumb([{text:tr('سلة التسوق','Shopping bag')}])}<div class="page-heading"><div><h1>${tr('كل اختياراتك الجميلة.','Your lovely little finds.')}</h1><p>${number(cart.quantity)} ${tr('منتجات في سلتك','items in your bag')}</p></div>${link('/search',tr('نكمل الاكتشاف؟','Keep exploring')+icon('arrow','directional'),'text-link')}</div>${cart.groups.length?`${!S.user?`<div class="notice">${icon('info')}<p>${tr('سلتك محفوظة على هذا المتصفح فقط. سجّل الدخول لمزامنتها وإتمام الطلب.','Your bag is saved only in this browser. Sign in to sync it and check out.')}</p></div>`:''}<div class="cart-layout"><div>${cart.groups.map(g=>`<section class="cart-group"><div class="cart-group-heading">${g.slug?link('/store/'+g.slug,icon('store','small')+esc(field(g,'name'))):esc(field(g,'name'))}<span class="small-text">${tr('شحنة مستقلة','Separate shipment')}</span></div>${g.items.map(p=>`<div class="cart-item"><a href="/product/${p.id}" data-link><img class="cart-thumb" src="${esc(p.image_url)}" alt="${esc(field(p,'title'))}" width="91" height="93"></a><div class="cart-item-info"><h3>${link('/product/'+p.id,esc(field(p,'title')))}</h3><p>${p.condition==='used'?tr('مستعمل: ','Used: ')+esc(p.condition_note):tr('منتج جديد','New item')}</p>${p.variant_label?'<p class="variant-label">'+esc(p.variant_label)+'</p>':''}<p>${p.available?tr('متوفر حاليًا','Currently available'):tr('غير متاح حاليًا','Currently unavailable')}</p><div class="quantity-control"><button data-action="cart-minus" data-id="${p.id}" data-variant-id="${p.variant_id||''}" aria-label="${tr('تقليل كمية','Decrease quantity for')} ${esc(field(p,'title'))}">${icon('minus')}</button><span>${number(p.quantity)}</span><button data-action="cart-plus" data-id="${p.id}" data-variant-id="${p.variant_id||''}" aria-label="${tr('زيادة كمية','Increase quantity for')} ${esc(field(p,'title'))}" ${p.quantity>=Math.min(p.stock,99)?'disabled':''}>${icon('plus')}</button></div></div><div class="cart-item-price">${price(p.line_total_fils)}<button class="icon-btn" data-action="cart-remove" data-id="${p.id}" data-variant-id="${p.variant_id||''}" aria-label="${tr('إزالة','Remove')} ${esc(field(p,'title'))}">${icon('trash')}</button></div></div>`).join('')}<div class="cart-shipping"><span>${tr('شحن هذا المتجر','This store’s shipping')} · ${tr('تقديريًا','Estimated')} ${number(g.delivery_days)} ${tr('أيام','days')}</span><span>${money(g.shipping_fils)} ${currency()}</span></div></section>`).join('')}</div>${summary(cart,`<button class="btn btn-primary btn-block" data-action="checkout" ${navigator.onLine?'':'disabled'}>${tr('نكمل الطلب','Continue to checkout')}${icon('arrow','directional')}</button>`)}</div>`:empty(tr('سلتك تنتظر أول اختيار','Your next find is waiting'),tr('خذ وقتك، في أشياء جميلة بانتظارك.','Take your time. There are good things waiting to be found.'),link('/search',tr('ابدأ الاكتشاف','Explore the collection'),'btn btn-primary'),'bag')}</div>`;
 }
 async function recoverAttempt(){
  if(!S.user)return false;let key;try{key=sessionStorage.getItem('shamaa.checkout.'+S.user.id);}catch{}
@@ -219,7 +291,7 @@ async function sellerView(route){
  if(tab==='products'){
   const result=await api('/api/seller/products');if(route!==S.route)return;S.sellerProducts=result.products;
   result.products.forEach(p=>S.products.set(p.id,p));
-  content=`<div class="page-heading"><div><h1>${tr('من رفوف متجرك.','Your store, your finds.')}</h1><p>${tr('المنتجات الجديدة والتعديلات تمر بالمراجعة قبل النشر.','New products and edits are reviewed before publication.')}</p></div><button class="btn btn-primary btn-small" data-action="new-product" ${S.store.status==='active'?'':'disabled'}>${icon('plus')}${tr('أضف منتجًا','Add product')}</button></div>${result.products.length?`<div class="table-scroll"><table><thead><tr><th>${tr('المنتج','Product')}</th><th>${tr('الحالة','Status')}</th><th>${tr('السعر','Price')}</th><th>${tr('المخزون','Stock')}</th><th>${tr('إدارة','Manage')}</th></tr></thead><tbody>${result.products.map(p=>`<tr><td><div class="table-product"><img src="${esc(p.image_url)}" alt="" width="43" height="43"><div><strong>${esc(field(p,'title'))}</strong><small>${esc(p.sku)}</small><small>${p.condition==='used'?tr('مستعمل','Used'):tr('جديد','New')}</small>${p.condition_note?`<small>${esc(p.condition_note)}</small>`:''}${p.review_note?`<small>${esc(p.review_note)}</small>`:''}</div></div></td><td>${pill(p.status)}</td><td>${money(p.price_fils)} ${currency()}</td><td>${number(p.stock)}</td><td><button class="btn btn-light" data-action="edit-product" data-id="${p.id}">${icon('edit','small')}${tr('تعديل','Edit')}</button><button class="btn btn-soft" data-action="stock" data-id="${p.id}">${tr('الكمية','Stock')}</button></td></tr>`).join('')}</tbody></table></div>`:empty(tr('منتجك الأول، بداية الحكاية.','Your first product starts the story.'),tr('أضف صورة ومعلومات دقيقة بالعربية والإنجليزية، وحدد المخزون والسعر.','Add an image and accurate Arabic and English details, then set the price and stock.'),S.store.status==='active'?`<button class="btn btn-primary" data-action="new-product">${tr('أضف أول منتج','Add your first product')}</button>`:'','package')}`;
+  content=`<div class="page-heading"><div><h1>${tr('من رفوف متجرك.','Your store, your finds.')}</h1><p>${tr('المنتجات الجديدة والتعديلات تمر بالمراجعة قبل النشر.','New products and edits are reviewed before publication.')}</p></div><button class="btn btn-primary btn-small" data-action="new-product" ${S.store.status==='active'?'':'disabled'}>${icon('plus')}${tr('أضف منتجًا','Add product')}</button></div>${result.products.length?`<div class="table-scroll"><table><thead><tr><th>${tr('المنتج','Product')}</th><th>${tr('الحالة','Status')}</th><th>${tr('السعر','Price')}</th><th>${tr('المخزون','Stock')}</th><th>${tr('إدارة','Manage')}</th></tr></thead><tbody>${result.products.map(p=>`<tr><td><div class="table-product"><img src="${esc(p.image_url)}" alt="" width="43" height="43"><div><strong>${esc(field(p,'title'))}</strong><small>${esc(p.sku)}</small><small>${p.condition==='used'?tr('مستعمل','Used'):tr('جديد','New')}</small>${p.condition_note?`<small>${esc(p.condition_note)}</small>`:''}${p.review_note?`<small>${esc(p.review_note)}</small>`:''}</div></div></td><td>${pill(p.status)}</td><td>${money(p.price_fils)} ${currency()}</td><td>${number(p.stock)}</td><td><button class="btn btn-light" data-action="edit-product" data-id="${p.id}">${icon('edit','small')}${tr('تعديل','Edit')}</button><button class="btn btn-soft" data-action="stock" data-id="${p.id}">${tr('الكمية','Stock')}</button><button class="btn btn-light" data-action="variants" data-id="${p.id}">${tr('المتغيرات','Options')} (${number(p.variants?.length||0)})</button></td></tr>`).join('')}</tbody></table></div>`:empty(tr('منتجك الأول، بداية الحكاية.','Your first product starts the story.'),tr('أضف صورة ومعلومات دقيقة بالعربية والإنجليزية، وحدد المخزون والسعر.','Add an image and accurate Arabic and English details, then set the price and stock.'),S.store.status==='active'?`<button class="btn btn-primary" data-action="new-product">${tr('أضف أول منتج','Add your first product')}</button>`:'','package')}`;
  } else if(tab==='orders'){
   const result=await api('/api/seller/orders');if(route!==S.route)return;
   content=`<div class="page-heading"><div><h1>${tr('كل طلب، حكاية ثقة.','Every order builds a little trust.')}</h1><p>${tr('حدّث حالات شحناتك يدويًا. لا يوجد ربط آلي مع شركة شحن.','Update shipment statuses manually. No shipping company is automatically connected.')}</p></div></div>${result.orders.length?result.orders.map(s=>`<article class="order-card"><header class="order-head"><div><h2>${esc(s.order.number)}</h2><p>${date(s.order.created_at)}${s.order.is_demo?' · '+tr('طلب تجريبي','Test order'):''}</p></div>${price(s.subtotal_fils+s.shipping_fils)}</header><div class="order-body">${shipmentHTML(s,s.order,{seller:true})}</div></article>`).join(''):empty(tr('جاهزون لأول طلب.','Ready for your first order.'),tr('عندما يطلب أحدهم من متجرك، ستجد شحنتك وتفاصيل توصيلها هنا فقط.','Your store’s shipments and delivery details will appear here when a buyer places an order.'),'','bag')}`;
@@ -245,6 +317,37 @@ async function openProduct(p=null){
  }
  S.editingImagesInitial=[...S.editingImages];
  modal(isEdit?tr('تفاصيل أدق، اختيار أوضح.','A little more detail. A clearer find.'):tr('أضف شيئًا يستحق الاكتشاف.','Add something worth discovering.'),`<p class="dialog-description">${tr('المرحلة الحالية تدعم المنتجات المادية الجديدة والمستعملة، مع وصف دقيق لحالة المستعمل. المنتجات الرقمية غير مفعّلة حتى تأمين التنزيل الخاص. لا ترفع منتجات محظورة أو مواصفات غير مثبتة. كل تعديل منشور يحتاج مراجعة جديدة.','This release supports new and used physical goods, with a clear condition note for used items. Digital downloads remain disabled until private delivery is secured. Do not upload prohibited goods or unproven claims. Published edits require a new review.')}</p><form id="product-form">${errorBox('product-error')}<div class="form-row">${input('title_ar',tr('العنوان بالعربية','Arabic title'),{value:p?.title_ar||'',min:3,max:140,direction:'rtl'})}${input('title_en',tr('العنوان بالإنجليزية','English title'),{value:p?.title_en||'',min:3,max:140,direction:'ltr'})}</div><div class="form-row">${textarea('description_ar',tr('وصف بالعربية','Arabic description'),p?.description_ar||'')}${textarea('description_en',tr('وصف بالإنجليزية','English description'),p?.description_en||'')}</div><div class="form-row"><div class="form-field"><label for="category_id">${tr('الفئة','Category')}</label><select name="category_id" id="category_id" required>${categoryOptions(p?.category_id,false)}</select></div>${input('sku',tr('رمز المخزون SKU','Stock code (SKU)'),{value:p?.sku||'',max:60,direction:'ltr'})}</div><div class="form-row"><div class="form-field"><label for="condition">${tr('حالة المنتج','Item condition')}</label><select name="condition" id="condition"><option value="new" ${!p||p.condition==='new'?'selected':''}>${tr('جديد','New')}</option><option value="used" ${p?.condition==='used'?'selected':''}>${tr('مستعمل','Used')}</option></select></div>${textarea('condition_note',tr('تفاصيل حالة المستعمل (مطلوبة عند الاختيار)','Used-item condition details (required for used items)'),p?.condition_note||'',false,500)}</div><div class="form-row compact-row">${moneyInput('price',tr('سعر البيع','Sale price'),p?p.price_fils/1000:'','required')}${moneyInput('compare_at',tr('قبل الخصم، اختياري','Original price, optional'),p?.compare_at_fils?p.compare_at_fils/1000:'')}</div><div class="form-row compact-row"><div class="form-field"><label for="stock">${tr('الكمية المتاحة','Available quantity')}</label><input id="stock" name="stock" type="number" min="0" max="1000000" step="1" value="${p?.stock??1}" required></div><div class="form-field"><label for="product-status">${tr('الحفظ بصفة','Save as')}</label><select name="status" id="product-status"><option value="pending">${tr('إرسال للمراجعة','Submit for review')}</option><option value="draft" ${p?.status==='draft'?'selected':''}>${tr('مسودة','Draft')}</option><option value="paused" ${p?.status==='paused'?'selected':''}>${tr('متوقف','Paused')}</option></select></div></div><div class="form-field"><label for="product-image">${tr('الصورة الأساسية','Primary image')}</label>${p?`<img class="media-preview" src="${esc(p.image_url)}" alt="${tr('الصورة الحالية','Current image')}">`:''}<input name="image" id="product-image" type="file" accept="image/jpeg,image/png,image/webp"><small>${tr('JPEG أو PNG أو WebP، حتى 5 ميغابايت. هذه الصورة هي واجهة المنتج الأساسية.','JPEG, PNG or WebP, up to 5 MB. This is the primary product image.')}</small></div><div class="form-field"><label for="gallery-images">${tr('صور إضافية للمنتج (حتى 8 إجمالًا)','Additional product images (up to 8 total)')}</label><div class="gallery-editor" id="product-gallery-existing">${S.editingImages.map((mediaId,index)=>`<div class="gallery-edit-item" data-gallery-media="${mediaId}"><img src="/media/${mediaId}/480.webp" alt=""><button type="button" data-action="remove-gallery-image" data-id="${mediaId}" aria-label="${tr('إزالة الصورة','Remove image')}">${tr('إزالة','Remove')}</button><small>${index===0?tr('أساسية','Primary'):tr('إضافية','Additional')}</small></div>`).join('')}</div><input name="gallery_images" id="gallery-images" type="file" accept="image/jpeg,image/png,image/webp" multiple><small>${tr('اختر عدة صور معًا. كل صورة حتى 5 ميغابايت؛ الصور الخاصة لا تصبح عامة إلا بعد اعتماد المنتج.','Choose multiple images at once. Each image is up to 5 MB; private images are not public until the product is approved.')}</small></div><div class="form-actions"><button class="btn btn-primary" type="submit">${icon('check')}${isEdit?tr('حفظ التغييرات','Save changes'):tr('حفظ المنتج','Save product')}</button><button class="btn btn-light" type="button" data-action="close-dialog">${tr('إلغاء','Cancel')}</button></div></form>`,true);
+}
+
+function renderVariantDraft(){
+ const host=$('#variant-rows');if(!host)return;
+ host.innerHTML=S.variantDraft.map((item,index)=>{
+  const row=document.createElement('div');
+  return '<div class="variant-editor-row" data-index="'+index+'" data-variant-id="'+(item.id||'')+'">'+
+   '<div class="form-row">'+
+    '<div class="form-field"><label for="variant-sku-'+index+'">'+tr('SKU المتغير','Variant SKU')+'</label><input id="variant-sku-'+index+'" name="variant_sku" value="'+esc(item.sku||'')+'" maxlength="60" required dir="ltr"></div>'+
+    '<div class="form-field"><label for="variant-attrs-'+index+'">'+tr('الخصائص JSON','Attributes JSON')+'</label><input id="variant-attrs-'+index+'" name="variant_attributes" value="'+esc(JSON.stringify(item.attributes||{}))+'" maxlength="500" required dir="ltr"></div>'+
+   '</div>'+
+   '<div class="form-row compact-row">'+
+    '<div class="form-field"><label for="variant-price-'+index+'">'+tr('السعر بالدينار','Price (JOD)')+'</label><input id="variant-price-'+index+'" name="variant_price" type="number" min="0.001" max="1000000" step="0.001" value="'+(item.price_fils?item.price_fils/1000:'')+'" required></div>'+
+    '<div class="form-field"><label for="variant-stock-'+index+'">'+tr('المخزون','Stock')+'</label><input id="variant-stock-'+index+'" name="variant_stock" type="number" min="0" max="1000000" step="1" value="'+(item.stock??0)+'" required></div>'+
+   '</div>'+
+   '<div class="form-field"><label for="variant-compare-'+index+'">'+tr('السعر قبل الخصم (اختياري)','Original price (optional)')+'</label><input id="variant-compare-'+index+'" name="variant_compare" type="number" min="0" max="1000000" step="0.001" value="'+(item.compare_at_fils?item.compare_at_fils/1000:'')+'"></div>'+
+   '<button type="button" class="btn btn-danger btn-small" data-action="remove-variant-row" data-index="'+index+'">'+tr('إزالة هذا المتغير','Remove this option')+'</button>'+
+  '</div>';
+ }).join('');
+}
+async function openVariants(product){
+ if(!product)return;
+ const result=await api('/api/seller/products/'+product.id+'/variants');
+ S.editing=product;
+ S.variantDraft=result.variants.map(item=>({...item,attributes:{...item.attributes}}));
+ modal(tr('ألوان ومقاسات ومخزون مستقل','Colours, sizes and individual stock'),
+  '<p class="dialog-description">'+tr('أضف تركيبات بيع مستقلة؛ لكل تركيبة SKU وسعر ومخزون. عند تغيير المتغيرات المنشورة يعود المنتج إلى المراجعة.','Each option combination has its own SKU, price and stock. Changing published variants sends the product back for review.')+'</p>'+
+  '<form id="variants-form">'+errorBox('variants-error')+'<div id="variant-rows"></div>'+
+  '<button type="button" class="btn btn-outline btn-small" data-action="add-variant-row">'+icon('plus')+tr('أضف متغيرًا','Add an option')+'</button>'+
+  '<div class="form-actions"><button class="btn btn-primary" type="submit">'+tr('حفظ المتغيرات','Save options')+'</button><button class="btn btn-light" type="button" data-action="close-dialog">'+tr('إلغاء','Cancel')+'</button></div></form>',true);
+ renderVariantDraft();
 }
 function openStock(id){const p=S.products.get(id);if(!p)return;S.editing=p;modal(tr('تحديث الكمية المتاحة','Update available stock'),`<p class="dialog-description">${esc(field(p,'title'))}. ${tr('سنرفض الحفظ إذا تغيّر المخزون بطلب آخر أثناء التعديل.','Saving will be rejected if another order changes stock while you edit.')}</p><form id="stock-form">${errorBox('stock-error')}<div class="form-field"><label for="new-stock">${tr('الكمية الجديدة','New quantity')}</label><input name="stock" id="new-stock" type="number" min="0" max="1000000" step="1" value="${p.stock}" required></div><button class="btn btn-primary btn-block" type="submit">${tr('تحديث المخزون','Update stock')}</button></form>`);}
 
@@ -362,7 +465,8 @@ document.addEventListener('click',async e=>{
    if(location.pathname==='/favorites')renderRoute();
   }
   else if(action==='add-cart')await addCart(id);
-  else if(action==='detail-add')await addCart(id,S.quantity);
+  else if(action==='choose-variant')navigate('/product/'+id);
+  else if(action==='detail-add')await addCart(id,S.quantity,S.selectedVariantId);
   else if(action==='gallery-image'){
    const index=Number(button.dataset.index),image=S.detailImages[index];
    if(image){
@@ -376,10 +480,24 @@ document.addEventListener('click',async e=>{
    S.editingImages=S.editingImages.filter(mediaId=>mediaId!==id);
    button.closest('[data-gallery-media]')?.remove();
   }
-  else if(action==='detail-plus'||action==='detail-minus'){
-   S.quantity=Math.max(1,Math.min(S.quantity+(action==='detail-plus'?1:-1),S.detail.stock||1,99));$('#detail-quantity').textContent=number(S.quantity);
+  else if(action==='add-variant-row'){
+   S.variantDraft.push({id:null,sku:'',attributes:{},price_fils:1000,compare_at_fils:null,stock:0});
+   renderVariantDraft();
   }
-  else if(action.startsWith('cart-')){await setCart(id,action==='cart-remove'?0:Math.max(0,cartItemQuantity(id)+(action==='cart-plus'?1:-1)));await renderRoute();}
+  else if(action==='remove-variant-row'){
+   S.variantDraft.splice(Number(button.dataset.index),1);
+   renderVariantDraft();
+  }
+  else if(action==='detail-plus'||action==='detail-minus'){
+   const selected=S.detailVariants.find(option=>option.id===S.selectedVariantId);
+   const available=selected?selected.stock:S.detail.stock;
+   S.quantity=Math.max(1,Math.min(S.quantity+(action==='detail-plus'?1:-1),available||1,99));$('#detail-quantity').textContent=number(S.quantity);
+  }
+  else if(action.startsWith('cart-')){
+   const variantId=button.dataset.variantId?Number(button.dataset.variantId):null;
+   const next=action==='cart-remove'?0:Math.max(0,cartItemQuantity(id,variantId)+(action==='cart-plus'?1:-1));
+   await setCart(id,variantId,next);await renderRoute();
+  }
   else if(action==='checkout'){if(!S.user){S.afterAuth='/checkout';openAuth();}else navigate('/checkout');}
   else if(action==='logout'){await api('/api/auth/logout',{method:'POST'});S.user=null;setCsrf('');S.cart={groups:[],quantity:0};S.checkout=null;await getCart();toast(tr('إلى لقاء قريب. خرجت من حسابك بأمان.','See you soon. You’ve been signed out.'));navigate('/');}
   else if(action==='resend'){await api('/api/auth/resend-verification',{method:'POST'});toast(S.boot.email_mode==='file'?tr('حُفظ رابط جديد في صندوق data/mail المحلي.','A new link was saved to the private data/mail folder.'):tr('جُهّز رابط التحقق للإرسال. تحقّق من بريدك.','A verification email was queued. Check your inbox.'));}
@@ -389,6 +507,7 @@ document.addEventListener('click',async e=>{
   else if(action==='new-product')await openProduct();
   else if(action==='edit-product')await openProduct(S.products.get(id));
   else if(action==='stock')openStock(id);
+  else if(action==='variants')await openVariants(S.products.get(id));
   else if(action==='commission')openCommission(id);
   else if(action==='reauth')openReauth();
   else if(action==='toggle-user')confirmAction(tr('تغيير حالة الحساب؟','Change account status?'),tr('تعطيل الحساب يُنهي جلساته ويخفي منتجاته، دون حذف سجلاته المالية.','Suspending the account revokes its sessions and hides its products, without deleting financial records.'),async()=>{await api('/api/admin/users/'+id,{method:'PATCH',body:{active:button.dataset.active!=='1'}});toast(tr('حُدّثت حالة الحساب.','Account status updated.'));renderRoute();});
@@ -401,6 +520,15 @@ document.addEventListener('click',async e=>{
  finally{if(button.isConnected)button.disabled=false;}
 });
 $('#main').addEventListener('change',e=>{
+ if(e.target.id==='detail-variant'){
+  const id=Number(e.target.value)||null;S.selectedVariantId=id;S.quantity=1;
+  const selected=S.detailVariants.find(option=>option.id===id);
+  const info=$('#variant-price-info'),stockLine=$('#detail-stock-line'),add=$('button[data-action="detail-add"]');
+  if(info)info.textContent=selected?money(selected.price_fils)+' '+currency()+' · '+number(selected.stock)+' '+tr('متاح','available'):tr('اختر المتغير لعرض سعره ومخزونه.','Choose an option to see its price and stock.');
+  if(stockLine)stockLine.textContent=selected?(selected.stock?tr('متوفر','In stock')+' · '+number(selected.stock)+' '+tr('قطعة','available'):tr('نفد هذا الخيار','This option is out of stock')):tr('اختر متغير المنتج','Choose a product option');
+  if(add)add.disabled=!selected||selected.stock<=0;
+  const quantity=$('#detail-quantity');if(quantity)quantity.textContent=number(S.quantity);
+ }
  if(e.target.id==='category-commission-id')$('#category-percent').value=e.target.selectedOptions[0]?.dataset.rate||'';
  if(e.target.id==='sort-select'){const p=new URLSearchParams(location.search);p.set('sort',e.target.value);p.delete('page');navigate('/search?'+p);}
 });
@@ -471,6 +599,29 @@ document.addEventListener('submit',async e=>{
     await api('/api/seller/products/'+saved.product.id+'/images',{method:'PUT',body:{media_ids:galleryIds,expected_version:saved.product.version}});
    }
    closeModal();toast(tr('حُفظ المنتج ومعرض صوره. راجع حالة المراجعة في لوحة المنتجات.','Product and image gallery saved. Check its review status in your dashboard.'));navigate('/seller?tab=products');
+  }
+  else if(form.id==='variants-form'){
+   const rows=$('.variant-editor-row',form);
+   if(!rows.length)throw new Error(tr('أضف متغيرًا واحدًا على الأقل.','Add at least one option.'));
+   const variants=rows.map(row=>{
+    let attributes;
+    try{attributes=JSON.parse($('[name="variant_attributes"]',row).value);}
+    catch{throw new Error(tr('صيغة خصائص المتغير يجب أن تكون JSON صحيحة.','Variant attributes must be valid JSON.'));}
+    const variant={
+     sku:$('[name="variant_sku"]',row).value.trim(),attributes,
+     price_fils:fils($('[name="variant_price"]',row).value),
+     compare_at_fils:$('[name="variant_compare"]',row).value?fils($('[name="variant_compare"]',row).value):null,
+     stock:Number($('[name="variant_stock"]',row).value)
+    };
+    const existingId=Number(row.dataset.variantId);if(existingId)variant.id=existingId;
+    return variant;
+   });
+   const result=await api('/api/seller/products/'+S.editing.id+'/variants',{
+    method:'PUT',body:{expected_version:S.editing.version,variants}
+   });
+   S.editing.version=result.version;
+   closeModal();toast(tr('حُفظت المتغيرات ومخزونها. أُرسل المنتج للمراجعة.','Options and stock saved. The product has been sent for review.'));
+   renderRoute();
   }
   else if(form.id==='stock-form'){
    await api('/api/seller/products/'+S.editing.id+'/stock',{method:'PATCH',body:{stock:Number(v('stock')),expected_version:S.editing.version}});closeModal();toast(tr('حُدّث المخزون وسُجّلت الحركة.','Stock updated and the movement recorded.'));renderRoute();
