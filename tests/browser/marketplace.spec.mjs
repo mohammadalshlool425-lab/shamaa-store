@@ -149,8 +149,12 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await variantRows.nth(1).locator('[name=variant_attributes]').fill('اللون=بارد; المقاس=صغير');
  await variantRows.nth(1).locator('[name=variant_price]').fill('18.125');
  await variantRows.nth(1).locator('[name=variant_stock]').fill('4');
+ const variantSave=seller.waitForResponse(r=>r.url().includes('/api/seller/products/')&&r.url().endsWith('/variants')&&r.request().method()==='PUT');
  await seller.locator('#variants-form button[type=submit]').click();
- await expect(seller.locator('tbody .pill')).toHaveText('قيد المراجعة');
+ const variantResult=await(await variantSave).json();
+ expect(variantResult.status).toBe('pending');
+ const sellerVariantRow=seller.locator('tbody tr').filter({hasText:'GENERATED-LAMP'});
+ await expect(sellerVariantRow.locator('.pill')).toHaveText('قيد المراجعة');
 
  await admin.goto('/admin?tab=products');
  const variantProduct=admin.locator('.review-card').filter({hasText:'Isolated test lamp'});
