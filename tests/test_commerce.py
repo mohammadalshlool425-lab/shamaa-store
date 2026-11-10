@@ -252,3 +252,88 @@ def test_new_product_rejects_used_condition_note(factory):
     payload["condition_note"] = "هذه الملاحظة لا تخص منتجًا جديدًا."
     response = seller["client"].post("/api/seller/products", json=payload)
     assert response.status_code == 422
+
+def test_product_gallery_order_ownership_public_visibility_and_version(factory):
+    seller = factory.seller()
+    product = factory.product(seller)
+    first_extra = seller["client"].post(
+        "/api/seller/media",
+        files={"file": ("extra-one.png", png_bytes("red"), "image/png")},
+    )
+    second_extra = seller["client"].post(
+        "/api/seller/media",
+        files={"file": ("extra-two.png", png_bytes("blue"), "image/png")},
+    )
+    assert first_extra.status_code == second_extra.status_code == 201
+    first_id, second_id = first_extra.json()["id"], second_extra.json()["id"]
+    primary_id = product["media_id"]
+
+    anonymous = factory.client()
+    # Uploaded but unattached seller media is private.
+    assert anonymous.get(f"/media/{first_id}/480.webp").status_code == 404
+
+    gallery = seller["client"].get(f"/api/seller/products/{product['id']}/images")
+    assert gallery.status_code == 200
+    assert gallery.json()["media_ids"] == [primary_id]
+
+    body = {
+        "media_ids": [primary_id, first_id, second_id],
+        "expected_version": product["version"],
+    }
+    updated = seller["client"].put(f"/api/seller/products/{product['id']}/images", json=body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["media_ids"] == body["media_ids"]
+
+    stale = seller["client"].put(f"/api/seller/products/{product['id']}/images", json=body)
+    assert stale.status_code == 409
+
+    duplicate = seller["client"].put(
+        f"/api/seller/products/{product['id']}/images",
+        json={"media_ids": [primary_id, primary_id], "expected_version": updated.json()["version"]},
+    )
+    assert duplicate.status_code == 422
+
+    with factory.db.transaction() as connection:
+        connection.execute("UPDATE products SET status='active' WHERE id=?", (product["id"],))
+    public = anonymous.get(f"/api/products/{product['id']}")
+    assert public.status_code == 200
+    assert [image["media_id"] for image in public.json()["images"]] == body["media_ids"]
+    for media_id in body["media_ids"]:
+        assert anonymous.get(f"/media/{media_id}/480.webp").status_code == 200
+
+    other_seller = factory.seller()
+    чужой = factory.product(other_seller)
+    cross_store = other_seller["client"].put(
+        f"/api/seller/products/{product['id']}/images",
+        json={"media_ids": [чужой["media_id"]], "expected_version": updated.json()["version"]},
+    )
+    assert cross_store.status_code == 404
+
+    # Updating a published gallery forces moderation again; the media stops being public.
+    current = seller["client"].get(f"/api/seller/products/{product['id']}/images").json()
+    version = updated.json()["version"]
+    revised = seller["client"].put(
+        f"/api/seller/products/{product['id']}/images",
+        json={"media_ids": [primary_id, second_id], "expected_version": version},
+    )
+    assert revised.status_code == 200
+    assert anonymous.get(f"/api/products/{product['id']}").status_code == 404
+    assert anonymous.get(f"/media/{second_id}/480.webp").status_code == 404
+    assert current["media_ids"] == body["media_ids"]
+
+
+def test_product_gallery_rejects_another_sellers_media(factory):
+    seller = factory.seller()
+    product = factory.product(seller)
+    another = factory.seller()
+    upload = another["client"].post(
+        "/api/seller/media",
+        files={"file": ("other-owner.png", png_bytes("blue"), "image/png")},
+    )
+    assert upload.status_code == 201
+    response = seller["client"].put(
+        f"/api/seller/products/{product['id']}/images",
+        json={"media_ids": [product["media_id"], upload.json()["id"]],
+              "expected_version": product["version"]},
+    )
+    assert response.status_code == 403

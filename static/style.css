@@ -24,3 +24,14 @@ body.dialog-open{overflow:hidden}html[dir=ltr] .hero-copy h1{font-size:2.625rem;
 .category-card{min-width:0}.category-card strong{max-width:100%;overflow-wrap:anywhere}.hero-copy .btn{max-width:100%;white-space:normal}.hero-copy .btn .icon{flex-shrink:0}
 
 .collection-copy p{color:#5d685d}
+
+.detail-thumbnails{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.detail-thumbnails button{border:2px solid transparent;border-radius:9px;padding:3px;background:#fff;width:76px;height:76px;overflow:hidden}
+.detail-thumbnails button[aria-pressed="true"]{border-color:var(--green)}
+.detail-thumbnails img{width:100%;height:100%;object-fit:cover;border-radius:5px}
+.gallery-editor{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 13px}
+.gallery-edit-item{width:82px;min-width:0;border:1px solid var(--line);border-radius:9px;padding:5px;display:grid;gap:4px}
+.gallery-edit-item img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px}
+.gallery-edit-item button{min-height:28px;border:0;border-radius:5px;background:#fcebea;color:var(--danger);font-size:.6875rem}
+.gallery-edit-item small{font-size:.625rem;text-align:center;color:var(--muted)}
+@media(max-width:680px){.detail-thumbnails button{width:62px;height:62px}}
