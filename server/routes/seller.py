@@ -181,9 +181,11 @@ def set_product_images(product_id: int,body: schemas.ProductImagesInput,
         for position,media_id in enumerate(body.media_ids):
             c.execute('INSERT INTO product_images(product_id,media_id,position,created_at) VALUES(?,?,?,?)',
                       (product_id,media_id,position,stamp))
-        c.execute('''UPDATE products SET media_id=?,status=CASE WHEN status='active' THEN 'pending' ELSE status END,
+        changed = c.execute('''UPDATE products SET media_id=?,status=CASE WHEN status='active' THEN 'pending' ELSE status END,
           review_note='',updated_at=?,version=version+1 WHERE id=? AND version=?''',
-                  (body.media_ids[0],stamp,product_id,body.expected_version))
+                                (body.media_ids[0],stamp,product_id,body.expected_version))
+        if changed.rowcount != 1:
+            fail('invalid_status',409)
         audit(c,user['id'],'product_gallery_updated','product',product_id)
     return {'ok':True,'media_ids':body.media_ids,'version':body.expected_version + 1}
 
