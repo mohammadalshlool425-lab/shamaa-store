@@ -168,10 +168,10 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await login(buyer,'buyer',{destination:'/store/isolated-browser-store'});
  await buyer.locator('.product-card .product-name').click();
  await buyer.locator('#detail-variant').selectOption({index:1});
- await expect(buyer.locator('#variant-price-info')).toContainText('17.125');
+ await expect(buyer.locator('#variant-price-info')).toContainText('١٧٫١٢٥');
  await buyer.locator('[data-action=detail-add]').click();
  await buyer.locator('#detail-variant').selectOption({index:2});
- await expect(buyer.locator('#variant-price-info')).toContainText('18.125');
+ await expect(buyer.locator('#variant-price-info')).toContainText('١٨٫١٢٥');
  await buyer.locator('[data-action=detail-add]').click();
  await buyer.goto('/cart');
  await expect(buyer.locator('.cart-item')).toHaveCount(2);
