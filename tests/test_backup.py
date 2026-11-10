@@ -110,4 +110,4 @@ def test_restore_accepts_v1_backup_and_application_initializer_upgrades_it(facto
     # The ordinary application initializer performs the transactional forward migration.
     Database(restored_db).initialize()
     with closing(sqlite3.connect(restored_db)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
