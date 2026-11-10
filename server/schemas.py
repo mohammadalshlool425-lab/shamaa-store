@@ -115,9 +115,10 @@ class ProductImagesInput(Input):
         return value
 
 
+
 class ProductVariantInput(Input):
     id: int | None = Field(default=None, ge=1, strict=True)
-    sku: str = Field(min_length=1, max_length=60, pattern=r'^[\w.\-]+
+    sku: str = Field(min_length=1, max_length=60, pattern=r'^[\\w.\\-]+
     stock: int = Field(ge=0, le=1000000, strict=True)
     expected_version: int = Field(ge=1, strict=True)
 
