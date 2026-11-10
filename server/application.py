@@ -153,7 +153,12 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
             row = c.execute('SELECT * FROM media WHERE id=?',(media_id,)).fetchone()
             if not row:
                 fail('not_found',404)
-            public = c.execute('SELECT 1 FROM ('+PRODUCT_SQL+' WHERE p.media_id=? AND '+PUBLIC_WHERE+') LIMIT 1',(media_id,)).fetchone()
+            public = c.execute('''SELECT 1 FROM product_images pi
+              JOIN products p ON p.id=pi.product_id
+              JOIN stores s ON s.id=p.store_id
+              JOIN users u ON u.id=s.owner_id
+              WHERE pi.media_id=? AND p.status='active' AND s.status='active' AND u.active=TRUE
+              LIMIT 1''',(media_id,)).fetchone()
             private_access = bool(user) and (row['owner_id']==user['id'] or user['role']=='admin')
             if not public and not private_access:
                 fail('not_found',404)

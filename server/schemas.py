@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictInt, field_validator, model_validator
 
 
 class Input(BaseModel):
@@ -101,12 +101,12 @@ class ProductInput(Input):
 
 
 class ProductImagesInput(Input):
-    media_ids: list[int] = Field(min_length=1, max_length=8)
+    media_ids: list[StrictInt] = Field(min_length=1, max_length=8)
 
     @field_validator('media_ids')
     @classmethod
     def unique_media_ids(cls, value):
-        if any(not isinstance(item, int) or item < 1 for item in value):
+        if any(type(item) is not int or item < 1 for item in value):
             raise ValueError('Media identifiers must be positive integers')
         if len(set(value)) != len(value):
             raise ValueError('A product gallery cannot repeat the same image')

@@ -13,5 +13,5 @@ INSERT INTO shamaa_app.product_images(product_id,media_id,position,created_at)
 SELECT id,media_id,0,created_at FROM shamaa_app.products WHERE media_id IS NOT NULL;
 ALTER TABLE shamaa_app.product_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shamaa_app.product_images FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE shamaa_app.product_images FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE shamaa_app.product_images FROM PUBLIC;
 COMMIT;
