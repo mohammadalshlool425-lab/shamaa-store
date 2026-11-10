@@ -72,7 +72,21 @@ def review_store(store_id: int,body: schemas.Review,request: Request,tasks: Back
 def products(request: Request,user=Depends(admin_user)):
     with request.app.state.db.read() as c:
         rows = c.execute(PRODUCT_SQL+' ORDER BY p.id DESC LIMIT 200').fetchall()
-    return {'products':[product_dict(r,True) for r in rows]}
+        result = []
+        for row in rows:
+            item = product_dict(row,True)
+            gallery = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
+              JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
+                                (row['id'],)).fetchall()
+            if not gallery and row['media_id']:
+                gallery = [{'media_id':row['media_id'],'position':0}]
+            item['images'] = [
+                {'media_id':image['media_id'],'position':image['position'],
+                 'url':f"/media/{image['media_id']}/480.webp"}
+                for image in gallery
+            ]
+            result.append(item)
+    return {'products':result}
 
 
 @router.post('/products/{product_id}/review')

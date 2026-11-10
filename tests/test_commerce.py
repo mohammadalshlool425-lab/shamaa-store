@@ -302,10 +302,10 @@ def test_product_gallery_order_ownership_public_visibility_and_version(factory):
         assert anonymous.get(f"/media/{media_id}/480.webp").status_code == 200
 
     other_seller = factory.seller()
-    чужой = factory.product(other_seller)
+    other_product = factory.product(other_seller)
     cross_store = other_seller["client"].put(
         f"/api/seller/products/{product['id']}/images",
-        json={"media_ids": [чужой["media_id"]], "expected_version": updated.json()["version"]},
+        json={"media_ids": [other_product["media_id"]], "expected_version": updated.json()["version"]},
     )
     assert cross_store.status_code == 404
 
