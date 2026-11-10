@@ -337,3 +337,190 @@ def test_product_gallery_rejects_another_sellers_media(factory):
               "expected_version": product["version"]},
     )
     assert response.status_code == 403
+
+def test_product_variants_have_independent_sku_price_stock_cart_and_cancel(factory):
+    seller = factory.seller()
+    product = factory.product(seller, stock=7, price=20000)
+    payload = {
+        "expected_version": product["version"],
+        "variants": [
+            {
+                "sku": "TSHIRT-RED-S",
+                "attributes": {"اللون": "أحمر", "المقاس": "S"},
+                "price_fils": 15000,
+                "stock": 3,
+            },
+            {
+                "sku": "TSHIRT-BLUE-M",
+                "attributes": {"اللون": "أزرق", "المقاس": "M"},
+                "price_fils": 18000,
+                "stock": 4,
+            },
+        ],
+    }
+    saved = seller["client"].put(
+        f"/api/seller/products/{product['id']}/variants", json=payload
+    )
+    assert saved.status_code == 200, saved.text
+    variants = saved.json()["variants"]
+    assert len(variants) == 2
+    assert [v["sku"] for v in variants] == ["TSHIRT-RED-S", "TSHIRT-BLUE-M"]
+
+    # A configured product is not publicly available until moderation is complete.
+    assert factory.client().get(f"/api/products/{product['id']}").status_code == 404
+    with factory.db.transaction() as connection:
+        connection.execute("UPDATE products SET status='active' WHERE id=?", (product["id"],))
+
+    public = factory.client().get(f"/api/products/{product['id']}")
+    assert public.status_code == 200
+    assert len(public.json()["variants"]) == 2
+    assert public.json()["variants"][0]["attributes"] == {"اللون": "أحمر", "المقاس": "S"}
+
+    buyer = factory.user()
+    red, blue = variants
+    first = buyer["client"].put(
+        "/api/cart", json={"product_id": product["id"], "variant_id": red["id"], "quantity": 2}
+    )
+    assert first.status_code == 200, first.text
+    second = buyer["client"].put(
+        "/api/cart", json={"product_id": product["id"], "variant_id": blue["id"], "quantity": 1}
+    )
+    assert second.status_code == 200, second.text
+    quote = second.json()
+    items = quote["groups"][0]["items"]
+    assert len(items) == 2
+    assert {(item["variant_sku"], item["unit_price_fils"], item["stock"]) for item in items} == {
+        ("TSHIRT-RED-S", 15000, 3),
+        ("TSHIRT-BLUE-M", 18000, 4),
+    }
+    assert quote["subtotal_fils"] == 48000
+
+    oversell = buyer["client"].put(
+        "/api/cart", json={"product_id": product["id"], "variant_id": red["id"], "quantity": 4}
+    )
+    assert oversell.status_code == 409
+    missing_choice = buyer["client"].put(
+        "/api/cart", json={"product_id": product["id"], "quantity": 1}
+    )
+    assert missing_choice.status_code == 422
+
+    result, _, _ = factory.checkout(buyer, quote)
+    assert result.status_code == 201, result.text
+    order = result.json()["order"]
+    shipment = order["shipments"][0]
+    saved_lines = shipment["items"]
+    assert len(saved_lines) == 2
+    assert {item["variant_sku"] for item in saved_lines} == {"TSHIRT-RED-S", "TSHIRT-BLUE-M"}
+    assert {item["variant_label"] for item in saved_lines} == {"أحمر · S", "أزرق · M"}
+
+    with factory.db.read() as connection:
+        balances = {
+            row["sku"]: row["stock"]
+            for row in connection.execute(
+                "SELECT sku,stock FROM product_variants WHERE product_id=?", (product["id"],)
+            )
+        }
+        aggregate = connection.execute(
+            "SELECT stock FROM products WHERE id=?", (product["id"],)
+        ).fetchone()["stock"]
+    assert balances == {"TSHIRT-RED-S": 1, "TSHIRT-BLUE-M": 3}
+    assert aggregate == 4
+
+    cancelled = buyer["client"].post(
+        f"/api/orders/{order['id']}/shipments/{shipment['id']}/cancel"
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    with factory.db.read() as connection:
+        balances = {
+            row["sku"]: row["stock"]
+            for row in connection.execute(
+                "SELECT sku,stock FROM product_variants WHERE product_id=?", (product["id"],)
+            )
+        }
+        aggregate = connection.execute(
+            "SELECT stock FROM products WHERE id=?", (product["id"],)
+        ).fetchone()["stock"]
+    assert balances == {"TSHIRT-RED-S": 3, "TSHIRT-BLUE-M": 4}
+    assert aggregate == 7
+
+
+def test_product_variants_reject_duplicate_skus_attributes_and_foreign_ids(factory):
+    seller = factory.seller()
+    product = factory.product(seller)
+    endpoint = f"/api/seller/products/{product['id']}/variants"
+    duplicate_sku = {
+        "expected_version": product["version"],
+        "variants": [
+            {"sku": "DUP-SKU", "attributes": {"color": "red"}, "price_fils": 10000, "stock": 1},
+            {"sku": "dup-sku", "attributes": {"color": "blue"}, "price_fils": 11000, "stock": 1},
+        ],
+    }
+    assert seller["client"].put(endpoint, json=duplicate_sku).status_code == 422
+
+    duplicate_attributes = {
+        "expected_version": product["version"],
+        "variants": [
+            {"sku": "ATTR-1", "attributes": {"color": "red"}, "price_fils": 10000, "stock": 1},
+            {"sku": "ATTR-2", "attributes": {"color": "red"}, "price_fils": 11000, "stock": 1},
+        ],
+    }
+    assert seller["client"].put(endpoint, json=duplicate_attributes).status_code == 422
+
+    other = factory.seller()
+    other_product = factory.product(other)
+    other_variant = other["client"].put(
+        f"/api/seller/products/{other_product['id']}/variants",
+        json={
+            "expected_version": other_product["version"],
+            "variants": [
+                {"sku": "FOREIGN-1", "attributes": {"color": "green"}, "price_fils": 10000, "stock": 1}
+            ],
+        },
+    )
+    assert other_variant.status_code == 200
+    foreign_id = other_variant.json()["variants"][0]["id"]
+
+    denied = seller["client"].put(
+        endpoint,
+        json={
+            "expected_version": product["version"],
+            "variants": [
+                {"id": foreign_id, "sku": "FOREIGN-1", "attributes": {"color": "green"},
+                 "price_fils": 10000, "stock": 1}
+            ],
+        },
+    )
+    assert denied.status_code == 403
+
+
+def test_variant_configuration_rejects_stale_product_version_and_base_stock_edits(factory):
+    seller = factory.seller()
+    product = factory.product(seller)
+    endpoint = f"/api/seller/products/{product['id']}/variants"
+    payload = {
+        "expected_version": product["version"],
+        "variants": [
+            {"sku": "VERSION-1", "attributes": {"color": "red"}, "price_fils": 10000, "stock": 2}
+        ],
+    }
+    first = seller["client"].put(endpoint, json=payload)
+    assert first.status_code == 200, first.text
+    stale = seller["client"].put(endpoint, json=payload)
+    assert stale.status_code == 409
+
+    edit = {
+        key: product[key]
+        for key in (
+            "category_id", "title_ar", "title_en", "description_ar", "description_en",
+            "price_fils", "stock", "sku", "media_id",
+        )
+    }
+    edit.update(expected_version=first.json()["version"])
+    response = seller["client"].put(f"/api/seller/products/{product['id']}", json=edit)
+    assert response.status_code == 422
+
+    stock_response = seller["client"].patch(
+        f"/api/seller/products/{product['id']}/stock",
+        json={"stock": 8, "expected_version": first.json()["version"]},
+    )
+    assert stock_response.status_code == 422

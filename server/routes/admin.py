@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from ..commerce import PRODUCT_SQL, product_dict, store_dict
 from ..database import now
@@ -84,6 +85,14 @@ def products(request: Request,user=Depends(admin_user)):
                 {'media_id':image['media_id'],'position':image['position'],
                  'url':f"/media/{image['media_id']}/480.webp"}
                 for image in gallery
+            ]
+            variants = c.execute('''SELECT sku,attributes_json,price_fils,compare_at_fils,stock,active
+              FROM product_variants WHERE product_id=? ORDER BY id''',(row['id'],)).fetchall()
+            item['variants'] = [
+                {'sku':variant['sku'],'attributes':json.loads(variant['attributes_json']),
+                 'price_fils':variant['price_fils'],'compare_at_fils':variant['compare_at_fils'],
+                 'stock':variant['stock'],'active':bool(variant['active'])}
+                for variant in variants
             ]
             result.append(item)
     return {'products':result}

@@ -132,7 +132,7 @@ def edit_product(product_id: int,body: schemas.ProductInput,request: Request,use
                 "SELECT 1 FROM product_variants WHERE product_id=? AND active=TRUE LIMIT 1",
                 (product_id,),
             ).fetchone()
-            if has_variants and (body.stock != r['stock'] or body.price_fils != r['price_fils']):
+            if has_variants and (body.stock != r['stock'] or body.price_fils != r['price_fils'] or body.compare_at_fils is not None):
                 fail('invalid_input',422)
             data = body.model_dump(exclude={'expected_version'})
             c.execute('UPDATE products SET '+','.join(k+'=?' for k in data)+',updated_at=?,version=version+1,review_note=\'\' WHERE id=?',
@@ -237,6 +237,8 @@ def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
     try:
         with request.app.state.db.transaction() as c:
             store = own_store(c,user)
+            if store['status'] != 'active':
+                fail('store_pending',403)
             product = c.execute('SELECT * FROM products WHERE id=? AND store_id=?',
                                 (product_id,store['id'])).fetchone()
             if not product:
@@ -276,7 +278,7 @@ def set_product_variants(product_id: int,body: schemas.ProductVariantsInput,
                 else:
                     old = existing_by_id[item.id]
                     variant_id = item.id
-                    delta = item.stock - old['stock']
+                    delta = item.stock - old['stock'] if old['active'] else item.stock
                     reason = f'variant_adjust_{variant_id}_{old["version"]+1}'
                     c.execute('''UPDATE product_variants SET sku=?,attributes_json=?,price_fils=?,
                       compare_at_fils=?,stock=?,active=TRUE,version=version+1,updated_at=?
