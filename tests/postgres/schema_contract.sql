@@ -8,6 +8,7 @@ DECLARE
   forced_count integer;
   policy_count integer;
   trigger_count integer;
+  message_guard_count integer;
 BEGIN
   SELECT count(*), count(*) FILTER (WHERE c.relrowsecurity),
          count(*) FILTER (WHERE c.relforcerowsecurity)
@@ -16,8 +17,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 21 OR rls_count <> 21 OR forced_count <> 21 THEN
-    RAISE EXCEPTION 'Expected 21 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 23 OR rls_count <> 23 OR forced_count <> 23 THEN
+    RAISE EXCEPTION 'Expected 23 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -37,7 +38,17 @@ BEGIN
   IF trigger_count <> 4 THEN
     RAISE EXCEPTION 'Expected four append-only guards; got %', trigger_count;
   END IF;
-END $$;
+
+  SELECT count(*) INTO message_guard_count
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN ('messages_sender_participant','immutable_messages_update');
+  IF message_guard_count <> 2 THEN
+    RAISE EXCEPTION 'Expected participant and append-only message guards; got %', message_guard_count;
+  END IF;
+END $;
 
 -- Validate critical monetary and identity constraints with rollback-only fixtures.
 BEGIN;

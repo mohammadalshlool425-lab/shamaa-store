@@ -89,7 +89,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
-    assert adapter.schema_version() == 4
+    assert adapter.schema_version() == 5
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")
@@ -202,7 +202,7 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
     db = Database(path)
     assert db.schema_version() == 1
     db.initialize()
-    assert db.schema_version() == 4
+    assert db.schema_version() == 5
 
     with db.read() as connection:
         assert connection.execute(
@@ -220,3 +220,22 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='product_variants'"
         ).fetchone()[0] == 1
+
+def test_conversation_migration_creates_private_append_only_message_tables(tmp_path):
+    db = Database(tmp_path / "messages-schema.sqlite3")
+    db.initialize()
+    assert db.schema_version() == 5
+    with db.read() as connection:
+        tables = {row["name"] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        assert {"conversations", "messages"} <= tables
+        triggers = {row["name"] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )}
+        assert {
+            "messages_sender_participant",
+            "immutable_messages_update",
+            "immutable_messages_delete",
+        } <= triggers
+
