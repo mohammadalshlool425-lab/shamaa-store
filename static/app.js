@@ -635,8 +635,15 @@ document.addEventListener('submit',async e=>{
     method:'PUT',body:{expected_version:S.editing.version,variants}
    });
    S.editing.version=result.version;
+   S.editing.status=result.status;
+   S.editing.stock=result.stock;
+   S.editing.price_fils=result.price_fils;
+   S.editing.compare_at_fils=null;
+   S.editing.has_variants=true;
+   S.editing.variants=result.variants;
+   S.products.set(S.editing.id,S.editing);
    closeModal();toast(tr('حُفظت المتغيرات ومخزونها. أُرسل المنتج للمراجعة.','Options and stock saved. The product has been sent for review.'));
-   renderRoute();
+   await renderRoute();
   }
   else if(form.id==='stock-form'){
    await api('/api/seller/products/'+S.editing.id+'/stock',{method:'PATCH',body:{stock:Number(v('stock')),expected_version:S.editing.version}});closeModal();toast(tr('حُدّث المخزون وسُجّلت الحركة.','Stock updated and the movement recorded.'));renderRoute();
