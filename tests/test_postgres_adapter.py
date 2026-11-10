@@ -83,7 +83,9 @@ def test_psycopg_adapter_executes_portable_contract_against_postgresql():
 
 
 def test_postgres_adapter_rejects_unsafe_configuration():
-    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL", "postgresql://invalid:invalid@localhost/db")
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL adapter integration test requires SHAMAA_TEST_DATABASE_URL")
     from server.postgres_database import PostgresDatabase
 
     with pytest.raises(ValueError):
