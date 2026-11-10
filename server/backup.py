@@ -14,7 +14,7 @@ import sqlite3
 import tarfile
 import tempfile
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from .database import now
+from .database import now, LATEST_SCHEMA_VERSION
 from .config import ROOT
 
 HEADER = b'SHAMA-BK1'
@@ -138,7 +138,8 @@ def restore_backup(source,destination,key,scratch):
         with closing(sqlite3.connect(database)) as c:
             if c.execute('PRAGMA integrity_check').fetchone()[0]!='ok' or c.execute('PRAGMA foreign_key_check').fetchone():
                 raise ValueError('Database integrity validation failed')
-            if c.execute('PRAGMA user_version').fetchone()[0]!=1:
+            schema_version = c.execute('PRAGMA user_version').fetchone()[0]
+            if not 1 <= schema_version <= LATEST_SCHEMA_VERSION:
                 raise ValueError('Unsupported schema version')
             for (storage_key,) in c.execute('SELECT storage_key FROM media'):
                 for size in (480,960):

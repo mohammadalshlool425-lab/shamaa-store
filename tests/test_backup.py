@@ -8,7 +8,7 @@ import pytest
 from cryptography.fernet import Fernet
 from cryptography.exceptions import InvalidTag
 from server.backup import HEADER, create_backup, encrypt_file, restore_backup, rotate_backups
-from server.database import now
+from server.database import now, Database, SCHEMA_PATH
 from server.security import digest
 
 
@@ -77,3 +77,37 @@ def test_rotation_failure_never_prunes_or_overwrites_live_data(factory,tmp_path)
     assert old.exists()
     with pytest.raises(ValueError):rotate_backups(factory.db,factory.settings,tmp_path,Fernet.generate_key().decode(),14)
     with pytest.raises(ValueError):rotate_backups(factory.db,factory.settings,folder,Fernet.generate_key().decode(),0)
+
+
+
+def test_restore_accepts_v1_backup_and_application_initializer_upgrades_it(factory, tmp_path):
+    legacy_dir = tmp_path / "legacy-source"
+    legacy_dir.mkdir()
+    legacy_db = legacy_dir / "marketplace.sqlite3"
+    with closing(sqlite3.connect(legacy_db)) as connection:
+        connection.executescript(
+            SCHEMA_PATH.read_text(encoding="utf-8") + "\nPRAGMA user_version=1;"
+        )
+        connection.commit()
+
+    info = legacy_dir / "backup-info.json"
+    info.write_text('{"version":1,"created_at":1,"media_records":0}', encoding="utf-8")
+    archive = tmp_path / "legacy-v1.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(legacy_db, arcname="marketplace.sqlite3")
+        tar.add(info, arcname="backup-info.json")
+
+    key = Fernet.generate_key().decode()
+    encrypted = tmp_path / "legacy-v1.shama"
+    encrypt_file(archive, encrypted, key)
+    restored = restore_backup(encrypted, tmp_path / "restored-v1", key, tmp_path)
+    restored_db = restored / "marketplace.sqlite3"
+
+    with closing(sqlite3.connect(restored_db)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+    # The ordinary application initializer performs the transactional forward migration.
+    Database(restored_db).initialize()
+    with closing(sqlite3.connect(restored_db)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
