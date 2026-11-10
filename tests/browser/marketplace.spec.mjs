@@ -170,10 +170,16 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await buyer.locator('.product-card .product-name').click();
  await buyer.locator('#detail-variant').selectOption({index:1});
  await expect(buyer.locator('#variant-price-info')).toContainText('١٧٫١٢٥');
+ const firstCartSave=buyer.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname==='/api/cart');
  await buyer.locator('[data-action=detail-add]').click();
+ await firstCartSave;
+ await expect(buyer.locator('#cart-count')).toHaveText('١');
  await buyer.locator('#detail-variant').selectOption({index:2});
  await expect(buyer.locator('#variant-price-info')).toContainText('١٨٫١٢٥');
+ const secondCartSave=buyer.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname==='/api/cart');
  await buyer.locator('[data-action=detail-add]').click();
+ await secondCartSave;
+ await expect(buyer.locator('#cart-count')).toHaveText('٢');
  await buyer.goto('/cart');
  await expect(buyer.locator('.cart-item')).toHaveCount(2);
  await expect(buyer.locator('.cart-item').filter({hasText:'دافئ'})).toHaveCount(1);
