@@ -175,8 +175,8 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await buyer.locator('[data-action=detail-add]').click();
  await buyer.goto('/cart');
  await expect(buyer.locator('.cart-item')).toHaveCount(2);
- await expect(buyer.locator('.cart-item')).toContainText('دافئ');
- await expect(buyer.locator('.cart-item')).toContainText('بارد');
+ await expect(buyer.locator('.cart-item').filter({hasText:'دافئ'})).toHaveCount(1);
+ await expect(buyer.locator('.cart-item').filter({hasText:'بارد'})).toHaveCount(1);
  await accessible(buyer);
  await buyerContext.close();
 
