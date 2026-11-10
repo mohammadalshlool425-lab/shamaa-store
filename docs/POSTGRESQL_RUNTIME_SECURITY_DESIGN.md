@@ -95,3 +95,20 @@ The first adapter implementation is isolated in `server/postgres_database.py`. I
 `PostgresDatabase.initialize()` is intentionally validation-only: migrations are applied out-of-band and the adapter refuses to start unless all 19 foundation tables exist. It does not create roles, grant privileges, open RLS, or change the live Supabase project. SQLite remains the default application backend; runtime switching is not enabled in this gate.
 
 The PostgreSQL CI job now runs a real Psycopg integration test against its isolated PostgreSQL 17 service. The test covers schema validation, generated IDs via `RETURNING`, positional and named row access, qmark parameter binding, affected-row counts, commit, rollback, and integrity-error translation. It uses a disposable test table and removes it afterward.
+
+## Gate A2 — FastAPI application smoke test on PostgreSQL
+
+The PostgreSQL 17 CI job now boots the actual FastAPI application with the
+Psycopg adapter injected through the existing database protocol. It verifies
+health/schema checks, category bootstrap, public catalog reads, account
+registration, session-cookie authentication, duplicate-email conflict
+translation, and transactional email-outbox delivery using a private temporary
+file transport. The test uses a unique synthetic email and isolated temporary
+filesystem paths; it does not call external SMTP or the live Supabase project.
+
+This CI database runs as its service superuser to apply the foundation
+migration and inspect the test schema. A superuser bypasses RLS, so this smoke
+test proves SQL/application compatibility only. It is NOT evidence that
+RLS policies, runtime grants, or cross-user isolation work. Those remain Gate B
+and Gate C requirements and must be tested with a dedicated non-owner
+NOBYPASSRLS role before any production cutover.
