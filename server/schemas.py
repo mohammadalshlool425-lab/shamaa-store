@@ -115,53 +115,9 @@ class ProductImagesInput(Input):
         return value
 
 
-
 class ProductVariantInput(Input):
     id: int | None = Field(default=None, ge=1, strict=True)
-    sku: str = Field(min_length=1, max_length=60, pattern=r'^[\w.-]+$')
-    stock: int = Field(ge=0, le=1000000, strict=True)
-    expected_version: int = Field(ge=1, strict=True)
-
-
-class CartItem(Input):
-    product_id: int = Field(ge=1, strict=True)
-    variant_id: int | None = Field(default=None, ge=1, strict=True)
-    quantity: int = Field(ge=0, le=99, strict=True)
-
-
-class Checkout(Input):
-    recipient: str = Field(min_length=2, max_length=80)
-    phone: str = Field(pattern=r'^07[789]\d{7}$')
-    city: City
-    address: str = Field(min_length=10, max_length=400)
-    expected_total_fils: int = Field(ge=1, le=100000000000, strict=True)
-    quote_hash: str = Field(min_length=64, max_length=64)
-
-
-class StatusChange(Input):
-    status: Literal['confirmed','preparing','shipped','delivered','cancelled']
-    expected_status: Literal['new','confirmed','preparing','shipped','delivered','cancelled']
-    note: str = Field(default='', max_length=500)
-
-
-class Review(Input):
-    approved: bool
-    note: str = Field(default='', max_length=500)
-
-
-class UserActive(Input):
-    active: bool
-
-
-class SettingsInput(Input):
-    commission_bps: int = Field(ge=0, le=5000, strict=True)
-    home_title_ar: str = Field(min_length=3, max_length=100)
-    home_title_en: str = Field(min_length=3, max_length=100)
-
-
-class CommissionInput(Input):
-    commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
-)
+    sku: str = Field(min_length=1, max_length=60, pattern='^[A-Za-z0-9_.-]+$')
     attributes: dict[str, str] = Field(min_length=1, max_length=5)
     price_fils: int = Field(ge=1, le=1000000000, strict=True)
     compare_at_fils: int | None = Field(default=None, ge=2, le=1000000000, strict=True)
@@ -209,50 +165,7 @@ class ProductVariantsInput(Input):
             raise ValueError('Variant identifiers must be unique')
         return self
 
-
 class StockInput(Input):
-    stock: int = Field(ge=0, le=1000000, strict=True)
-    expected_version: int = Field(ge=1, strict=True)
-
-
-class CartItem(Input):
-    product_id: int = Field(ge=1, strict=True)
-    quantity: int = Field(ge=0, le=99, strict=True)
-
-
-class Checkout(Input):
-    recipient: str = Field(min_length=2, max_length=80)
-    phone: str = Field(pattern=r'^07[789]\d{7}$')
-    city: City
-    address: str = Field(min_length=10, max_length=400)
-    expected_total_fils: int = Field(ge=1, le=100000000000, strict=True)
-    quote_hash: str = Field(min_length=64, max_length=64)
-
-
-class StatusChange(Input):
-    status: Literal['confirmed','preparing','shipped','delivered','cancelled']
-    expected_status: Literal['new','confirmed','preparing','shipped','delivered','cancelled']
-    note: str = Field(default='', max_length=500)
-
-
-class Review(Input):
-    approved: bool
-    note: str = Field(default='', max_length=500)
-
-
-class UserActive(Input):
-    active: bool
-
-
-class SettingsInput(Input):
-    commission_bps: int = Field(ge=0, le=5000, strict=True)
-    home_title_ar: str = Field(min_length=3, max_length=100)
-    home_title_en: str = Field(min_length=3, max_length=100)
-
-
-class CommissionInput(Input):
-    commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
-)
     stock: int = Field(ge=0, le=1000000, strict=True)
     expected_version: int = Field(ge=1, strict=True)
 
@@ -260,97 +173,6 @@ class CommissionInput(Input):
 class CartItem(Input):
     product_id: int = Field(ge=1, strict=True)
     variant_id: int | None = Field(default=None, ge=1, strict=True)
-    quantity: int = Field(ge=0, le=99, strict=True)
-
-
-class Checkout(Input):
-    recipient: str = Field(min_length=2, max_length=80)
-    phone: str = Field(pattern=r'^07[789]\d{7}$')
-    city: City
-    address: str = Field(min_length=10, max_length=400)
-    expected_total_fils: int = Field(ge=1, le=100000000000, strict=True)
-    quote_hash: str = Field(min_length=64, max_length=64)
-
-
-class StatusChange(Input):
-    status: Literal['confirmed','preparing','shipped','delivered','cancelled']
-    expected_status: Literal['new','confirmed','preparing','shipped','delivered','cancelled']
-    note: str = Field(default='', max_length=500)
-
-
-class Review(Input):
-    approved: bool
-    note: str = Field(default='', max_length=500)
-
-
-class UserActive(Input):
-    active: bool
-
-
-class SettingsInput(Input):
-    commission_bps: int = Field(ge=0, le=5000, strict=True)
-    home_title_ar: str = Field(min_length=3, max_length=100)
-    home_title_en: str = Field(min_length=3, max_length=100)
-
-
-class CommissionInput(Input):
-    commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
-)
-    attributes: dict[str, str] = Field(min_length=1, max_length=5)
-    price_fils: int = Field(ge=1, le=1000000000, strict=True)
-    compare_at_fils: int | None = Field(default=None, ge=2, le=1000000000, strict=True)
-    stock: int = Field(ge=0, le=1000000, strict=True)
-
-    @field_validator('attributes')
-    @classmethod
-    def validate_attributes(cls, value):
-        cleaned = {}
-        for key, item in value.items():
-            name, val = key.strip(), item.strip()
-            if not name or len(name) > 32 or not val or len(val) > 80:
-                raise ValueError('Variant attribute names and values must be concise and non-empty')
-            cleaned[name] = val
-        if len(cleaned) != len(value):
-            raise ValueError('Variant attributes cannot have blank names')
-        return cleaned
-
-    @model_validator(mode='after')
-    def valid_variant_price(self):
-        if self.compare_at_fils is not None and self.compare_at_fils <= self.price_fils:
-            raise ValueError('Variant original price must exceed its sale price')
-        return self
-
-
-class ProductVariantsInput(Input):
-    expected_version: int = Field(ge=1, strict=True)
-    variants: list[ProductVariantInput] = Field(min_length=1, max_length=50)
-
-    @model_validator(mode='after')
-    def unique_variant_definitions(self):
-        skus = [variant.sku.casefold() for variant in self.variants]
-        attributes = [
-            json.dumps(variant.attributes, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
-            for variant in self.variants
-        ]
-        if len(set(skus)) != len(skus):
-            raise ValueError('Variant SKUs must be unique')
-        if len(set(attributes)) != len(attributes):
-            raise ValueError('Variant attribute combinations must be unique')
-        if sum(variant.stock for variant in self.variants) > 1000000:
-            raise ValueError('Total variant stock exceeds the product stock limit')
-        ids = [variant.id for variant in self.variants if variant.id is not None]
-        if len(set(ids)) != len(ids):
-            raise ValueError('Variant identifiers must be unique')
-        return self
-
-
-class StockInput(Input):
-    stock: int = Field(ge=0, le=1000000, strict=True)
-    expected_version: int = Field(ge=1, strict=True)
-
-
-class CartItem(Input):
-    product_id: int = Field(ge=1, strict=True)
     quantity: int = Field(ge=0, le=99, strict=True)
 
 
