@@ -273,8 +273,8 @@ class Database:
             if version == 4:
                 migration = MIGRATION_DIR / '0005_conversations_messages.sql'
                 try:
-                    c.executescript('BEGIN IMMEDIATE;\\n' + migration.read_text(encoding='utf-8')
-                                    + '\\nPRAGMA user_version=5; COMMIT;')
+                    c.executescript('BEGIN IMMEDIATE;\n' + migration.read_text(encoding='utf-8')
+                                    + '\nPRAGMA user_version=5; COMMIT;')
                 except BaseException:
                     if c.in_transaction:
                         c.rollback()

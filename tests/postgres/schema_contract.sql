@@ -48,7 +48,7 @@ BEGIN
   IF message_guard_count <> 2 THEN
     RAISE EXCEPTION 'Expected participant and append-only message guards; got %', message_guard_count;
   END IF;
-END $;
+END $$;
 
 -- Validate critical monetary and identity constraints with rollback-only fixtures.
 BEGIN;
