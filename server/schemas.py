@@ -199,10 +199,10 @@ class Review(Input):
 
 
 def _normalize_message_body(value):
-    value = unicodedata.normalize('NFC', value.replace('\\r\\n','\\n').replace('\\r','\\n')).strip()
+    value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n')).strip()
     if not value or len(value) > 4000:
         raise ValueError('Message must contain between 1 and 4000 characters')
-    if any(unicodedata.category(char) == 'Cc' and char not in ('\\n','\\t') for char in value):
+    if any(unicodedata.category(char) == 'Cc' and char not in ('\n', '\t') for char in value):
         raise ValueError('Message contains unsupported control characters')
     return value
 
@@ -210,19 +210,7 @@ def _normalize_message_body(value):
 class ConversationStart(Input):
     seller_order_id: int = Field(ge=1, strict=True)
     body: str = Field(min_length=1, max_length=4000)
-    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]+
-    active: bool
-
-
-class SettingsInput(Input):
-    commission_bps: int = Field(ge=0, le=5000, strict=True)
-    home_title_ar: str = Field(min_length=3, max_length=100)
-    home_title_en: str = Field(min_length=3, max_length=100)
-
-
-class CommissionInput(Input):
-    commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
-)
+    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]{16,80}$')
 
     @field_validator('body')
     @classmethod
@@ -232,24 +220,13 @@ class CommissionInput(Input):
 
 class MessageSend(Input):
     body: str = Field(min_length=1, max_length=4000)
-    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]+
-    active: bool
-
-
-class SettingsInput(Input):
-    commission_bps: int = Field(ge=0, le=5000, strict=True)
-    home_title_ar: str = Field(min_length=3, max_length=100)
-    home_title_en: str = Field(min_length=3, max_length=100)
-
-
-class CommissionInput(Input):
-    commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
-)
+    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]{16,80}$')
 
     @field_validator('body')
     @classmethod
     def normalize_body(cls, value):
         return _normalize_message_body(value)
+
 
 class UserActive(Input):
     active: bool
