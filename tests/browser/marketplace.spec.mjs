@@ -218,23 +218,31 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
 });
 
 test('private case history page is responsive, bilingual and accessible',async({page})=>{
+ test.setTimeout(45000);page.setDefaultTimeout(6000);page.setDefaultNavigationTimeout(10000);
  await page.setViewportSize({width:390,height:844});
  const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
- await login(page,'buyer'); // Keep authentication and case-page loading as separate checks.
- const response=await page.request.get('/api/cases');
- expect(response.status(),await response.text()).toBe(200);
- const payload=await response.json();
- expect(payload.cases).toEqual([]);
- await page.goto('/cases',{waitUntil:'domcontentloaded'});
- await expect(page.locator('.messages-layout'),await page.locator('main').innerText()).toBeVisible({timeout:12000});
- await expect(page.locator('.messages-sidebar')).toContainText('سجل الشكاوى');
- await expect(page.locator('.messages-sidebar')).toContainText('لا توجد شكاوى');
- const privatePage=await page.request.get('/cases');
+ await test.step('authenticate the buyer',async()=>{await login(page,'buyer');});
+ await test.step('verify participant API access',async()=>{
+  const response=await page.request.get('/api/cases',{timeout:6000});
+  const body=await response.text();
+  console.log('case API status:',response.status());
+  expect(response.status(),body.slice(0,500)).toBe(200);
+  expect(JSON.parse(body).cases).toEqual([]);
+ });
+ await test.step('render the private case page',async()=>{
+  await page.goto('/cases',{waitUntil:'domcontentloaded',timeout:10000});
+  await expect(page.locator('.messages-layout')).toBeVisible({timeout:6000});
+  await expect(page.locator('.messages-sidebar')).toContainText('سجل الشكاوى');
+  await expect(page.locator('.messages-sidebar')).toContainText('لا توجد شكاوى');
+ });
+ const privatePage=await page.request.get('/cases',{timeout:6000});
  expect(privatePage.headers()['cache-control']).toBe('no-store');
  await accessible(page);await assertNoOverflow(page);
- await page.locator('[data-action=language]').first().click();
- await expect(page.locator('html')).toHaveAttribute('lang','en');
- await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
+ await test.step('switch the case page to English',async()=>{
+  await page.locator('[data-action=language]').first().click();
+  await expect(page.locator('html')).toHaveAttribute('lang','en');
+  await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
+ });
  await accessible(page);await assertNoOverflow(page);
  expect(pageErrors).toEqual([]);
 });
