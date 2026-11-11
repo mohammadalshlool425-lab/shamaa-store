@@ -15,7 +15,7 @@ export const money = n => new Intl.NumberFormat(lang==='ar'?'ar-JO':'en-JO',{min
 export const number = n => new Intl.NumberFormat(lang==='ar'?'ar-JO':'en').format(n||0);
 export const date = n => new Intl.DateTimeFormat(lang==='ar'?'ar-JO':'en-GB',{dateStyle:'medium',timeStyle:'short'}).format(n*1000);
 export const currency = () => tr('د.أ','JOD');
-export const status = value => ({new:tr('طلب جديد','New'),confirmed:tr('مؤكد','Confirmed'),preparing:tr('قيد التجهيز','Preparing'),shipped:tr('تم الشحن','Shipped'),delivered:tr('تم التسليم','Delivered'),cancelled:tr('ملغى','Cancelled'),pending:tr('قيد المراجعة','In review'),active:tr('نشط','Active'),paused:tr('متوقف','Paused'),rejected:tr('مرفوض','Not approved'),draft:tr('مسودة','Draft'),suspended:tr('معلّق','Suspended')})[value]||value;
+export const status = value => ({new:tr('طلب جديد','New'),confirmed:tr('مؤكد','Confirmed'),preparing:tr('قيد التجهيز','Preparing'),shipped:tr('تم الشحن','Shipped'),delivered:tr('تم التسليم','Delivered'),seller_responded:tr('ردّ البائع','Seller replied'),resolved:tr('تمت المعالجة','Resolved'),cancelled:tr('ملغى','Cancelled'),pending:tr('قيد المراجعة','In review'),active:tr('نشط','Active'),paused:tr('متوقف','Paused'),rejected:tr('مرفوض','Not approved'),draft:tr('مسودة','Draft'),suspended:tr('معلّق','Suspended')})[value]||value;
 export function fils(value) {
  const normalized=String(value).trim();
  if (!/^\d{1,9}(\.\d{1,3})?$/.test(normalized)) throw new Error(tr('أدخل مبلغًا صحيحًا بثلاث منازل عشرية كحد أقصى.','Enter a valid amount with up to three decimal places.'));
