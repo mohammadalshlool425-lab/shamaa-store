@@ -122,7 +122,7 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await seller.locator('#city').selectOption('irbid');await seller.locator('#store-form button[type=submit]').click();
  await expect(seller.locator('.notice.warn strong')).toContainText('قيد المراجعة');
  const adminContext=await browser.newContext({locale:'ar-JO'});const admin=await adminContext.newPage();
- await login(admin,'admin',{destination:'/admin?tab=stores'});
+ await login(admin,'store_admin',{destination:'/admin?tab=stores'});
  const storeCard=admin.locator('.review-card').filter({hasText:storeName});
  await storeCard.locator('button[value=approve]').click();await expect(storeCard.locator('.pill')).toHaveText('نشط');
  await seller.goto('/seller?tab=products');await seller.locator('[data-action=new-product]').first().click();
