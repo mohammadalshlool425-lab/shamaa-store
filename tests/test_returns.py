@@ -248,10 +248,17 @@ def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(
             "SELECT seller_order_id FROM order_items WHERE id=?",
             (item["id"],),
         ).fetchone()["seller_order_id"]
+        delivered_at = c.execute(
+            "SELECT created_at FROM order_events WHERE seller_order_id=? AND to_status='delivered'",
+            (shipment_id,),
+        ).fetchone()["created_at"]
 
+    requested_at = delivered_at + 10
+    response_due_at = requested_at + return_routes.SELLER_RESPONSE_SECONDS
     common = (
         item["id"], shipment_id, market["buyer"]["id"], market["a"]["id"],
         "other", "Direct database guard test with a delivered purchased item.",
+        requested_at, response_due_at,
     )
     with factory.db.transaction() as c:
         # A user cannot replace the actual buyer identity in the row.
@@ -260,8 +267,8 @@ def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(
                 """INSERT INTO return_requests(
                      order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
                      status,requested_at,response_due_at,updated_at
-                   ) VALUES(?,?,?,?,1,?,?,'requested',100,200,100)""",
-                (item["id"],shipment_id,stranger["id"],market["a"]["id"],"other",common[5]),
+                   ) VALUES(?,?,?,?,1,?,?,'requested',?,?,?)""",
+                (item["id"],shipment_id,stranger["id"],market["a"]["id"],"other",common[5],requested_at,response_due_at,requested_at),
             )
         # Quantity is constrained by the purchased order-item row, not by caller input.
         with pytest.raises(sqlite3.IntegrityError):
@@ -269,8 +276,8 @@ def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(
                 """INSERT INTO return_requests(
                      order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
                      status,requested_at,response_due_at,updated_at
-                   ) VALUES(?,?,?,?,3,?,?,'requested',100,200,100)""",
-                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5]),
+                   ) VALUES(?,?,?,?,3,?,?,'requested',?,?,?)""",
+                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5],requested_at,response_due_at,requested_at),
             )
         # A row cannot be inserted directly as already resolved, even with closure fields filled.
         with pytest.raises(sqlite3.IntegrityError):
@@ -279,7 +286,7 @@ def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(
                      order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
                      status,requested_at,response_due_at,updated_at,return_carrier,
                      return_tracking_number,closed_at,closed_by,decision_note
-                   ) VALUES(?,?,?,?,1,?,?,'resolved',100,200,100,'Carrier','TRACK-001',100,?,'Forged closure')""",
-                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5],admin["id"]),
+                   ) VALUES(?,?,?,?,1,?,?,'resolved',?,?,?,'Carrier','TRACK-001',?,?,'Forged closure')""",
+                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5],requested_at,response_due_at,requested_at,requested_at,admin["id"]),
             )
 
