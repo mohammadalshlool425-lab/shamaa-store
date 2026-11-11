@@ -99,6 +99,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0007_shipment_cases.sql
       - name: Apply phase 2 private case attachments migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0008_case_attachments.sql
+      - name: Apply phase 2 item return requests migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0009_returns.sql
       - name: Verify schema, RLS, append-only guards and core constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/schema_contract.sql
       - name: Run Psycopg 3 adapter integration contract
