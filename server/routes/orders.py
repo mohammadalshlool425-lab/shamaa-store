@@ -19,7 +19,7 @@ NEXT = {'new':{'confirmed','cancelled'},'confirmed':{'preparing','cancelled'},
 def shipment_dict(c, row):
     d = dict(row)
     d['items'] = []
-    for item in c.execute('''SELECT product_id,variant_id,variant_sku,variant_attributes,title_ar,title_en,
+    for item in c.execute('''SELECT id,product_id,variant_id,variant_sku,variant_attributes,title_ar,title_en,
       unit_price_fils,quantity,image_url,condition,condition_note,commission_bps,commission_fils
       FROM order_items WHERE seller_order_id=?''',(row['id'],)):
         saved = dict(item)
