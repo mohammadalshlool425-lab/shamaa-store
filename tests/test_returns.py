@@ -300,3 +300,41 @@ def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(
                 (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5],requested_at,response_due_at,requested_at,requested_at,admin["id"]),
             )
 
+def test_admin_cannot_resolve_return_before_seller_confirms_receipt(market):
+    factory = market["factory"]
+    buyer = market["buyer"]["client"]
+    _, item = _delivered_item(factory, market["a"], market["buyer"], market["p"], 1)
+    opened = buyer.post("/api/returns", json={
+        "order_item_id": item["id"], "quantity": 1, "reason": "damaged",
+        "description": "وصل المنتج تالفًا وأطلب إرجاعه بعد مراجعة حالته.",
+    })
+    assert opened.status_code == 201
+    request_id = opened.json()["return"]["id"]
+    seller = market["a"]["client"]
+    approved = seller.post(
+        f"/api/returns/{request_id}/seller-decision",
+        json={"status": "approved", "note": "تم قبول طلب الإرجاع مبدئيًا."},
+    )
+    assert approved.status_code == 200
+    admin = factory.user("admin")
+    with factory.db.transaction() as c:
+        event_id = c.execute(
+            """INSERT INTO return_request_events(request_id,actor_id,actor_role,event_type,body,created_at)
+               VALUES(?,?,'admin','admin_resolved','قرار مباشر غير مصرح قبل الاستلام',?) RETURNING id""",
+            (request_id, admin["id"], 9999999999),
+        ).fetchone()["id"]
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                """UPDATE return_requests SET status='resolved',closed_at=9999999999,
+                       closed_by=?,decision_note='قرار مباشر غير مصرح قبل الاستلام',
+                       updated_at=9999999999 WHERE id=?""",
+                (admin["id"], request_id),
+            )
+    # API layer applies the same rule and rejects early resolution.
+    response = admin["client"].post(
+        f"/api/admin/returns/{request_id}/decision",
+        json={"status": "resolved", "note": "لا يجوز إغلاق الإرجاع قبل الاستلام."},
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "invalid_status"
+
