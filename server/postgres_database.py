@@ -21,7 +21,7 @@ SCHEMA_TABLES = (
     "media", "products", "carts", "orders", "seller_orders", "order_items",
     "order_events", "inventory_movements", "ledger", "notifications",
     "audit_log", "settings", "mail_outbox", "product_images", "product_variants",
-    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events", "order_case_attachments",
+    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events", "order_case_attachments", "return_requests", "return_request_events",
 )
 
 
@@ -109,7 +109,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 8 only when the foundation, commerce, reviews and case-evidence schema exist."""
+        """Return 9 only when the foundation, commerce, case evidence and returns schema exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -193,6 +193,21 @@ class PostgresDatabase:
                      )""",
                 (self.schema,),
             ).fetchone()
+            returns = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND (
+                     (table_name='return_requests' AND column_name IN (
+                       'id','order_item_id','seller_order_id','buyer_id','seller_id','quantity',
+                       'reason','description','status','requested_at','response_due_at','updated_at',
+                       'seller_note','return_carrier','return_tracking_number','closed_at','closed_by','decision_note'
+                     ))
+                     OR
+                     (table_name='return_request_events' AND column_name IN (
+                       'id','request_id','actor_id','actor_role','event_type','body','created_at'
+                     ))
+                   )""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
                     and gallery and int(gallery[0]) == 4
@@ -206,8 +221,8 @@ class PostgresDatabase:
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 8:
+        if self.schema_version() != 9:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply all reviewed Supabase migrations through version 0008 before starting the app."
+                "apply all reviewed Supabase migrations through version 0009 before starting the app."
             )
