@@ -98,7 +98,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
             if not public_api or response.status_code!=200:
                 response.headers['Vary'] = 'X-Language, Accept-Language'
         elif response.headers.get('content-type','').startswith('text/html'):
-            response.headers['Cache-Control'] = 'no-store' if path in ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites','/messages') else 'no-cache'
+            response.headers['Cache-Control'] = 'no-store' if path in ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites','/messages','/cases') else 'no-cache'
             response.headers['Vary'] = 'Cookie, Accept-Language'
         if s.production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
