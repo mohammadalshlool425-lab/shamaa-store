@@ -97,6 +97,16 @@ def test_case_replies_alternate_participants_and_admin_decision_is_audited(marke
     admin_case = next(row for row in queue.json()["cases"] if row["id"] == case_id)
     assert admin_case["buyer_name"] == market["buyer"]["email"].split("@")[0].replace("account-", "Generated user ")
     assert admin_case["events"][-1]["event_type"] == "buyer_message"
+    all_cases = admin.get("/api/admin/cases")
+    assert all_cases.status_code == 200 and len(all_cases.json()["cases"]) == 1
+    admin_detail = admin.get(f"/api/admin/cases/{case_id}")
+    assert admin_detail.status_code == 200
+    assert admin.get("/api/admin/cases/999999").status_code == 404
+    missing_decision = admin.post(
+        "/api/admin/cases/999999/decision",
+        json={"status": "resolved", "note": "لا توجد شكوى بهذا الرقم."},
+    )
+    assert missing_decision.status_code == 404
 
     decision = admin.post(
         f"/api/admin/cases/{case_id}/decision",
@@ -105,6 +115,11 @@ def test_case_replies_alternate_participants_and_admin_decision_is_audited(marke
     assert decision.status_code == 200, decision.text
     assert decision.json()["case"]["status"] == "resolved"
     assert decision.json()["case"]["events"][-1]["event_type"] == "admin_resolved"
+    repeated_decision = admin.post(
+        f"/api/admin/cases/{case_id}/decision",
+        json={"status": "rejected", "note": "محاولة قرار ثانٍ بعد الإغلاق."},
+    )
+    assert repeated_decision.status_code == 409
     closed = buyer.post(
         f"/api/cases/{case_id}/messages",
         json={"body": "رسالة بعد الإغلاق."},
@@ -136,6 +151,16 @@ def test_case_reason_and_delivery_window_are_enforced_from_shipment_events(marke
 
     too_late = delivered_at + case_routes.CASE_WINDOW_SECONDS + 1
     monkeypatch.setattr(case_routes, "now", lambda: too_late)
+    too_early = delivered_at - 1
+    monkeypatch.setattr(case_routes, "now", lambda: too_early)
+    early = buyer.post("/api/cases", json={
+        "seller_order_id": shipment["id"],
+        "reason": "damaged",
+        "description": "أحاول فتح الشكوى قبل تسجيل حدث التسليم النهائي.",
+    })
+    assert early.status_code == 409
+    assert early.json()["code"] == "case_window_expired"
+
     expired = buyer.post("/api/cases", json={
         "seller_order_id": shipment["id"],
         "reason": "damaged",
@@ -158,6 +183,15 @@ def test_case_reason_and_delivery_window_are_enforced_from_shipment_events(marke
         "description": "وصل المنتج متضررًا وأرفق وصفًا تفصيليًا للمشكلة هنا.",
     })
     assert accepted.status_code == 201, accepted.text
+    admin = factory.user("admin")["client"]
+    detail = admin.get(f"/api/admin/cases/{accepted.json()['case']['id']}")
+    assert detail.status_code == 200
+    rejected = admin.post(
+        f"/api/admin/cases/{accepted.json()['case']['id']}/decision",
+        json={"status": "rejected", "note": "لم يثبت سبب الشكوى ضمن المعلومات المتاحة."},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["case"]["status"] == "rejected"
 
 
 def test_case_opening_rejects_wrong_owner_unshipped_and_unverified_accounts(market):
@@ -172,6 +206,8 @@ def test_case_opening_rejects_wrong_owner_unshipped_and_unverified_accounts(mark
     }
     assert stranger.post("/api/cases", json=payload).status_code == 404
     assert market["b"]["client"].post("/api/cases", json=payload).status_code == 404
+    wrong_reason = buyer.post("/api/cases", json={**payload, "reason": "damaged"})
+    assert wrong_reason.status_code == 422
 
     # A fresh order remains in the new state and cannot enter the case workflow.
     second_product = factory.product(market["a"], stock=2)
@@ -237,7 +273,7 @@ def test_case_event_and_status_guards_reject_forgery_and_history_changes(market)
 
         try:
             c.execute(
-                """UPDATE order_cases SET status='resolved',closed_at=2,closed_by=?,resolution_note='fake',
+                """UPDATE order_cases SET status='resolved',closed_at=2,closed_by=?,resolution_note='forged decision',
                        updated_at=2 WHERE id=?""",
                 (stranger["id"], case_id),
             )
