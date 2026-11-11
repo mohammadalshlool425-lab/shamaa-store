@@ -305,7 +305,6 @@ test('buyer, seller and administrator complete an item return without automatic 
  const seller=await sellerContext.newPage();
  await login(seller,'return_seller',{destination:'/returns'});
  await expect(seller.locator('#return-seller-decision-form')).toBeVisible();
- await seller.locator('#return-seller-note-'+fixture.return_item_id).count().catch(()=>0);
  await seller.locator('#return-seller-decision-form textarea[name=note]').fill('تم قبول الإرجاع وفق وصف حالة المنتج.');
  await seller.locator('#return-seller-decision-form button[value=approved]').click();
  await expect(seller.locator('.return-card .pill')).toContainText('مقبول');
@@ -356,7 +355,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.7');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.8');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
   const messagesPage=await page.request.get('/messages');
   const casesPage=await page.request.get('/cases');
@@ -365,7 +364,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
- const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.7');return(await c.keys()).map(r=>new URL(r.url).pathname);});
+ const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.8');return(await c.keys()).map(r=>new URL(r.url).pathname);});
  expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases|api\/cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
   await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
