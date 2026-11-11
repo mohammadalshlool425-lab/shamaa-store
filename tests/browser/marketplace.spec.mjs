@@ -336,6 +336,14 @@ test('buyer, seller and administrator complete an item return without automatic 
  await login(admin,'admin',{destination:'/returns'});
  await expect(admin.locator('#return-admin-decision-form')).toBeVisible();
  await admin.locator('#return-admin-decision-form textarea[name=note]').fill('تم استلام المرتجع ومراجعة سجل العملية.');
+ // This decision is protected by a fresh password + TOTP check (10-minute window).
+ await admin.waitForTimeout(31000);
+ await admin.locator('#return-admin-decision-form [data-action=reauth]').click();
+ await admin.locator('#reauth-form input[name=password]').fill(fixture.admin.password);
+ const freshOtp=execFileSync(PY,['-c','import pyotp,sys;print(pyotp.TOTP(sys.stdin.read()).now())'],{input:fixture.admin.secret,encoding:'utf8'}).trim();
+ await admin.locator('#reauth-form input[name=otp]').fill(freshOtp);
+ await admin.locator('#reauth-form button[type=submit]').click();
+ await expect(admin.locator('#reauth-form')).toHaveCount(0);
  await admin.locator('#return-admin-decision-form button[value=resolved]').click();
  await expect(admin.locator('.return-card .pill')).toContainText('تمت المعالجة');
 
