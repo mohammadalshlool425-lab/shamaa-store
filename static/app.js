@@ -608,6 +608,8 @@ document.addEventListener('click',async e=>{
   else if(action==='revoke-session'){await api('/api/auth/sessions/'+button.dataset.id,{method:'DELETE'});if(button.dataset.current==='true'){S.user=null;setCsrf('');await getCart();}toast(tr('انتهت الجلسة.','Session revoked.'));renderRoute();}
   else if(action==='cancel-order')confirmAction(tr('نلغي هذه الشحنة؟','Cancel this shipment?'),tr('سيُعاد المخزون ولن تتأثر شحنات المتاجر الأخرى. لا يوجد مبلغ إلكتروني لاسترداده.','Stock will be restored without affecting other stores’ shipments. There is no online payment to refund.'),async()=>{await api(`/api/orders/${button.dataset.order}/shipments/${id}/cancel`,{method:'POST'});toast(tr('أُلغيت الشحنة وأُعيد مخزونها.','The shipment was cancelled and its stock restored.'));renderRoute();});
   else if(action==='message-shipment')openShipmentConversation(id);
+  else if(action==='case-shipment')openShipmentCase(id,button.dataset.status);
+  else if(action==='select-case')await navigate('/cases?case='+id);
    else if(action==='select-conversation')await navigate('/messages?conversation='+id);
    else if(action==='new-product')await openProduct();
   else if(action==='edit-product')await openProduct(S.products.get(id));
@@ -679,6 +681,18 @@ document.addEventListener('submit',async e=>{
     const conversationId=Number(form.dataset.id);
     await api('/api/conversations/'+conversationId+'/messages',{method:'POST',body:{body:v('body'),client_key:v('client_key')}});
     await renderRoute();
+   }
+   else if(form.id==='case-create-form'){
+    const result=await api('/api/cases',{method:'POST',body:{seller_order_id:Number(v('seller_order_id')),reason:v('reason'),description:v('description')}});
+    closeModal();toast(tr('سُجلت الشكوى المرتبطة بالشحنة.','Your shipment case has been recorded.'));navigate('/cases?case='+result.case.id);
+   }
+   else if(form.id==='case-message-form'){
+    await api('/api/cases/'+Number(form.dataset.id)+'/messages',{method:'POST',body:{body:v('body')}});
+    await renderRoute();
+   }
+   else if(form.id==='case-decision-form'){
+    await api('/api/admin/cases/'+Number(form.dataset.id)+'/decision',{method:'POST',body:{status:submit?.value,note:v('note')}});
+    toast(tr('حُفظ قرار الشكوى وسُجل في سجل التدقيق.','The case decision was saved and audited.'));await renderRoute();
    }
    else if(form.id==='store-form'){
    const body={slug:v('slug'),name_ar:v('name_ar'),name_en:v('name_en'),description_ar:v('description_ar'),description_en:v('description_en'),city:v('city'),accent:v('accent'),shipping_fils:fils(v('shipping')),delivery_days:Number(v('delivery_days'))};
