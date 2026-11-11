@@ -79,6 +79,10 @@ credentials['case_id']=case_open.json()['case']['id']
 return_seller=case_factory.seller()
 return_buyer=case_factory.user()
 return_admin=case_factory.user("admin")
+# Factory.user logs in once to verify its fixture; reset replay state so the
+# browser's first OTP is the first token consumed for this generated account.
+with case_factory.db.transaction() as c:
+    c.execute('UPDATE users SET mfa_last_step=0 WHERE id=?',(return_admin['id'],))
 return_product=case_factory.product(return_seller,stock=4)
 return_factory_cart=case_factory.cart(return_buyer,return_product,quantity=2)
 return_checkout,_,_=case_factory.checkout(return_buyer,quote=return_factory_cart)
