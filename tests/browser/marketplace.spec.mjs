@@ -345,8 +345,8 @@ test('buyer, seller and administrator complete an item return without automatic 
  const reauthResponsePromise=admin.waitForResponse(response=>response.url().endsWith('/api/auth/reauth')&&response.request().method()==='POST');
  await admin.locator('#reauth-form button[type=submit]').click();
  const reauthResponse=await reauthResponsePromise;
- console.log('return admin reauth response:',reauthResponse.status(),await reauthResponse.text(),'message:',await admin.locator('#reauth-error').textContent());
- await expect(admin.locator('#reauth-form')).toHaveCount(0);
+ expect(reauthResponse.status()).toBe(200);
+ await expect(admin.locator('#dialog')).not.toHaveAttribute('open');
  await admin.locator('#return-admin-decision-form button[value=resolved]').click();
  await expect(admin.locator('.return-card .pill')).toContainText('تمت المعالجة');
 
