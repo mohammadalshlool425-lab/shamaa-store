@@ -219,17 +219,24 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
 
 test('private case history page is responsive, bilingual and accessible',async({page})=>{
  await page.setViewportSize({width:390,height:844});
- await login(page,'buyer',{destination:'/cases'});
- await expect(page.locator('.messages-layout')).toBeVisible();
+ const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
+ await login(page,'buyer'); // Keep authentication and case-page loading as separate checks.
+ const response=await page.request.get('/api/cases');
+ expect(response.status(),await response.text()).toBe(200);
+ const payload=await response.json();
+ expect(payload.cases).toEqual([]);
+ await page.goto('/cases',{waitUntil:'domcontentloaded'});
+ await expect(page.locator('.messages-layout'),await page.locator('main').innerText()).toBeVisible({timeout:12000});
  await expect(page.locator('.messages-sidebar')).toContainText('سجل الشكاوى');
  await expect(page.locator('.messages-sidebar')).toContainText('لا توجد شكاوى');
  const privatePage=await page.request.get('/cases');
  expect(privatePage.headers()['cache-control']).toBe('no-store');
  await accessible(page);await assertNoOverflow(page);
- await page.locator('.strip-links [data-action=language]').click();
+ await page.locator('[data-action=language]').first().click();
  await expect(page.locator('html')).toHaveAttribute('lang','en');
  await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
  await accessible(page);await assertNoOverflow(page);
+ expect(pageErrors).toEqual([]);
 });
 
 test('email verification link is real and not consumed just by opening it',async({page})=>{
