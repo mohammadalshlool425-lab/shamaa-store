@@ -189,6 +189,7 @@ def test_seo_pwa_and_not_found_status(factory):
     assert client.get('/sw.js').headers['service-worker-allowed']=='/'
     assert 'Disallow: /' in client.get('/robots.txt').text
     assert 'noindex' in client.get('/account').text
+    assert client.get('/cases').headers['cache-control']=='no-store'
     assert '/api/' not in client.get('/sitemap.xml').text
 
 
