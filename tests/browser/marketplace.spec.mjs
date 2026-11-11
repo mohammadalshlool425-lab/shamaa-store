@@ -239,7 +239,7 @@ test('private case history page is responsive, bilingual and accessible',async({
  expect(privatePage.headers()['cache-control']).toBe('no-store');
  await accessible(page);await assertNoOverflow(page);
  await test.step('switch the case page to English',async()=>{
-  await page.locator('[data-action=language]').first().click();
+  await page.locator('.nav-end button[data-action=language]').click();
   await expect(page.locator('html')).toHaveAttribute('lang','en');
   await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
  });
