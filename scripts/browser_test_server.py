@@ -23,7 +23,7 @@ if folder.exists():
 folder.mkdir(parents=True,mode=0o700)
 settings=Settings(env='development',db_path=folder/'marketplace.sqlite3',data_dir=folder,
                   demo=True,email_mode='file',encryption_key='',
-                  public_url='http://127.0.0.1:8011',allowed_hosts=['127.0.0.1','localhost','*.e2b.app'])
+                  public_url='http://127.0.0.1:8011',allowed_hosts=['127.0.0.1','localhost','testserver','*.e2b.app'])
 app=create_app(settings)
 credentials={}
 for role in ('buyer','seller','admin'):
