@@ -98,8 +98,11 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
             if not public_api or response.status_code!=200:
                 response.headers['Vary'] = 'X-Language, Accept-Language'
         elif response.headers.get('content-type','').startswith('text/html'):
-            response.headers['Cache-Control'] = 'no-store' if path in ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites','/messages','/cases','/returns') else 'no-cache'
+            private_pages = ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites','/messages','/cases','/returns')
+            response.headers['Cache-Control'] = 'no-store' if path in private_pages else 'no-cache'
             response.headers['Vary'] = 'Cookie, Accept-Language'
+            if path in private_pages:
+                response.headers['X-Robots-Tag'] = 'noindex, nofollow'
         if s.production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
         else:
@@ -181,7 +184,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
 
     @app.get('/robots.txt')
     def robots():
-        text = 'User-agent: *\nDisallow: /\n' if not s.production else ('User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /seller\nDisallow: /account\nDisallow: /orders\nDisallow: /cart\nDisallow: /checkout\nDisallow: /verify-email\nDisallow: /reset-password\nSitemap: '+s.public_url+'/sitemap.xml\n')
+        text = 'User-agent: *\nDisallow: /\n' if not s.production else ('User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /seller\nDisallow: /account\nDisallow: /orders\nDisallow: /cart\nDisallow: /checkout\nDisallow: /returns\nDisallow: /verify-email\nDisallow: /reset-password\nSitemap: '+s.public_url+'/sitemap.xml\n')
         return Response(text,media_type='text/plain')
 
     @app.get('/sitemap.xml')
