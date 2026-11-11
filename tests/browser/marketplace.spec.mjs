@@ -217,6 +217,21 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await context.close();await adminContext.close();
 });
 
+test('private case history page is responsive, bilingual and accessible',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await login(page,'buyer',{destination:'/cases'});
+ await expect(page.locator('.messages-layout')).toBeVisible();
+ await expect(page.locator('.messages-sidebar')).toContainText('سجل الشكاوى');
+ await expect(page.locator('.messages-sidebar')).toContainText('لا توجد شكاوى');
+ const privatePage=await page.request.get('/cases');
+ expect(privatePage.headers()['cache-control']).toBe('no-store');
+ await accessible(page);await assertNoOverflow(page);
+ await page.locator('.strip-links [data-action=language]').click();
+ await expect(page.locator('html')).toHaveAttribute('lang','en');
+ await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
+ await accessible(page);await assertNoOverflow(page);
+});
+
 test('email verification link is real and not consumed just by opening it',async({page})=>{
  await page.goto('/?lang=ar');await ready(page);await page.locator('.account-link').click();
  await page.locator('.auth-tabs [data-action=register]').click();
