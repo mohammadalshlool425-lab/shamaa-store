@@ -184,7 +184,7 @@ def test_seo_pwa_and_not_found_status(factory):
     assert client.get('/product/999').status_code==404
     assert client.get('/api/does-not-exist').status_code==404
     assert client.get('/api/does-not-exist').headers['content-type'].startswith('application/json')
-    for path in ['/','/search','/help','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
+    for path in ['/','/search','/help','/cases','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
         assert client.get(path).status_code==200
     assert client.get('/sw.js').headers['service-worker-allowed']=='/'
     assert 'Disallow: /' in client.get('/robots.txt').text
