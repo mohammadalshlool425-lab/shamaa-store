@@ -316,21 +316,26 @@ def test_admin_cannot_resolve_return_before_seller_confirms_receipt(market):
         json={"status": "approved", "note": "تم قبول طلب الإرجاع مبدئيًا."},
     )
     assert approved.status_code == 200
+    shipped = buyer.post(
+        f"/api/returns/{request_id}/shipment",
+        json={"carrier": "شركة توصيل محلية", "tracking_number": "RET-EARLY-001"},
+    )
+    assert shipped.status_code == 200
     admin = factory.user("admin")
+    stamp = 9999999999
+    note = "محاولة إغلاق مباشرة قبل تأكيد استلام البائع."
     with factory.db.transaction() as c:
-        event_id = c.execute(
+        c.execute(
             """INSERT INTO return_request_events(request_id,actor_id,actor_role,event_type,body,created_at)
-               VALUES(?,?,'admin','admin_resolved','قرار مباشر غير مصرح قبل الاستلام',?) RETURNING id""",
-            (request_id, admin["id"], 9999999999),
-        ).fetchone()["id"]
+               VALUES(?,?,'admin','admin_resolved',?,?)""",
+            (request_id, admin["id"], note, stamp),
+        )
         with pytest.raises(sqlite3.IntegrityError):
             c.execute(
-                """UPDATE return_requests SET status='resolved',closed_at=9999999999,
-                       closed_by=?,decision_note='قرار مباشر غير مصرح قبل الاستلام',
-                       updated_at=9999999999 WHERE id=?""",
-                (admin["id"], request_id),
+                """UPDATE return_requests SET status='resolved',closed_at=?,
+                       closed_by=?,decision_note=?,updated_at=? WHERE id=?""",
+                (stamp, admin["id"], note, stamp, request_id),
             )
-    # API layer applies the same rule and rejects early resolution.
     response = admin["client"].post(
         f"/api/admin/returns/{request_id}/decision",
         json={"status": "resolved", "note": "لا يجوز إغلاق الإرجاع قبل الاستلام."},
