@@ -365,7 +365,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
  const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.8');return(await c.keys()).map(r=>new URL(r.url).pathname);});
- expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases|api\/cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
+ expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases|returns|api\/cases|api\/returns)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
   await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);
