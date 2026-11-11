@@ -55,10 +55,10 @@ def test_encrypted_backup_and_validated_restore_with_media(factory,tmp_path):
             for size in (480,960):assert (restored/'media'/f'{storage_key}-{size}.webp').is_file()
         attachments=c.execute('SELECT storage_key,digest,bytes FROM order_case_attachments').fetchall()
         assert len(attachments)==1
-        for storage_key,digest,bytes_count in attachments:
+        for storage_key,attachment_digest,bytes_count in attachments:
             path=restored/'case-attachments'/f'{storage_key}.webp'
             assert path.is_file() and path.stat().st_size==bytes_count
-            assert hashlib.sha256(path.read_bytes()).hexdigest()==digest
+            assert hashlib.sha256(path.read_bytes()).hexdigest()==attachment_digest
     assert json.loads((restored/'backup-info.json').read_text())['case_attachment_records']==1
     assert (restored/'development.key').read_bytes()==(tmp_path/'development.key').read_bytes()
 
