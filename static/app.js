@@ -291,6 +291,21 @@ function openShipmentConversation(shipmentId){
  modal(tr('رسالة إلى الطرف الآخر','Message the other party'),`<p class='dialog-description'>${tr('هذه المحادثة خاصة بالمشتري وبائع هذه الشحنة فقط. لا ترسل أرقام بطاقات أو كلمات مرور أو بيانات دفع.','This private conversation is only for the buyer and seller of this shipment. Never send card numbers, passwords or payment credentials.')}</p><form id='conversation-start-form'>${errorBox('conversation-start-error')}<input type='hidden' name='seller_order_id' value='${Number(shipmentId)}'><input type='hidden' name='client_key' value='${messageClientKey()}'><div class='form-field'><label for='conversation-start-body'>${tr('رسالتك','Your message')}</label><textarea id='conversation-start-body' name='body' rows='4' maxlength='4000' required placeholder='${tr('اكتب رسالتك هنا…','Write your message…')}'></textarea><small class='small-text'>${tr('حتى ٤٠٠٠ حرف. الرسائل نصية فقط.','Up to 4,000 characters. Text messages only.')}</small></div><button type='submit' class='btn btn-primary btn-block'>${icon('send')}${tr('إرسال وفتح المحادثة','Send and open conversation')}</button></form>`);
 }
 
+function openShipmentCase(shipmentId,shipmentStatus){
+ if(!S.user){S.afterAuth=location.pathname+location.search;openAuth();return;}
+ if(!S.user.email_verified_at){toast(tr('أكد بريدك الإلكتروني أولًا قبل فتح شكوى.','Confirm your email before opening a case.'),true);navigate('/account');return;}
+ const reasons=shipmentStatus==='shipped'
+  ?[['not_received',tr('لم أستلم الشحنة','I have not received the shipment')]]
+  :[['damaged',tr('المنتج تالف','Item is damaged')],['wrong_item',tr('وصل منتج مختلف','Wrong item received')],['missing_item',tr('هناك عناصر ناقصة','Missing items')],['not_as_described',tr('المنتج لا يطابق الوصف','Not as described')],['other',tr('سبب آخر','Other reason')]];
+ if(!['shipped','delivered'].includes(shipmentStatus))return;
+ modal(tr('فتح شكوى بشأن الشحنة','Open a shipment case'),
+  '<p class="dialog-description">'+tr('تُفتح الشكوى على الشحنة المحددة فقط. اشرح المشكلة بوضوح دون إرسال بيانات بطاقات أو كلمات مرور. المرفقات غير مفعّلة حاليًا.','This case is tied to the selected shipment. Describe the issue clearly; never send card details or passwords. Attachments are not enabled yet.')+'</p>'+
+  '<form id="case-create-form">'+errorBox('case-create-error')+
+  '<input type="hidden" name="seller_order_id" value="'+Number(shipmentId)+'">'+
+  '<div class="form-field"><label for="case-reason">'+tr('سبب الشكوى','Case reason')+'</label><select id="case-reason" name="reason" required>'+reasons.map(item=>'<option value="'+item[0]+'">'+item[1]+'</option>').join('')+'</select></div>'+
+  '<div class="form-field"><label for="case-description">'+tr('اشرح ما حدث','Describe what happened')+'</label><textarea id="case-description" name="description" rows="5" minlength="20" maxlength="3000" required></textarea><small class="small-text">'+tr('من 20 إلى 3000 حرف. نافذة فتح الشكوى الحالية 14 يومًا، والمهلة التشغيلية لرد البائع 48 ساعة؛ هذه إعدادات تشغيلية وليست ضمانًا قانونيًا أو وعدًا برد الأموال.','20 to 3,000 characters. The current filing window is 14 days and the seller response target is 48 hours; these are operational settings, not a legal guarantee or promise of a refund.')+'</small></div>'+
+  '<button type="submit" class="btn btn-primary btn-block">'+tr('إرسال الشكوى','Submit case')+'</button></form>');
+}
 async function messagesView(route){
  title(tr('محادثاتي','My conversations'));
  if(!S.user){main.innerHTML=authGate('/messages');return;}
@@ -473,6 +488,7 @@ async function renderRoute(){
   else if(path==='/checkout')await checkoutView(route);
   else if(path==='/orders')await ordersView(route);
   else if(path==='/messages')await messagesView(route);
+  else if(path==='/cases')await casesView(route);
   else if(path==='/account')await accountView(route);
   else if(path==='/seller')await sellerView(route);
   else if(path==='/admin')await adminView(route);
