@@ -10,7 +10,7 @@ async function login(page,role,{destination='/account'}={}){
  const u=credentials()[role];await page.goto('/?lang=ar');await ready(page);
  await page.locator('.account-link').click();
  await page.locator('#email').fill(u.email);await page.locator('#password').fill(u.password);
- if(role==='admin'){
+ if(u.secret){
   await page.locator('#auth-form details summary').click();
   const code=execFileSync(PY,['-c','import pyotp,sys;print(pyotp.TOTP(sys.stdin.read()).now())'],{input:u.secret,encoding:'utf8'}).trim();
   await page.locator('#otp').fill(code);
