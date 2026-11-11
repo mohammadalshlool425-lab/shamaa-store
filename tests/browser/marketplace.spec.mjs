@@ -265,7 +265,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.6');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.7');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
   const messagesPage=await page.request.get('/messages');
   const casesPage=await page.request.get('/cases');
@@ -274,7 +274,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
- const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.6');return(await c.keys()).map(r=>new URL(r.url).pathname);});
+ const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.7');return(await c.keys()).map(r=>new URL(r.url).pathname);});
  expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
   await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
