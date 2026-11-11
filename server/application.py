@@ -203,6 +203,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     @app.get('/orders')
     @app.get('/messages')
     @app.get('/cases')
+    @app.get('/returns')
     @app.get('/account')
     @app.get('/seller')
     @app.get('/admin')
