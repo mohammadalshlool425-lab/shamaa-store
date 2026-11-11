@@ -231,13 +231,16 @@ BEGIN
   AND latest.actor_id=OLD.seller_id AND latest.actor_role='seller'
   AND latest.event_type='seller_received' AND latest.created_at=NEW.updated_at THEN
   RETURN NEW;
- ELSIF OLD.status IN ('requested','approved','return_shipped','received')
-  AND NEW.status IN ('resolved','rejected')
+ ELSIF (
+    (OLD.status='received' AND NEW.status='resolved' AND latest.event_type='admin_resolved')
+    OR
+    (OLD.status IN ('requested','approved','return_shipped','received')
+      AND NEW.status='rejected' AND latest.event_type='admin_rejected')
+  )
   AND NEW.closed_by IS NOT NULL AND NEW.closed_at=NEW.updated_at
   AND char_length(NEW.decision_note)>=5
   AND EXISTS(SELECT 1 FROM shamaa_app.users u WHERE u.id=NEW.closed_by AND u.role='admin' AND u.active=TRUE)
   AND latest.actor_id=NEW.closed_by AND latest.actor_role='admin'
-  AND ((NEW.status='resolved' AND latest.event_type='admin_resolved') OR (NEW.status='rejected' AND latest.event_type='admin_rejected'))
   AND latest.created_at=NEW.closed_at AND latest.body=NEW.decision_note THEN
   RETURN NEW;
  END IF;
