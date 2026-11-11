@@ -258,6 +258,15 @@ def upload_case_attachment(
             row = _participant_case(c, case_id, user)
             if row["status"] in ("resolved", "rejected"):
                 fail("case_closed", 409)
+            # Serialize per-case quota checks on PostgreSQL as well as SQLite.
+            # This row write acquires the case lock before counting attachments.
+            locked = c.execute(
+                """UPDATE order_cases SET updated_at=?
+                     WHERE id=? AND status IN ('open','seller_responded')""",
+                (now(), case_id),
+            )
+            if locked.rowcount != 1:
+                fail("case_closed", 409)
             quota = c.execute(
                 """SELECT COUNT(*),COALESCE(SUM(bytes),0)
                      FROM order_case_attachments WHERE case_id=?""",
