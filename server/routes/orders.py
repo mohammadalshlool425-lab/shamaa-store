@@ -118,7 +118,7 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
         order_id = insert_id(c, '''INSERT INTO orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
           subtotal_fils,shipping_fils,total_fils,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
           ('pending-'+secrets.token_hex(12),user['id'],idempotency_key,request_hash,body.recipient,body.phone,body.city,body.address,
-           quote['subtotal_fils'],quote['shipping_fils'],quote['total_fils'],int(is_demo),now()))
+           quote['subtotal_fils'],quote['shipping_fils'],quote['total_fils'],bool(is_demo),now()))
         number = f'SH-{time.strftime("%Y",time.gmtime())}-{order_id:07}'
         c.execute('UPDATE orders SET number=? WHERE id=?',(number,order_id))
         for group in quote['groups']:
