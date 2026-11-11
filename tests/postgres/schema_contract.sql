@@ -96,8 +96,8 @@ BEGIN
        'return_request_seller_note_guard','return_request_tracking_guard',
        'return_request_status_guard'
      );
-  IF return_guard_count <> 7 THEN
-    RAISE EXCEPTION 'Expected seven return-request guards; got %', return_guard_count;
+  IF return_guard_count <> 10 THEN
+    RAISE EXCEPTION 'Expected ten return-request guards; got %', return_guard_count;
   END IF;
 END $$;
 
