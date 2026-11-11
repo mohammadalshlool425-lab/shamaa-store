@@ -282,6 +282,62 @@ test('buyer uploads private shipment evidence and seller can review it',async({b
  await buyerContext.close();await sellerContext.close();await strangerContext.close();
 });
 
+test('buyer, seller and administrator complete an item return without automatic refund',async({browser})=>{
+ test.setTimeout(120000);
+ const fixture=credentials();
+ expect(fixture.return_item_id).toBeGreaterThan(0);
+
+ const buyerContext=await browser.newContext({locale:'ar-JO',viewport:{width:390,height:844}});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'return_buyer',{destination:'/orders'});
+ const returnButton=buyer.locator('.shipment-return-actions button[data-action=open-return]').first();
+ await expect(returnButton).toBeVisible();
+ await returnButton.click();
+ await buyer.locator('#return-quantity').fill('1');
+ await buyer.locator('#return-reason').selectOption('damaged');
+ await buyer.locator('#return-description').fill('وصل المنتج متضررًا وأطلب إرجاع قطعة واحدة من الكمية المستلمة.');
+ await buyer.locator('#return-create-form button[type=submit]').click();
+ await expect(buyer).toHaveURL(/\/returns\?return=\d+$/);
+ await expect(buyer.locator('.return-card .pill')).toContainText('طلب إرجاع جديد');
+ await expect(buyer.locator('#return-seller-decision-form')).toHaveCount(0);
+
+ const sellerContext=await browser.newContext({locale:'ar-JO',viewport:{width:390,height:844}});
+ const seller=await sellerContext.newPage();
+ await login(seller,'return_seller',{destination:'/returns'});
+ await expect(seller.locator('#return-seller-decision-form')).toBeVisible();
+ await seller.locator('#return-seller-note-'+fixture.return_item_id).count().catch(()=>0);
+ await seller.locator('#return-seller-decision-form textarea[name=note]').fill('تم قبول الإرجاع وفق وصف حالة المنتج.');
+ await seller.locator('#return-seller-decision-form button[value=approved]').click();
+ await expect(seller.locator('.return-card .pill')).toContainText('مقبول');
+
+ await buyer.reload();
+ await expect(buyer.locator('#return-shipment-form')).toBeVisible();
+ await buyer.locator('#return-shipment-form input[name=carrier]').fill('شركة توصيل محلية');
+ await buyer.locator('#return-shipment-form input[name=tracking_number]').fill('RET-BROWSER-001');
+ await buyer.locator('#return-shipment-form button[type=submit]').click();
+ await expect(buyer.locator('.return-card .pill')).toContainText('تم شحن المرتجع');
+ await expect(buyer.locator('.return-card')).toContainText('RET-BROWSER-001');
+
+ await seller.reload();
+ await expect(seller.locator('#return-received-form')).toBeVisible();
+ await seller.locator('#return-received-form textarea[name=note]').fill('تم استلام المنتج المرتجع وفحصه.');
+ await seller.locator('#return-received-form button[type=submit]').click();
+ await expect(seller.locator('.return-card .pill')).toContainText('تم استلام المرتجع');
+
+ const adminContext=await browser.newContext({locale:'ar-JO',viewport:{width:1280,height:900}});
+ const admin=await adminContext.newPage();
+ await login(admin,'admin',{destination:'/returns'});
+ await expect(admin.locator('#return-admin-decision-form')).toBeVisible();
+ await admin.locator('#return-admin-decision-form textarea[name=note]').fill('تم استلام المرتجع ومراجعة سجل العملية.');
+ await admin.locator('#return-admin-decision-form button[value=resolved]').click();
+ await expect(admin.locator('.return-card .pill')).toContainText('تمت المعالجة');
+
+ await buyer.reload();
+ await expect(buyer.locator('.return-card .pill')).toContainText('تمت المعالجة');
+ await expect(buyer.locator('.return-card')).toContainText('لا ينشئ ردًا ماليًا');
+ await buyerContext.close();await sellerContext.close();await adminContext.close();
+});
+
 test('email verification link is real and not consumed just by opening it',async({page})=>{
  await page.goto('/?lang=ar');await ready(page);await page.locator('.account-link').click();
  await page.locator('.auth-tabs [data-action=register]').click();
