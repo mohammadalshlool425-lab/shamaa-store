@@ -1,7 +1,16 @@
 """Private buyer/seller cases scoped to a real shipment."""
 from typing import Literal
+from io import BytesIO
+import hashlib
+import os
+import re
+import secrets
+import warnings
+from threading import BoundedSemaphore
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi.responses import FileResponse
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .. import schemas
 from ..database import DatabaseIntegrityError, insert_id, now
@@ -13,6 +22,11 @@ admin_router = APIRouter(prefix="/api/admin", tags=["Shipment case administratio
 
 CASE_WINDOW_SECONDS = 14 * 24 * 60 * 60
 SELLER_RESPONSE_SECONDS = 48 * 60 * 60
+ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+ATTACHMENT_MAX_COUNT = 5
+ATTACHMENT_CASE_QUOTA = 25 * 1024 * 1024
+CASE_IMAGE_JOBS = BoundedSemaphore(2)
+Image.MAX_IMAGE_PIXELS = 16_000_000
 
 
 def _case_row(c, case_id):
@@ -49,6 +63,30 @@ def _case_payload(c, row, user, include_private=False):
         "buyer" if user["id"] == row["buyer_id"] else "seller"
     )
     result["events"] = [dict(event) for event in events]
+    attachments = c.execute(
+        """SELECT id,uploader_role,content_type,bytes,created_at
+             FROM order_case_attachments WHERE case_id=? ORDER BY id""",
+        (row["id"],),
+    ).fetchall()
+    attachment_prefix = (
+        f"/api/admin/cases/{row['id']}/attachments/"
+        if user["role"] == "admin"
+        else f"/api/cases/{row['id']}/attachments/"
+    )
+    result["attachments"] = [
+        {
+            "id": item["id"],
+            "uploader_role": item["uploader_role"],
+            "content_type": item["content_type"],
+            "bytes": item["bytes"],
+            "created_at": item["created_at"],
+            "download_url": attachment_prefix + str(item["id"]),
+        }
+        for item in attachments
+    ]
+    result["can_upload_attachment"] = (
+        user["role"] != "admin" and row["status"] in ("open", "seller_responded")
+    )
     if include_private:
         result.update({"buyer_name": row["buyer_name"], "seller_name": row["seller_name"]})
     return result
@@ -59,6 +97,57 @@ def _participant_case(c, case_id, user):
     if not row or user["id"] not in (row["buyer_id"], row["seller_id"]):
         fail("not_found", 404)
     return row
+
+
+def _case_attachment_directory(settings, create=False):
+    root = settings.data_dir.resolve()
+    folder = root / "case-attachments"
+    if folder.is_symlink():
+        fail("not_found", 404)
+    if create:
+        folder.mkdir(mode=0o700, exist_ok=True)
+        if folder.is_symlink():
+            fail("not_found", 404)
+        folder.chmod(0o700)
+    if not folder.is_dir() or folder.resolve().parent != root:
+        fail("not_found", 404)
+    return folder
+
+
+def _case_attachment_path(settings, storage_key):
+    if not re.fullmatch(r"[0-9a-f]{64}", storage_key):
+        fail("not_found", 404)
+    folder = _case_attachment_directory(settings)
+    path = folder / f"{storage_key}.webp"
+    if path.is_symlink() or not path.is_file() or path.resolve().parent != folder.resolve():
+        fail("not_found", 404)
+    return path
+
+
+def _normalize_case_image(data):
+    if len(data) > ATTACHMENT_MAX_BYTES:
+        fail("media_size", 413)
+    try:
+        with CASE_IMAGE_JOBS, warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image = Image.open(BytesIO(data))
+            if image.format not in ("JPEG", "PNG", "WEBP") or getattr(image, "is_animated", False):
+                fail("media_type", 415)
+            if image.width <= 0 or image.height <= 0 or image.width * image.height > 16_000_000:
+                fail("media_size", 413)
+            image.load()
+            normalized = ImageOps.exif_transpose(image).convert("RGB")
+            normalized.thumbnail((2400, 2400))
+            output = BytesIO()
+            normalized.save(output, format="WEBP", quality=82, method=4)
+            result = output.getvalue()
+    except (Image.DecompressionBombWarning, Image.DecompressionBombError):
+        fail("media_size", 413)
+    except (UnidentifiedImageError, OSError, ValueError):
+        fail("media_type", 415)
+    if not result or len(result) > ATTACHMENT_MAX_BYTES:
+        fail("media_size", 413)
+    return result
 
 
 @router.get("/cases")
@@ -148,6 +237,103 @@ def get_case(case_id: int, request: Request, user=Depends(verified_user)):
         return {"case": _case_payload(c, row, user)}
 
 
+@router.post("/cases/{case_id}/attachments", status_code=201)
+def upload_case_attachment(
+    case_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(verified_user),
+):
+    throttle(
+        request, "case_attachment", limit=12, window=3600,
+        identifier=f"{user['id']}:{case_id}",
+    )
+    data = file.file.read(ATTACHMENT_MAX_BYTES + 1)
+    image_data = _normalize_case_image(data)
+    digest = hashlib.sha256(image_data).hexdigest()
+    storage_key = secrets.token_hex(32)
+    written_path = None
+    try:
+        with request.app.state.db.transaction() as c:
+            row = _participant_case(c, case_id, user)
+            if row["status"] in ("resolved", "rejected"):
+                fail("case_closed", 409)
+            quota = c.execute(
+                """SELECT COUNT(*),COALESCE(SUM(bytes),0)
+                     FROM order_case_attachments WHERE case_id=?""",
+                (case_id,),
+            ).fetchone()
+            if quota[0] >= ATTACHMENT_MAX_COUNT or quota[1] + len(image_data) > ATTACHMENT_CASE_QUOTA:
+                fail("media_quota", 413)
+            if c.execute(
+                "SELECT 1 FROM order_case_attachments WHERE case_id=? AND digest=?",
+                (case_id, digest),
+            ).fetchone():
+                fail("invalid_input", 409)
+            folder = _case_attachment_directory(request.app.state.settings, create=True)
+            written_path = folder / f"{storage_key}.webp"
+            fd = os.open(written_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "wb") as output:
+                output.write(image_data)
+            uploader_role = "buyer" if user["id"] == row["buyer_id"] else "seller"
+            inserted = c.execute(
+                """INSERT INTO order_case_attachments(
+                     case_id,uploader_id,uploader_role,storage_key,content_type,bytes,digest,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(case_id,digest) DO NOTHING
+                   RETURNING id""",
+                (
+                    case_id,user["id"],uploader_role,storage_key,"image/webp",
+                    len(image_data),digest,now(),
+                ),
+            ).fetchone()
+            if inserted is None:
+                fail("invalid_input", 409)
+            attachment_id = inserted["id"]
+            recipient_id = row["seller_id"] if uploader_role == "buyer" else row["buyer_id"]
+            created = now()
+            c.execute(
+                """INSERT INTO notifications(user_id,kind,body_ar,body_en,created_at)
+                   VALUES(?,'case',?,?,?)""",
+                (
+                    recipient_id,
+                    "أُضيفت صورة دليل إلى سجل الشكوى.",
+                    "An evidence image was added to the case record.",
+                    created,
+                ),
+            )
+            audit(
+                c,user["id"],"case_attachment_added","order_case",case_id,
+                f"attachment={attachment_id};actor_role={uploader_role}",
+            )
+            updated = _case_row(c, case_id)
+            result = _case_payload(c, updated, user)
+    except BaseException:
+        if written_path is not None:
+            written_path.unlink(missing_ok=True)
+        raise
+    return {"case": result, "attachment_id": attachment_id}
+
+
+@router.get("/cases/{case_id}/attachments/{attachment_id}")
+def download_case_attachment(
+    case_id: int, attachment_id: int, request: Request, user=Depends(verified_user)
+):
+    with request.app.state.db.read() as c:
+        _participant_case(c, case_id, user)
+        attachment = c.execute(
+            """SELECT storage_key FROM order_case_attachments
+                 WHERE id=? AND case_id=?""",
+            (attachment_id, case_id),
+        ).fetchone()
+        if not attachment:
+            fail("not_found", 404)
+        path = _case_attachment_path(request.app.state.settings, attachment["storage_key"])
+    return FileResponse(
+        path, media_type="image/webp", filename=f"case-evidence-{attachment_id}.webp",
+        headers={"Cache-Control":"private, no-store, max-age=0"},
+    )
+
+
 @router.post("/cases/{case_id}/messages", status_code=201)
 def add_case_message(case_id: int, body: schemas.CaseMessage, request: Request,
                      user=Depends(verified_user)):
@@ -189,6 +375,27 @@ def add_case_message(case_id: int, body: schemas.CaseMessage, request: Request,
         updated = _case_row(c, case_id)
         result = _case_payload(c, updated, user)
     return {"case": result}
+
+
+@admin_router.get("/cases/{case_id}/attachments/{attachment_id}")
+def admin_download_case_attachment(
+    case_id: int, attachment_id: int, request: Request, user=Depends(admin_user)
+):
+    with request.app.state.db.read() as c:
+        if not _case_row(c, case_id):
+            fail("not_found", 404)
+        attachment = c.execute(
+            """SELECT storage_key FROM order_case_attachments
+                 WHERE id=? AND case_id=?""",
+            (attachment_id, case_id),
+        ).fetchone()
+        if not attachment:
+            fail("not_found", 404)
+        path = _case_attachment_path(request.app.state.settings, attachment["storage_key"])
+    return FileResponse(
+        path, media_type="image/webp", filename=f"case-evidence-{attachment_id}.webp",
+        headers={"Cache-Control":"private, no-store, max-age=0"},
+    )
 
 
 @admin_router.get("/cases")
