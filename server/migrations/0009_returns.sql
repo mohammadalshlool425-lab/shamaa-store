@@ -82,6 +82,16 @@ WHEN NOT EXISTS (
 )
 BEGIN SELECT RAISE(ABORT,'return request is not eligible for this delivered purchased item'); END;
 
+CREATE TRIGGER return_request_initial_state_guard
+BEFORE INSERT ON return_requests
+WHEN NEW.status<>'requested'
+BEGIN SELECT RAISE(ABORT,'a return request must be created in requested state'); END;
+
+CREATE TRIGGER return_request_terminal_immutable
+BEFORE UPDATE ON return_requests
+WHEN OLD.status IN ('rejected','resolved','cancelled')
+BEGIN SELECT RAISE(ABORT,'a terminal return request is immutable'); END;
+
 CREATE TRIGGER return_request_event_authority
 BEFORE INSERT ON return_request_events
 WHEN NOT (
