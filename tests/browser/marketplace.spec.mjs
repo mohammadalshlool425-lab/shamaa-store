@@ -247,6 +247,41 @@ test('private case history page is responsive, bilingual and accessible',async({
  expect(pageErrors).toEqual([]);
 });
 
+test('buyer uploads private shipment evidence and seller can review it',async({browser})=>{
+ test.setTimeout(90000);
+ const data=credentials(),caseId=data.case_id;
+ expect(caseId).toBeGreaterThan(0);
+ const buyerContext=await browser.newContext({locale:'ar-JO'});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'case_buyer',{destination:'/cases?case='+caseId});
+ await expect(buyer.locator('#case-attachment-form')).toBeVisible();
+ await buyer.locator('#case-attachment-file').setInputFiles('data/browser-tests/evidence.png');
+ await buyer.locator('#case-attachment-form button[type=submit]').click();
+ const buyerLink=buyer.locator('.case-attachment-list a');
+ await expect(buyerLink).toHaveCount(1);
+ await expect(buyerLink).toContainText('صورة دليل رقم');
+ const openedDownload=buyer.waitForEvent('download');
+ await buyerLink.click();
+ expect((await openedDownload).suggestedFilename()).toMatch(/^case-evidence-\d+\.webp$/);
+ const detail=(await(await buyer.request.get('/api/cases/'+caseId)).json()).case;
+ expect(detail.attachments).toHaveLength(1);
+ const sellerContext=await browser.newContext({locale:'ar-JO'});
+ const seller=await sellerContext.newPage();
+ await login(seller,'case_seller',{destination:'/cases?case='+caseId});
+ await expect(seller.locator('.case-attachment-list a')).toHaveCount(1);
+ await expect(seller.locator('#case-message-form')).toBeVisible();
+ await seller.locator('#case-message-body').fill('وصلتنا صورة الدليل، وبدأنا التحقق من الشحنة.');
+ await seller.locator('#case-message-form button[type=submit]').click();
+ await expect(seller.locator('.message-feed')).toContainText('بدأنا التحقق');
+ await buyer.reload();
+ await expect(buyer.locator('.message-feed')).toContainText('بدأنا التحقق');
+ const strangerContext=await browser.newContext();
+ const stranger=await strangerContext.newPage();
+ await login(stranger,'buyer');
+ expect((await stranger.request.get(detail.attachments[0].download_url)).status()).toBe(404);
+ await buyerContext.close();await sellerContext.close();await strangerContext.close();
+});
+
 test('email verification link is real and not consumed just by opening it',async({page})=>{
  await page.goto('/?lang=ar');await ready(page);await page.locator('.account-link').click();
  await page.locator('.auth-tabs [data-action=register]').click();
@@ -275,7 +310,7 @@ test('public PWA cache works offline; private data and writes are never cached',
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
  const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.7');return(await c.keys()).map(r=>new URL(r.url).pathname);});
- expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
+ expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases|api\/cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
   await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);
