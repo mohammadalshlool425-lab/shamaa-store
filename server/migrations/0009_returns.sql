@@ -54,6 +54,34 @@ CREATE TABLE return_request_events (
 );
 CREATE INDEX return_request_events_timeline ON return_request_events(request_id,id);
 
+CREATE TRIGGER return_request_purchase_guard
+BEFORE INSERT ON return_requests
+WHEN NOT EXISTS (
+ SELECT 1
+   FROM order_items oi
+   JOIN seller_orders so ON so.id=oi.seller_order_id
+   JOIN orders o ON o.id=so.order_id
+   JOIN stores s ON s.id=so.store_id
+   JOIN users buyer ON buyer.id=o.buyer_id
+   JOIN users seller ON seller.id=s.owner_id
+   JOIN order_events delivered ON delivered.seller_order_id=so.id AND delivered.to_status='delivered'
+  WHERE oi.id=NEW.order_item_id
+    AND oi.seller_order_id=NEW.seller_order_id
+    AND o.buyer_id=NEW.buyer_id
+    AND s.owner_id=NEW.seller_id
+    AND so.status='delivered'
+    AND buyer.active=1 AND buyer.email_verified_at IS NOT NULL
+    AND seller.active=1
+    AND delivered.created_at<=NEW.requested_at
+    AND NEW.requested_at-delivered.created_at BETWEEN 0 AND 1209600
+    AND NEW.quantity+COALESCE((
+      SELECT SUM(existing.quantity) FROM return_requests existing
+       WHERE existing.order_item_id=oi.id
+         AND existing.status IN ('requested','approved','return_shipped','received','resolved')
+    ),0)<=oi.quantity
+)
+BEGIN SELECT RAISE(ABORT,'return request is not eligible for this delivered purchased item'); END;
+
 CREATE TRIGGER return_request_event_authority
 BEFORE INSERT ON return_request_events
 WHEN NOT (
