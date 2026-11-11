@@ -290,5 +290,7 @@ REVOKE ALL ON FUNCTION shamaa_app.guard_return_status() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_purchase() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_initial_state() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_terminal_immutable() FROM PUBLIC;
+REVOKE ALL ON FUNCTION shamaa_app.guard_return_initial_state() FROM PUBLIC;
+REVOKE ALL ON FUNCTION shamaa_app.guard_return_terminal_immutable() FROM PUBLIC;
 
 COMMIT;
