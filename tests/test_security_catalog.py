@@ -212,6 +212,11 @@ def test_secure_cookie_in_production_and_no_demo_catalog(factory):
     r=client.post('/api/auth/login',headers={'X-Requested-With':'shamaa'},json={'email':user['email'],'password':user['password']})
     assert r.status_code==200 and '; secure' in r.headers['set-cookie'].lower()
     assert r.headers['strict-transport-security'].startswith('max-age=')
+    returns=client.get('/returns')
+    assert returns.status_code==200
+    assert returns.headers['cache-control']=='no-store'
+    assert returns.headers['x-robots-tag']=='noindex, nofollow'
+    assert '/returns' in client.get('/robots.txt').text
 
 
 def test_memory_hard_password_work_is_bounded_without_weakening_hash_parameters(monkeypatch):
