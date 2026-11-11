@@ -332,7 +332,8 @@ def test_case_evidence_upload_is_private_normalized_and_immutable(market):
     assert seller_detail.json()["case"]["attachments"][0]["id"] == attachment["id"]
     assert seller.get(attachment["download_url"]).status_code == 200
 
-    stranger = factory.user()["client"]
+    stranger_user = factory.user()
+    stranger = stranger_user["client"]
     assert stranger.get(attachment["download_url"]).status_code == 404
     assert stranger.post(
         f"/api/cases/{case_id}/attachments",
@@ -358,17 +359,13 @@ def test_case_evidence_upload_is_private_normalized_and_immutable(market):
         assert metadata["bytes"] == path.stat().st_size
 
     with factory.db.transaction() as c:
-        stranger_id = c.execute(
-            "SELECT id FROM users WHERE email=?",
-            (stranger.cookies.get("unused", "never-used"),),
-        ).fetchone()
         # A valid but unrelated user cannot forge the seller participant identity.
         try:
             c.execute(
                 """INSERT INTO order_case_attachments(
                      case_id,uploader_id,uploader_role,storage_key,content_type,bytes,digest,created_at
                    ) VALUES(?,?,'seller',?,'image/webp',1,?,1)""",
-                (case_id, 999999, "a" * 64, "b" * 64),
+                (case_id, stranger_user["id"], "a" * 64, "b" * 64),
             )
         except sqlite3.IntegrityError:
             pass
