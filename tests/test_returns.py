@@ -179,6 +179,12 @@ def test_return_window_quantity_and_ownership_rules(market, monkeypatch):
     )
     assert rejected.status_code == 200
     assert rejected.json()["return"]["status"] == "rejected"
+    with factory.db.transaction() as c:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                "UPDATE return_requests SET decision_note='tampered after rejection' WHERE id=?",
+                (accepted.json()["return"]["id"],),
+            )
 
     # A rejected request releases the reserved quantity; the buyer can retry once.
     retry = buyer.post("/api/returns", json={**payload, "quantity": 2})
