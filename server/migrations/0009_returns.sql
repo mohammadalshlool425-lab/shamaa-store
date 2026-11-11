@@ -177,14 +177,22 @@ WHEN NEW.status<>OLD.status AND NOT (
     AND e.event_type='seller_received' AND e.created_at=NEW.updated_at
  ))
  OR
- (OLD.status IN ('requested','approved','return_shipped','received') AND NEW.status IN ('resolved','rejected')
+ (OLD.status='received' AND NEW.status='resolved'
    AND NEW.closed_by IS NOT NULL AND NEW.closed_at=NEW.updated_at AND length(NEW.decision_note)>=5
    AND EXISTS (SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.role='admin' AND u.active=1)
    AND EXISTS (
     SELECT 1 FROM return_request_events e WHERE e.id=(SELECT MAX(id) FROM return_request_events WHERE request_id=OLD.id)
      AND e.request_id=OLD.id AND e.actor_id=NEW.closed_by AND e.actor_role='admin'
-     AND e.event_type=CASE NEW.status WHEN 'resolved' THEN 'admin_resolved' ELSE 'admin_rejected' END
-     AND e.created_at=NEW.closed_at AND e.body=NEW.decision_note
+     AND e.event_type='admin_resolved' AND e.created_at=NEW.closed_at AND e.body=NEW.decision_note
+   ))
+ OR
+ (OLD.status IN ('requested','approved','return_shipped','received') AND NEW.status='rejected'
+   AND NEW.closed_by IS NOT NULL AND NEW.closed_at=NEW.updated_at AND length(NEW.decision_note)>=5
+   AND EXISTS (SELECT 1 FROM users u WHERE u.id=NEW.closed_by AND u.role='admin' AND u.active=1)
+   AND EXISTS (
+    SELECT 1 FROM return_request_events e WHERE e.id=(SELECT MAX(id) FROM return_request_events WHERE request_id=OLD.id)
+     AND e.request_id=OLD.id AND e.actor_id=NEW.closed_by AND e.actor_role='admin'
+     AND e.event_type='admin_rejected' AND e.created_at=NEW.closed_at AND e.body=NEW.decision_note
    ))
 )
 BEGIN SELECT RAISE(ABORT,'invalid return request status transition'); END;
