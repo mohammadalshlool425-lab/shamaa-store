@@ -94,7 +94,8 @@ BEGIN
        'return_request_event_authority','return_request_events_immutable_update',
        'return_request_events_immutable_delete','return_request_identity_immutable',
        'return_request_seller_note_guard','return_request_tracking_guard',
-       'return_request_status_guard'
+       'return_request_status_guard','return_request_purchase_guard',
+       'return_request_initial_state_guard','return_request_terminal_immutable'
      );
   IF return_guard_count <> 10 THEN
     RAISE EXCEPTION 'Expected ten return-request guards; got %', return_guard_count;
