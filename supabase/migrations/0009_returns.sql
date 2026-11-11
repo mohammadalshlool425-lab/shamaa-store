@@ -59,9 +59,10 @@ CREATE INDEX return_request_events_timeline ON shamaa_app.return_request_events(
 CREATE OR REPLACE FUNCTION shamaa_app.guard_return_purchase()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
 SET search_path=pg_catalog,shamaa_app AS $
-DECLARE purchased shamaa_app.order_items%ROWTYPE;
-DECLARE eligible boolean;
-DECLARE already_returned integer;
+DECLARE
+ purchased shamaa_app.order_items%ROWTYPE;
+ eligible boolean;
+ already_returned integer;
 BEGIN
  SELECT oi.* INTO purchased
    FROM shamaa_app.order_items oi
@@ -109,6 +110,28 @@ $;
 CREATE TRIGGER return_request_purchase_guard
  BEFORE INSERT ON shamaa_app.return_requests FOR EACH ROW
  EXECUTE FUNCTION shamaa_app.guard_return_purchase();
+
+CREATE OR REPLACE FUNCTION shamaa_app.guard_return_initial_state()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
+SET search_path=pg_catalog,shamaa_app AS $
+BEGIN
+ IF NEW.status<>'requested' THEN
+  RAISE EXCEPTION 'a return request must be created in requested state';
+ END IF;
+ RETURN NEW;
+END;
+$;
+
+CREATE OR REPLACE FUNCTION shamaa_app.guard_return_terminal_immutable()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
+SET search_path=pg_catalog,shamaa_app AS $
+BEGIN
+ IF OLD.status IN ('rejected','resolved','cancelled') THEN
+  RAISE EXCEPTION 'a terminal return request is immutable';
+ END IF;
+ RETURN NEW;
+END;
+$;
 
 CREATE OR REPLACE FUNCTION shamaa_app.validate_return_request_event()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
@@ -222,6 +245,13 @@ BEGIN
 END;
 $$;
 
+CREATE TRIGGER return_request_initial_state_guard
+ BEFORE INSERT ON shamaa_app.return_requests FOR EACH ROW
+ EXECUTE FUNCTION shamaa_app.guard_return_initial_state();
+CREATE TRIGGER return_request_terminal_immutable
+ BEFORE UPDATE ON shamaa_app.return_requests FOR EACH ROW
+ EXECUTE FUNCTION shamaa_app.guard_return_terminal_immutable();
+
 CREATE TRIGGER return_request_event_authority
  BEFORE INSERT ON shamaa_app.return_request_events FOR EACH ROW
  EXECUTE FUNCTION shamaa_app.validate_return_request_event();
@@ -258,5 +288,7 @@ REVOKE ALL ON FUNCTION shamaa_app.guard_return_seller_note() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_tracking() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_status() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_purchase() FROM PUBLIC;
+REVOKE ALL ON FUNCTION shamaa_app.guard_return_initial_state() FROM PUBLIC;
+REVOKE ALL ON FUNCTION shamaa_app.guard_return_terminal_immutable() FROM PUBLIC;
 
 COMMIT;
