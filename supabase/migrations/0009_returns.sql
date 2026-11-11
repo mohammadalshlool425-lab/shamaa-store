@@ -56,6 +56,60 @@ CREATE TABLE shamaa_app.return_request_events (
 );
 CREATE INDEX return_request_events_timeline ON shamaa_app.return_request_events(request_id,id);
 
+CREATE OR REPLACE FUNCTION shamaa_app.guard_return_purchase()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
+SET search_path=pg_catalog,shamaa_app AS $
+DECLARE purchased shamaa_app.order_items%ROWTYPE;
+DECLARE eligible boolean;
+DECLARE already_returned integer;
+BEGIN
+ SELECT oi.* INTO purchased
+   FROM shamaa_app.order_items oi
+   JOIN shamaa_app.seller_orders so ON so.id=oi.seller_order_id
+   JOIN shamaa_app.orders o ON o.id=so.order_id
+   JOIN shamaa_app.stores s ON s.id=so.store_id
+   JOIN shamaa_app.users buyer ON buyer.id=o.buyer_id
+   JOIN shamaa_app.users seller ON seller.id=s.owner_id
+  WHERE oi.id=NEW.order_item_id
+    AND oi.seller_order_id=NEW.seller_order_id
+    AND o.buyer_id=NEW.buyer_id
+    AND s.owner_id=NEW.seller_id
+    AND so.status='delivered'
+    AND buyer.active=TRUE AND buyer.email_verified_at IS NOT NULL
+    AND seller.active=TRUE
+  FOR UPDATE OF oi;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'return request must match a delivered item owned by the buyer and store'
+    USING ERRCODE='42501';
+ END IF;
+
+ SELECT EXISTS(
+   SELECT 1 FROM shamaa_app.order_events e
+    WHERE e.seller_order_id=NEW.seller_order_id AND e.to_status='delivered'
+      AND e.created_at<=NEW.requested_at
+      AND NEW.requested_at-e.created_at BETWEEN 0 AND 1209600
+ ) INTO eligible;
+ IF NOT eligible THEN
+  RAISE EXCEPTION 'return request is outside the delivered-item window'
+    USING ERRCODE='42501';
+ END IF;
+
+ SELECT COALESCE(SUM(r.quantity),0) INTO already_returned
+   FROM shamaa_app.return_requests r
+  WHERE r.order_item_id=NEW.order_item_id
+    AND r.status IN ('requested','approved','return_shipped','received','resolved');
+ IF already_returned+NEW.quantity>purchased.quantity THEN
+  RAISE EXCEPTION 'return quantity exceeds purchased quantity'
+    USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$;
+
+CREATE TRIGGER return_request_purchase_guard
+ BEFORE INSERT ON shamaa_app.return_requests FOR EACH ROW
+ EXECUTE FUNCTION shamaa_app.guard_return_purchase();
+
 CREATE OR REPLACE FUNCTION shamaa_app.validate_return_request_event()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
 SET search_path=pg_catalog,shamaa_app AS $$
@@ -203,5 +257,6 @@ REVOKE ALL ON FUNCTION shamaa_app.reject_return_identity_change() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_seller_note() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_tracking() FROM PUBLIC;
 REVOKE ALL ON FUNCTION shamaa_app.guard_return_status() FROM PUBLIC;
+REVOKE ALL ON FUNCTION shamaa_app.guard_return_purchase() FROM PUBLIC;
 
 COMMIT;
