@@ -27,6 +27,8 @@ MESSAGES = {
  'mfa_required': ('حساب الإدارة يتطلب التحقق الثنائي. استخدم رمز تطبيق المصادقة.', 'Administrator accounts require a code from your authenticator app.'),
  'reauth': ('أعد التحقق بكلمة المرور ورمز المصادقة قبل تغيير الإعدادات المالية.', 'Re-authenticate with your password and authenticator code before changing financial settings.'),
  'demo_disabled': ('لا يمكن تنفيذ هذا الإجراء على بيانات العرض.', 'This action is not allowed on illustrative data.'),
+ 'review_exists': ('سبق تقييم بند هذا الطلب.', 'This order item has already been reviewed.'),
+ 'review_report_exists': ('سبق إرسال بلاغ لهذا التقييم من حسابك.', 'You have already reported this review.'),
  'server_error': ('حدث خطأ داخلي. لم نتمكن من إكمال العملية، حاول مجددًا.', 'An internal error occurred. Please try again.'),
  'database_busy': ('الخادم مشغول حاليًا. أعد المحاولة بنفس الطلب.', 'The server is busy. Retry the same request.'),
  'self_suspend': ('لا يمكنك تعطيل حساب الإدارة الحالي.', 'You cannot disable your current administrator account.'),

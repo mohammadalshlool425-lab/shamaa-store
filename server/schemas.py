@@ -228,6 +228,43 @@ class MessageSend(Input):
         return _normalize_message_body(value)
 
 
+
+
+def _normalize_review_text(value, maximum):
+    value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n')).strip()
+    if len(value) > maximum:
+        raise ValueError('Text is too long')
+    if any(unicodedata.category(char) == 'Cc' and char not in ('\n', '\t') for char in value):
+        raise ValueError('Text contains unsupported control characters')
+    return value
+
+
+class ReviewCreate(Input):
+    order_item_id: int = Field(ge=1, strict=True)
+    rating: int = Field(ge=1, le=5, strict=True)
+    body: str = Field(default='', max_length=2000)
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_review_text(value, 2000)
+
+
+class ReviewReportCreate(Input):
+    reason: Literal['incorrect', 'personal_data', 'abuse', 'other']
+    details: str = Field(default='', max_length=500)
+
+    @field_validator('details')
+    @classmethod
+    def normalize_details(cls, value):
+        return _normalize_review_text(value, 500)
+
+
+class ReviewReportResolution(Input):
+    status: Literal['resolved', 'dismissed']
+    note: str = Field(default='', max_length=500)
+
+
 class UserActive(Input):
     active: bool
 

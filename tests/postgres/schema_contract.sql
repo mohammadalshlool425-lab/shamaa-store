@@ -9,6 +9,7 @@ DECLARE
   policy_count integer;
   trigger_count integer;
   message_guard_count integer;
+  review_guard_count integer;
 BEGIN
   SELECT count(*), count(*) FILTER (WHERE c.relrowsecurity),
          count(*) FILTER (WHERE c.relforcerowsecurity)
@@ -17,8 +18,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 23 OR rls_count <> 23 OR forced_count <> 23 THEN
-    RAISE EXCEPTION 'Expected 23 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 25 OR rls_count <> 25 OR forced_count <> 25 THEN
+    RAISE EXCEPTION 'Expected 25 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -47,6 +48,17 @@ BEGIN
      AND t.tgname IN ('messages_sender_participant','immutable_messages_update');
   IF message_guard_count <> 2 THEN
     RAISE EXCEPTION 'Expected participant and append-only message guards; got %', message_guard_count;
+  END IF;
+  SELECT count(*) INTO review_guard_count
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN ('review_purchase_eligibility','review_content_immutable',
+                      'review_moderation_authority','review_report_not_author',
+                      'review_report_content_immutable','review_report_moderation_authority');
+  IF review_guard_count <> 6 THEN
+    RAISE EXCEPTION 'Expected six verified-review and report guards; got %', review_guard_count;
   END IF;
 END $$;
 
@@ -115,7 +127,15 @@ BEGIN
       ('settings','key'),('settings','value'),
       ('mail_outbox','id'),('mail_outbox','recipient'),('mail_outbox','subject'),('mail_outbox','body'),
       ('mail_outbox','html'),('mail_outbox','status'),('mail_outbox','attempts'),('mail_outbox','available_at'),
-      ('mail_outbox','created_at'),('mail_outbox','sent_at'),('mail_outbox','last_error')
+      ('mail_outbox','created_at'),('mail_outbox','sent_at'),('mail_outbox','last_error'),
+      ('reviews','id'),('reviews','order_item_id'),('reviews','buyer_id'),('reviews','product_id'),
+      ('reviews','seller_order_id'),('reviews','rating'),('reviews','body'),('reviews','status'),
+      ('reviews','moderation_note'),('reviews','moderated_by'),('reviews','moderated_at'),
+      ('reviews','created_at'),('reviews','updated_at'),
+      ('review_reports','id'),('review_reports','review_id'),('review_reports','reporter_id'),
+      ('review_reports','reason'),('review_reports','details'),('review_reports','status'),
+      ('review_reports','resolution_note'),('review_reports','resolved_by'),
+      ('review_reports','resolved_at'),('review_reports','created_at')
     ) AS contract(table_name,column_name)
   LOOP
     IF NOT EXISTS (
