@@ -11,6 +11,7 @@ DECLARE
   message_guard_count integer;
   review_guard_count integer;
   case_guard_count integer;
+  case_attachment_guard_count integer;
 BEGIN
   SELECT count(*), count(*) FILTER (WHERE c.relrowsecurity),
          count(*) FILTER (WHERE c.relforcerowsecurity)
@@ -19,8 +20,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 27 OR rls_count <> 27 OR forced_count <> 27 THEN
-    RAISE EXCEPTION 'Expected 27 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 28 OR rls_count <> 28 OR forced_count <> 28 THEN
+    RAISE EXCEPTION 'Expected 28 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -71,6 +72,17 @@ BEGIN
                       'order_case_status_guard');
   IF case_guard_count <> 5 THEN
     RAISE EXCEPTION 'Expected five shipment-case security guards; got %', case_guard_count;
+  END IF;
+  SELECT count(*) INTO case_attachment_guard_count
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN ('order_case_attachment_authority',
+                      'order_case_attachments_immutable_update',
+                      'order_case_attachments_immutable_delete');
+  IF case_attachment_guard_count <> 3 THEN
+    RAISE EXCEPTION 'Expected three case-attachment guards; got %', case_attachment_guard_count;
   END IF;
 END $$;
 
@@ -147,7 +159,12 @@ BEGIN
       ('review_reports','id'),('review_reports','review_id'),('review_reports','reporter_id'),
       ('review_reports','reason'),('review_reports','details'),('review_reports','status'),
       ('review_reports','resolution_note'),('review_reports','resolved_by'),
-      ('review_reports','resolved_at'),('review_reports','created_at')
+      ('review_reports','resolved_at'),('review_reports','created_at'),
+      ('order_case_attachments','id'),('order_case_attachments','case_id'),
+      ('order_case_attachments','uploader_id'),('order_case_attachments','uploader_role'),
+      ('order_case_attachments','storage_key'),('order_case_attachments','content_type'),
+      ('order_case_attachments','bytes'),('order_case_attachments','digest'),
+      ('order_case_attachments','created_at')
     ) AS contract(table_name,column_name)
   LOOP
     IF NOT EXISTS (
@@ -344,7 +361,7 @@ BEGIN
 END $$;
 
 DO $$
-DECLARE case_columns integer;
+DECLARE case_columns integer; attachment_columns integer;
 BEGIN
  SELECT count(*) INTO case_columns
    FROM information_schema.columns
@@ -362,6 +379,16 @@ BEGIN
  IF case_columns <> 20 THEN
    RAISE EXCEPTION 'Expected 20 case and event columns; found %',case_columns;
  END IF;
+ SELECT count(*) INTO attachment_columns
+   FROM information_schema.columns
+  WHERE table_schema='shamaa_app' AND table_name='order_case_attachments'
+    AND column_name IN (
+      'id','case_id','uploader_id','uploader_role','storage_key',
+      'content_type','bytes','digest','created_at'
+    );
+ IF attachment_columns <> 9 THEN
+   RAISE EXCEPTION 'Expected nine case-attachment metadata columns; found %',attachment_columns;
+ END IF;
 
  IF NOT EXISTS (
    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -371,13 +398,17 @@ BEGIN
    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='shamaa_app' AND c.relname='order_case_events'
       AND c.relrowsecurity AND c.relforcerowsecurity
+ ) OR NOT EXISTS (
+   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='order_case_attachments'
+      AND c.relrowsecurity AND c.relforcerowsecurity
  ) THEN
-   RAISE EXCEPTION 'Order cases and events must enforce row-level security';
+   RAISE EXCEPTION 'Case and attachment tables must enforce row-level security';
  END IF;
 
  IF EXISTS (
    SELECT 1 FROM pg_policies WHERE schemaname='shamaa_app'
-     AND tablename IN ('order_cases','order_case_events')
+     AND tablename IN ('order_cases','order_case_events','order_case_attachments')
  ) THEN
    RAISE EXCEPTION 'Case tables must remain closed until reviewed runtime policies exist';
  END IF;
