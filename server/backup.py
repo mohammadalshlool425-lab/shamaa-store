@@ -96,6 +96,13 @@ def create_backup(db,settings,destination,key):
             'case_attachment_records':len(case_attachments),
         }))
         archive = tmp/'backup.tar.gz'
+        case_attachment_dir = settings.data_dir / 'case-attachments'
+        if case_attachments and (
+            case_attachment_dir.is_symlink()
+            or not case_attachment_dir.is_dir()
+            or case_attachment_dir.resolve().parent != settings.data_dir.resolve()
+        ):
+            raise ValueError('Missing or unsafe case attachment directory; backup aborted')
         with tarfile.open(archive,'w:gz') as tar:
             tar.add(snapshot,arcname='marketplace.sqlite3')
             tar.add(info,arcname='backup-info.json')
@@ -110,7 +117,7 @@ def create_backup(db,settings,destination,key):
             for storage_key,digest,bytes_count in case_attachments:
                 if not re.fullmatch('[0-9a-f]{64}',storage_key) or not re.fullmatch('[0-9a-f]{64}',digest):
                     raise ValueError('Invalid case attachment metadata; backup aborted')
-                p = settings.data_dir/'case-attachments'/f'{storage_key}.webp'
+                p = case_attachment_dir/f'{storage_key}.webp'
                 if not p.is_file() or p.is_symlink() or p.stat().st_size!=bytes_count:
                     raise ValueError('Missing or unsafe case attachment; backup aborted')
                 hasher = hashlib.sha256()
