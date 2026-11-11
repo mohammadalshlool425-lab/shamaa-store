@@ -46,7 +46,11 @@ def test_return_workflow_requires_delivery_and_is_scoped_to_order_item(market):
 
     seller_list = market["a"]["client"].get("/api/returns")
     assert seller_list.status_code == 200
+    assert seller_list.headers["cache-control"] == "no-store"
     assert seller_list.json()["returns"][0]["id"] == request["id"]
+    buyer_list = buyer.get("/api/returns")
+    assert buyer_list.status_code == 200
+    assert buyer_list.headers["cache-control"] == "no-store"
     assert buyer.get(f"/api/returns/{request['id']}").status_code == 200
     stranger = factory.user()["client"]
     assert stranger.get(f"/api/returns/{request['id']}").status_code == 404
