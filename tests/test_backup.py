@@ -39,6 +39,20 @@ def test_encrypted_backup_and_validated_restore_with_media(factory,tmp_path):
         files={"file":("evidence.png",image.getvalue(),"image/png")},
     )
     assert uploaded.status_code==201,uploaded.text
+    delivered=seller['client'].patch(
+        f"/api/seller/orders/{shipment['id']}/status",
+        json={"status":"delivered","expected_status":"shipped"},
+    )
+    assert delivered.status_code==200,delivered.text
+    with factory.db.read() as c:
+        order_item_id=c.execute(
+            "SELECT id FROM order_items WHERE seller_order_id=?",(shipment['id'],)
+        ).fetchone()["id"]
+    return_open=buyer['client'].post('/api/returns',json={
+        "order_item_id":order_item_id,"quantity":1,"reason":"damaged",
+        "description":"وصل المنتج متضررًا وأريد تسجيل طلب إرجاع مع النسخة الاحتياطية.",
+    })
+    assert return_open.status_code==201,return_open.text
     with factory.db.transaction() as c:c.execute("INSERT INTO auth_tokens VALUES(?,?,'reset',?,NULL)",(digest('generated'),buyer['id'],now()+500))
     key=Fernet.generate_key().decode();backup=tmp_path/'snapshot.shama'
     create_backup(factory.db,factory.settings,backup,key)
@@ -49,6 +63,9 @@ def test_encrypted_backup_and_validated_restore_with_media(factory,tmp_path):
     with closing(sqlite3.connect(restored/'marketplace.sqlite3')) as c:
         assert c.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
         assert c.execute('SELECT COUNT(*) FROM orders').fetchone()[0]==1
+        assert c.execute('SELECT COUNT(*) FROM return_requests').fetchone()[0]==1
+        assert c.execute('SELECT COUNT(*) FROM return_request_events').fetchone()[0]==1
+        assert c.execute("SELECT status FROM return_requests").fetchone()[0]=='requested'
         assert c.execute('SELECT COUNT(*) FROM sessions').fetchone()[0]==0
         assert c.execute('SELECT COUNT(*) FROM auth_tokens WHERE used_at IS NULL').fetchone()[0]==0
         for (storage_key,) in c.execute('SELECT storage_key FROM media'):
