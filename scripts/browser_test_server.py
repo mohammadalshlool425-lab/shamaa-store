@@ -78,6 +78,7 @@ credentials['case_id']=case_open.json()['case']['id']
 # Seed a second, delivered order for the end-to-end return workflow.
 return_seller=case_factory.seller()
 return_buyer=case_factory.user()
+return_admin=case_factory.user("admin")
 return_product=case_factory.product(return_seller,stock=4)
 return_factory_cart=case_factory.cart(return_buyer,return_product,quantity=2)
 return_checkout,_,_=case_factory.checkout(return_buyer,quote=return_factory_cart)
@@ -108,6 +109,10 @@ credentials['return_buyer']={
 credentials['return_seller']={
     'id':return_seller['id'],'email':return_seller['email'],
     'password':return_seller['password'],'secret':None
+}
+credentials['return_admin']={
+    'id':return_admin['id'],'email':return_admin['email'],
+    'password':return_admin['password'],'secret':return_admin['secret']
 }
 credentials['return_item_id']=return_item_id
 p=folder/'credentials.json'
