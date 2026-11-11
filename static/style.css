@@ -92,3 +92,16 @@ a[href="/search?sort=recent"],a[href="/?collection=featured"]{display:inline-fle
 .message-conversation[aria-pressed="true"] small,
 .message-row.own .message-body,
 .message-row.own .message-meta{color:#566056}
+
+/* Private shipment-case evidence. Download links are authenticated API paths, never static assets. */
+.case-evidence{margin:18px 0;padding:17px;border:1px solid var(--line);border-radius:10px;background:#fbfcf9}
+.case-evidence h3{font-size:1rem;margin:0}
+.case-attachment-list{list-style:none;margin:13px 0 0;padding:0;display:grid;gap:9px}
+.case-attachment-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.case-attachment-list a{display:inline-flex;align-items:center;gap:8px;min-height:32px;color:var(--green);font-weight:700;font-size:.8125rem}
+.case-attachment-list small{color:var(--muted);font-size:.6875rem;text-align:end}
+.case-attachment-form{margin-top:14px;padding-top:14px}
+.case-attachment-form input[type=file]{width:100%;max-width:100%;min-height:44px;border:1px solid var(--line);border-radius:8px;padding:9px;background:#fff;font-size:.75rem}
+.case-attachment-form .btn{justify-self:start}
+@media(max-width:680px){.case-evidence{padding:14px}.case-attachment-list li{align-items:flex-start;flex-direction:column;gap:5px}.case-attachment-list small{text-align:start}.case-attachment-form .btn{width:100%}}
+
