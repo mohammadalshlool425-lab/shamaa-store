@@ -17,7 +17,7 @@ from .errors import error_body, fail, language
 from .security import optional_user
 from .seed import initialize_catalog
 from .commerce import PRODUCT_SQL, PUBLIC_WHERE
-from .routes import admin, auth, catalog, messages, orders, reviews, seller
+from .routes import admin, auth, cases, catalog, messages, orders, reviews, seller
 
 log = logging.getLogger('shamaa')
 STATIC = ROOT / 'static'
@@ -110,7 +110,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     app.add_middleware(RequestSizeLimit)
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=s.allowed_hosts)
     app.mount('/static',StaticFiles(directory=STATIC),name='static')
-    for router in (auth.router,catalog.router,seller.router,orders.router,messages.router,reviews.router,admin.router):
+    for router in (auth.router,catalog.router,seller.router,orders.router,messages.router,reviews.router,cases.router,cases.admin_router,admin.router):
         app.include_router(router)
 
     @app.exception_handler(HTTPException)
