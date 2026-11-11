@@ -342,7 +342,10 @@ test('buyer, seller and administrator complete an item return without automatic 
  await admin.locator('#reauth-form input[name=password]').fill(fixture.admin.password);
  const freshOtp=execFileSync(PY,['-c','import pyotp,sys;print(pyotp.TOTP(sys.stdin.read()).now())'],{input:fixture.admin.secret,encoding:'utf8'}).trim();
  await admin.locator('#reauth-form input[name=otp]').fill(freshOtp);
+ const reauthResponsePromise=admin.waitForResponse(response=>response.url().endsWith('/api/auth/reauth')&&response.request().method()==='POST');
  await admin.locator('#reauth-form button[type=submit]').click();
+ const reauthResponse=await reauthResponsePromise;
+ console.log('return admin reauth response:',reauthResponse.status(),await reauthResponse.text(),'message:',await admin.locator('#reauth-error').textContent());
  await expect(admin.locator('#reauth-form')).toHaveCount(0);
  await admin.locator('#return-admin-decision-form button[value=resolved]').click();
  await expect(admin.locator('.return-card .pill')).toContainText('تمت المعالجة');
