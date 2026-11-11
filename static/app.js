@@ -331,6 +331,40 @@ async function messagesView(route){
  main.innerHTML=`<div class='container page-space'><div class='page-heading'><div><h1>${tr('محادثاتك، في مكان واحد.','Your conversations, all in one place.')}</h1><p>${tr('الرسائل بين المشتري وبائع الشحنة فقط. لا تظهر بيانات العنوان أو رقم الهاتف هنا.','Messages are limited to the buyer and seller of each shipment. Delivery addresses and phone numbers are not shown here.')}</p></div>${link('/orders',tr('طلباتي','My orders'),'btn btn-outline btn-small')}</div><div class='messages-layout'><aside class='panel messages-sidebar'><h2>${tr('المحادثات','Conversations')}</h2><div class='messages-list'>${list}</div></aside><div class='messages-content'>${threadMarkup}</div></div></div>`;
  const feed=$('#message-feed');if(feed)feed.scrollTop=feed.scrollHeight;
 }
+async function casesView(route){
+ title(tr('الشكاوى والنزاعات','Cases & disputes'));
+ if(!S.user){main.innerHTML=authGate('/cases');return;}
+ if(!S.user.email_verified_at){main.innerHTML='<div class="container page-space">'+verificationNotice()+'</div>';return;}
+ const isAdmin=S.user.role==='admin';
+ const endpoint=isAdmin?'/api/admin/cases':'/api/cases';
+ const result=await api(endpoint);if(route!==S.route)return;
+ const cases=Array.isArray(result.cases)?result.cases:[];
+ const requested=Number(new URLSearchParams(location.search).get('case'));
+ const selected=cases.find(item=>item.id===requested)||null;
+ let detail=null;
+ if(selected){detail=await api(endpoint+'/'+selected.id);if(route!==S.route)return;detail=detail.case;}
+ const stateLabel=value=>({open:tr('مفتوحة','Open'),seller_responded:tr('ردّ البائع','Seller replied'),resolved:tr('تمت المعالجة','Resolved'),rejected:tr('مرفوضة','Rejected')})[value]||value;
+ const reasonLabel=value=>({not_received:tr('لم أستلم الشحنة','Not received'),damaged:tr('المنتج تالف','Damaged item'),wrong_item:tr('منتج مختلف','Wrong item'),missing_item:tr('عناصر ناقصة','Missing items'),not_as_described:tr('لا يطابق الوصف','Not as described'),other:tr('سبب آخر','Other')})[value]||value;
+ const eventLabel=value=>({opened:tr('تم فتح الشكوى','Case opened'),buyer_message:tr('رسالة المشتري','Buyer message'),seller_response:tr('رد البائع','Seller response'),admin_resolved:tr('قرار الإدارة: تمت المعالجة','Admin resolved'),admin_rejected:tr('قرار الإدارة: رفض الشكوى','Admin rejected')})[value]||value;
+ const list=cases.length?cases.map(item=>'<button type="button" class="message-conversation" data-action="select-case" data-id="'+Number(item.id)+'" aria-pressed="'+(selected?.id===item.id)+'"><strong>'+tr('الطلب','Order')+' '+esc(item.order_number)+'</strong><span>'+esc(reasonLabel(item.reason))+'</span><small>'+stateLabel(item.status)+' · '+date(item.updated_at)+'</small></button>').join(''):'<p class="small-text">'+tr('لا توجد شكاوى مسجلة على حسابك حتى الآن. عند وجود شحنة مؤهلة، افتح الشكوى من صفحة طلباتي.','There are no cases on this account yet. Open a case from My Orders when a shipment becomes eligible.')+'</p>';
+ let thread='<section class="panel message-thread"><h2>'+tr('اختر شكوى من القائمة','Choose a case from the list')+'</h2><p class="small-text">'+tr('تظهر هنا تفاصيل الشكوى ومراسلاتها وقراراتها.','Case details, replies and decisions appear here.')+'</p></section>';
+ if(detail){
+  const storeName=lang==='ar'?detail.store_name_ar:detail.store_name_en;
+  const events=(detail.events||[]).map(item=>'<article class="timeline-item"><strong>'+eventLabel(item.event_type)+'</strong><small>'+date(item.created_at)+' · '+(item.actor_role==='buyer'?tr('المشتري','Buyer'):item.actor_role==='seller'?tr('البائع','Seller'):tr('الإدارة','Administration'))+'</small><p class="pre-wrap">'+esc(item.body)+'</p></article>').join('');
+  const parties=isAdmin?'<p class="small-text">'+tr('المشتري','Buyer')+': '+esc(detail.buyer_name||'')+' · '+tr('البائع','Seller')+': '+esc(detail.seller_name||'')+'</p>':'';
+  const responseTarget='<p class="small-text">'+tr('المهلة التشغيلية المستهدفة لرد البائع:','Seller response target:')+' '+date(detail.response_due_at)+'. '+tr('ليست ضمانًا قانونيًا أو التزامًا بتعويض مالي.','This is not a legal guarantee or a financial compensation commitment.')+'</p>';
+  let actionForm='';
+  if(isAdmin&&!['resolved','rejected'].includes(detail.status)){
+   actionForm='<form id="case-decision-form" data-id="'+detail.id+'" class="message-form">'+errorBox('case-decision-error')+'<label for="case-decision-note">'+tr('ملاحظة قرار الإدارة','Administrator decision note')+'</label><textarea id="case-decision-note" name="note" rows="3" minlength="5" maxlength="1000" required></textarea><div class="row space-between"><button type="button" class="btn btn-light" data-action="reauth">'+icon('lock')+tr('إعادة التحقق الأمني','Re-authenticate')+'</button><span class="row"><button type="submit" name="decision" value="resolved" class="btn btn-primary">'+tr('تمت المعالجة','Resolve')+'</button><button type="submit" name="decision" value="rejected" class="btn btn-danger">'+tr('رفض الشكوى','Reject')+'</button></span></div></form>';
+  }else if(!isAdmin&&!['resolved','rejected'].includes(detail.status)){
+   actionForm='<form id="case-message-form" data-id="'+detail.id+'" class="message-form">'+errorBox('case-message-error')+'<label for="case-message-body">'+tr('إضافة رد أو توضيح','Add a reply or clarification')+'</label><textarea id="case-message-body" name="body" rows="3" minlength="1" maxlength="3000" required></textarea><div class="row space-between"><small class="small-text">'+tr('النص فقط؛ لا ترسل معلومات دفع أو كلمات مرور.','Text only; do not send payment credentials or passwords.')+'</small><button type="submit" class="btn btn-primary">'+icon('send')+tr('إرسال الرد','Send reply')+'</button></div></form>';
+  }else if(['resolved','rejected'].includes(detail.status)){
+   actionForm='<div class="notice">'+icon('info')+'<p>'+tr('أُغلقت الشكوى. لا ينشأ عن قرارها رد أموال أو تغيير أرصدة تلقائي.','This case is closed. Its decision does not issue an automatic refund or alter balances.')+'</p><p>'+esc(detail.resolution_note||'')+'</p></div>';
+  }
+  thread='<section class="panel message-thread"><header class="message-thread-head"><div><h2>'+tr('الطلب','Order')+' '+esc(detail.order_number)+'</h2><p>'+esc(storeName||'')+' · '+reasonLabel(detail.reason)+'</p>'+parties+'</div>'+pill(detail.status)+'</header><div class="info-row"><span>'+tr('حالة الشكوى','Case status')+'</span><strong>'+stateLabel(detail.status)+'</strong></div><div class="info-row"><span>'+tr('تاريخ الفتح','Opened')+'</span><strong>'+date(detail.opened_at)+'</strong></div>'+responseTarget+'<div class="notice"><p>'+esc(detail.description)+'</p></div><div class="message-feed" aria-live="polite">'+events+'</div>'+actionForm+'</section>';
+ }
+ main.innerHTML='<div class="container page-space"><div class="page-heading"><div><h1>'+tr('الشكاوى، بسجل واضح.','Cases, with a clear history.')+'</h1><p>'+tr('مكان خاص لمتابعة مشكلة مرتبطة بشحنة فعلية. المرفقات غير مفعّلة في هذه النسخة.','A private place to follow an issue tied to a real shipment. Attachments are not enabled in this release.')+'</p></div>'+(isAdmin?link('/admin',tr('لوحة الإدارة','Admin dashboard'),'btn btn-outline btn-small'):link('/orders',tr('طلباتي','My orders'),'btn btn-outline btn-small'))+'</div><div class="messages-layout"><aside class="panel messages-sidebar"><h2>'+tr('سجل الشكاوى','Case history')+'</h2><div class="messages-list">'+list+'</div></aside><div class="messages-content">'+thread+'</div></div></div>';
+}
 async function favoritesView(route){
  title(tr('اختياراتك المحفوظة','Your saved finds'));
  const items=await Promise.all(S.favorites.slice(0,100).map(async id=>{try{return (await api('/api/products/'+id)).product;}catch{return null;}}));if(route!==S.route)return;
