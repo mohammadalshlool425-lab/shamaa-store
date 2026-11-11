@@ -93,7 +93,7 @@ BEGIN
     AND EXISTS(SELECT 1 FROM shamaa_app.users u
                 WHERE u.id=NEW.closed_by AND u.role='admin' AND u.active=TRUE)
     AND latest.actor_id=NEW.closed_by AND latest.actor_role='admin'
-    AND latest.event_type=CASE NEW.status WHEN 'resolved' THEN 'admin_resolved' ELSE 'admin_rejected' END
+    AND latest.event_type=(CASE NEW.status WHEN 'resolved' THEN 'admin_resolved' ELSE 'admin_rejected' END)
     AND latest.created_at=NEW.closed_at AND latest.body=NEW.resolution_note THEN
    RETURN NEW;
  END IF;
