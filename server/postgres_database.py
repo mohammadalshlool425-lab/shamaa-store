@@ -216,8 +216,9 @@ class PostgresDatabase:
                     and messaging and int(messaging[0]) == 11
                     and reviews and int(reviews[0]) == 23
                     and cases and int(cases[0]) == 20
-                    and attachments and int(attachments[0]) == 9)
-        return 8 if complete else 0
+                    and attachments and int(attachments[0]) == 9
+                    and returns and int(returns[0]) == 25)
+        return 9 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
