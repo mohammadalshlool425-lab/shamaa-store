@@ -1,7 +1,7 @@
 /* Only static assets and explicitly public catalog responses enter this cache.
  * No background orders, payments, private pages, media uploads or inventory writes.
  */
-const CACHE='shamaa-public-v1.0.7';
+const CACHE='shamaa-public-v1.0.8';
 const SHELL=['/','/offline.html','/static/style.css','/static/app.js','/static/i18n.js','/static/api.js','/static/icons.js','/static/logo.svg','/static/images/placeholder.svg','/static/icons/icon-192.png','/static/icons/icon-512.png',...['arabic','latin'].flatMap(script=>[400,500,700,800].map(weight=>`/static/fonts/tajawal-${script}-${weight}-normal.woff2`))];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('shamaa-public-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
