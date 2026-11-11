@@ -277,3 +277,33 @@ class SettingsInput(Input):
 
 class CommissionInput(Input):
     commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
+
+
+class CaseCreate(Input):
+    seller_order_id: int = Field(ge=1, strict=True)
+    reason: Literal['not_received','damaged','wrong_item','missing_item','not_as_described','other']
+    description: str = Field(min_length=20, max_length=3000)
+
+    @field_validator('description')
+    @classmethod
+    def normalize_description(cls, value):
+        return _normalize_review_text(value, 3000)
+
+
+class CaseMessage(Input):
+    body: str = Field(min_length=1, max_length=3000)
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_review_text(value, 3000)
+
+
+class CaseDecision(Input):
+    status: Literal['resolved','rejected']
+    note: str = Field(min_length=5, max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
