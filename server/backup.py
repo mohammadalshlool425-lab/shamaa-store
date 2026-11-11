@@ -5,6 +5,7 @@ import base64
 from contextlib import closing
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -86,8 +87,14 @@ def create_backup(db,settings,destination,key):
         snapshot.chmod(0o600)
         with closing(sqlite3.connect(snapshot)) as c:
             media = list(c.execute('SELECT storage_key FROM media'))
+            case_attachments = list(c.execute(
+                'SELECT storage_key,digest,bytes FROM order_case_attachments'
+            ))
         info = tmp/'backup-info.json'
-        info.write_text(json.dumps({'version':1,'created_at':now(),'media_records':len(media)}))
+        info.write_text(json.dumps({
+            'version':1,'created_at':now(),'media_records':len(media),
+            'case_attachment_records':len(case_attachments),
+        }))
         archive = tmp/'backup.tar.gz'
         with tarfile.open(archive,'w:gz') as tar:
             tar.add(snapshot,arcname='marketplace.sqlite3')
@@ -100,6 +107,19 @@ def create_backup(db,settings,destination,key):
                     if not p.is_file() or p.is_symlink():
                         raise ValueError('Missing or unsafe media file; backup aborted')
                     tar.add(p,arcname='media/'+p.name)
+            for storage_key,digest,bytes_count in case_attachments:
+                if not re.fullmatch('[0-9a-f]{64}',storage_key) or not re.fullmatch('[0-9a-f]{64}',digest):
+                    raise ValueError('Invalid case attachment metadata; backup aborted')
+                p = settings.data_dir/'case-attachments'/f'{storage_key}.webp'
+                if not p.is_file() or p.is_symlink() or p.stat().st_size!=bytes_count:
+                    raise ValueError('Missing or unsafe case attachment; backup aborted')
+                hasher = hashlib.sha256()
+                with p.open('rb') as source:
+                    while chunk := source.read(64*1024):
+                        hasher.update(chunk)
+                if not secrets.compare_digest(hasher.hexdigest(),digest):
+                    raise ValueError('Case attachment digest mismatch; backup aborted')
+                tar.add(p,arcname='case-attachments/'+p.name)
             dev_key = settings.data_dir/'development.key'
             if not settings.production and dev_key.is_file():
                 tar.add(dev_key,arcname='development.key')
@@ -120,7 +140,7 @@ def restore_backup(source,destination,key,scratch):
         total = 0
         with tarfile.open(archive,'r:gz') as tar:
             for member in tar:
-                if not member.isfile() or not re.fullmatch(r'(marketplace\.sqlite3|backup-info\.json|development\.key|media/[0-9a-f]{32}-(480|960)\.webp)',member.name):
+                if not member.isfile() or not re.fullmatch(r'(marketplace\.sqlite3|backup-info\.json|development\.key|media/[0-9a-f]{32}-(480|960)\.webp|case-attachments/[0-9a-f]{64}\.webp)',member.name):
                     raise ValueError('Unsafe archive entry')
                 total += member.size
                 if total>10*1024**3:
@@ -145,6 +165,20 @@ def restore_backup(source,destination,key,scratch):
                 for size in (480,960):
                     if not (staging/'media'/f'{storage_key}-{size}.webp').is_file():
                         raise ValueError('Missing referenced media')
+            if schema_version >= 8:
+                for storage_key,digest,bytes_count in c.execute(
+                    'SELECT storage_key,digest,bytes FROM order_case_attachments'
+                ):
+                    attachment = staging/'case-attachments'/f'{storage_key}.webp'
+                    if (not attachment.is_file() or attachment.is_symlink()
+                            or attachment.stat().st_size != bytes_count):
+                        raise ValueError('Missing referenced case attachment')
+                    hasher = hashlib.sha256()
+                    with attachment.open('rb') as source:
+                        while chunk := source.read(64*1024):
+                            hasher.update(chunk)
+                    if not secrets.compare_digest(hasher.hexdigest(),digest):
+                        raise ValueError('Case attachment integrity validation failed')
             c.execute('DELETE FROM sessions')
             c.execute('UPDATE auth_tokens SET used_at=? WHERE used_at IS NULL',(now(),))
             c.execute("UPDATE mail_outbox SET status='failed',attempts=5,last_error='Restored backup - manual review' WHERE status IN ('pending','failed','sending')")
