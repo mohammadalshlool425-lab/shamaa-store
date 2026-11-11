@@ -1,4 +1,6 @@
 import sqlite3
+from io import BytesIO
+from PIL import Image
 import server.routes.cases as case_routes
 
 
@@ -281,3 +283,140 @@ def test_case_event_and_status_guards_reject_forgery_and_history_changes(market)
             pass
         else:
             raise AssertionError("Case status cannot be changed outside the authorized workflow")
+
+def _evidence_image(color):
+    output = BytesIO()
+    Image.new("RGB", (80, 60), color).save(output, format="PNG")
+    return output.getvalue()
+
+
+def test_case_evidence_upload_is_private_normalized_and_immutable(market):
+    factory = market["factory"]
+    buyer = market["buyer"]["client"]
+    _, shipment = _shipment(factory, market["a"], market["buyer"], market["p"])
+    opened = buyer.post("/api/cases", json={
+        "seller_order_id": shipment["id"],
+        "reason": "not_received",
+        "description": "لم تصل الشحنة وأريد إرفاق صورة من سجل التواصل مع مندوب التوصيل.",
+    })
+    assert opened.status_code == 201, opened.text
+    case_id = opened.json()["case"]["id"]
+
+    invalid = buyer.post(
+        f"/api/cases/{case_id}/attachments",
+        files={"file": ("fake.png", b"<svg/onload=alert(1)>", "image/png")},
+    )
+    assert invalid.status_code == 415
+
+    upload = buyer.post(
+        f"/api/cases/{case_id}/attachments",
+        files={"file": ("proof.png", _evidence_image((45, 90, 135)), "image/png")},
+    )
+    assert upload.status_code == 201, upload.text
+    case = upload.json()["case"]
+    attachment = case["attachments"][0]
+    assert attachment["content_type"] == "image/webp"
+    assert attachment["bytes"] > 0
+    assert attachment["uploader_role"] == "buyer"
+    assert attachment["download_url"] == f"/api/cases/{case_id}/attachments/{attachment['id']}"
+
+    buyer_download = buyer.get(attachment["download_url"])
+    assert buyer_download.status_code == 200
+    assert buyer_download.headers["content-type"] == "image/webp"
+    assert "no-store" in buyer_download.headers["cache-control"]
+    assert buyer_download.content[:4] == b"RIFF"
+
+    seller = market["a"]["client"]
+    seller_detail = seller.get(f"/api/cases/{case_id}")
+    assert seller_detail.status_code == 200
+    assert seller_detail.json()["case"]["attachments"][0]["id"] == attachment["id"]
+    assert seller.get(attachment["download_url"]).status_code == 200
+
+    stranger = factory.user()["client"]
+    assert stranger.get(attachment["download_url"]).status_code == 404
+    assert stranger.post(
+        f"/api/cases/{case_id}/attachments",
+        files={"file": ("proof.png", _evidence_image((1, 2, 3)), "image/png")},
+    ).status_code == 404
+
+    admin = factory.user("admin")["client"]
+    admin_case = admin.get(f"/api/admin/cases/{case_id}")
+    assert admin_case.status_code == 200
+    admin_attachment = admin_case.json()["case"]["attachments"][0]
+    assert admin_attachment["download_url"] == f"/api/admin/cases/{case_id}/attachments/{attachment['id']}"
+    assert admin.get(admin_attachment["download_url"]).status_code == 200
+
+    with factory.db.read() as c:
+        metadata = c.execute(
+            "SELECT storage_key,digest,bytes FROM order_case_attachments WHERE id=?",
+            (attachment["id"],),
+        ).fetchone()
+        path = factory.settings.data_dir / "case-attachments" / f"{metadata['storage_key']}.webp"
+        assert path.is_file() and not path.is_symlink()
+        assert path.stat().st_mode & 0o077 == 0
+        assert len(metadata["digest"]) == 64
+        assert metadata["bytes"] == path.stat().st_size
+
+    with factory.db.transaction() as c:
+        stranger_id = c.execute(
+            "SELECT id FROM users WHERE email=?",
+            (stranger.cookies.get("unused", "never-used"),),
+        ).fetchone()
+        # A valid but unrelated user cannot forge the seller participant identity.
+        try:
+            c.execute(
+                """INSERT INTO order_case_attachments(
+                     case_id,uploader_id,uploader_role,storage_key,content_type,bytes,digest,created_at
+                   ) VALUES(?,?,'seller',?,'image/webp',1,?,1)""",
+                (case_id, 999999, "a" * 64, "b" * 64),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("A non-participant must not append case evidence")
+        for statement in (
+            "UPDATE order_case_attachments SET bytes=1 WHERE id=?",
+            "DELETE FROM order_case_attachments WHERE id=?",
+        ):
+            try:
+                c.execute(statement, (attachment["id"],))
+            except sqlite3.IntegrityError:
+                continue
+            raise AssertionError("Case evidence metadata must be append-only")
+
+    decision = admin.post(
+        f"/api/admin/cases/{case_id}/decision",
+        json={"status": "resolved", "note": "تمت مراجعة الأدلة وإغلاق سجل الشكوى."},
+    )
+    assert decision.status_code == 200
+    after_close = buyer.post(
+        f"/api/cases/{case_id}/attachments",
+        files={"file": ("late.png", _evidence_image((100, 110, 120)), "image/png")},
+    )
+    assert after_close.status_code == 409
+    assert buyer.get(attachment["download_url"]).status_code == 200
+
+
+def test_case_evidence_enforces_per_case_count_and_byte_quotas(market):
+    factory = market["factory"]
+    buyer = market["buyer"]["client"]
+    _, shipment = _shipment(factory, market["a"], market["buyer"], market["p"])
+    opened = buyer.post("/api/cases", json={
+        "seller_order_id": shipment["id"],
+        "reason": "not_received",
+        "description": "أريد توثيق مشكلة التسليم بصور متعددة من نفس الشحنة.",
+    })
+    case_id = opened.json()["case"]["id"]
+    for index in range(5):
+        response = buyer.post(
+            f"/api/cases/{case_id}/attachments",
+            files={"file": (f"proof-{index}.png", _evidence_image((index * 30, 40, 70)), "image/png")},
+        )
+        assert response.status_code == 201, response.text
+    limited = buyer.post(
+        f"/api/cases/{case_id}/attachments",
+        files={"file": ("sixth.png", _evidence_image((240, 50, 10)), "image/png")},
+    )
+    assert limited.status_code == 413
+    assert limited.json()["code"] == "media_quota"
+
