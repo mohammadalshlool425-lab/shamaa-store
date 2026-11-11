@@ -63,6 +63,10 @@ case_open=case_buyer['client'].post('/api/cases',json={
 })
 if case_open.status_code!=201:
     raise RuntimeError('Could not prepare browser shipment case: '+case_open.text)
+# Keep the generated seller store out of public discovery so existing
+# storefront tests continue to exercise the three seeded demo stores only.
+with case_factory.db.transaction() as c:
+    c.execute("UPDATE stores SET status='pending' WHERE id=?",(case_seller['store_id'],))
 credentials['case_buyer']={
     'id':case_buyer['id'],'email':case_buyer['email'],'password':case_buyer['password'],'secret':None
 }
