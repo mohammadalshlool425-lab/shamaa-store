@@ -307,3 +307,54 @@ class CaseDecision(Input):
     @classmethod
     def normalize_note(cls, value):
         return _normalize_review_text(value, 1000)
+
+class ReturnCreate(Input):
+    order_item_id: int = Field(ge=1, strict=True)
+    quantity: int = Field(ge=1, le=99, strict=True)
+    reason: Literal['damaged','wrong_item','missing_item','not_as_described','changed_mind','other']
+    description: str = Field(min_length=20, max_length=2000)
+
+    @field_validator('description')
+    @classmethod
+    def normalize_description(cls, value):
+        return _normalize_review_text(value, 2000)
+
+
+class ReturnSellerDecision(Input):
+    status: Literal['approved','rejected']
+    note: str = Field(default='', max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
+
+
+class ReturnShipment(Input):
+    carrier: str = Field(min_length=2, max_length=50)
+    tracking_number: str = Field(min_length=3, max_length=100)
+
+    @field_validator('carrier','tracking_number')
+    @classmethod
+    def normalize_tracking(cls, value):
+        return _normalize_review_text(value, 100)
+
+
+class ReturnReceived(Input):
+    note: str = Field(default='', max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value or 'تم تأكيد استلام المرتجع. Received return item.', 1000)
+
+
+class ReturnAdminDecision(Input):
+    status: Literal['resolved','rejected']
+    note: str = Field(min_length=5, max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
+
