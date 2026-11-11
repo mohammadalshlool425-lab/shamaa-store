@@ -81,7 +81,13 @@ def test_reviews_are_hidden_until_admin_approval_and_never_publish_identity(mark
                          json={'approved':True,'note':'مراجعة مكتملة'})
     assert moderated.status_code==200,moderated.text
 
-    visible=buyer.get(f'/api/products/{product_id}/reviews').json()
+    english=buyer.get(f'/api/products/{product_id}/reviews').json()
+    assert english['reviews'][0]['reviewer_label']=='Verified buyer'
+    visible_response=buyer.get(
+        f'/api/products/{product_id}/reviews',headers={'X-Language':'ar'}
+    )
+    assert visible_response.status_code==200,visible_response.text
+    visible=visible_response.json()
     assert visible['review_count']==1 and visible['average_rating']==4
     public=visible['reviews'][0]
     assert public['verified_purchase'] is True
