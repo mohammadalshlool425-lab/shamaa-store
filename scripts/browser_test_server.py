@@ -74,6 +74,42 @@ credentials['case_seller']={
     'id':case_seller['id'],'email':case_seller['email'],'password':case_seller['password'],'secret':None
 }
 credentials['case_id']=case_open.json()['case']['id']
+
+# Seed a second, delivered order for the end-to-end return workflow.
+return_seller=case_factory.seller()
+return_buyer=case_factory.user()
+return_product=case_factory.product(return_seller,stock=4)
+return_factory_cart=case_factory.cart(return_buyer,return_product,quantity=2)
+return_checkout,_,_=case_factory.checkout(return_buyer,quote=return_factory_cart)
+if return_checkout.status_code!=201:
+    raise RuntimeError('Could not prepare browser return order: '+return_checkout.text)
+return_shipment=return_checkout.json()['order']['shipments'][0]
+previous='new'
+for status in ('confirmed','preparing','shipped','delivered'):
+    changed=return_seller['client'].patch(
+        f"/api/seller/orders/{return_shipment['id']}/status",
+        json={'status':status,'expected_status':previous},
+    )
+    if changed.status_code!=200:
+        raise RuntimeError('Could not prepare browser return shipment: '+changed.text)
+    previous=status
+with case_factory.db.read() as c:
+    return_item_id=c.execute(
+        "SELECT id FROM order_items WHERE seller_order_id=?",
+        (return_shipment['id'],),
+    ).fetchone()['id']
+# Keep this generated store out of public discovery, like the case fixture.
+with case_factory.db.transaction() as c:
+    c.execute("UPDATE stores SET status='pending' WHERE id=?",(return_seller['store_id'],))
+credentials['return_buyer']={
+    'id':return_buyer['id'],'email':return_buyer['email'],
+    'password':return_buyer['password'],'secret':None
+}
+credentials['return_seller']={
+    'id':return_seller['id'],'email':return_seller['email'],
+    'password':return_seller['password'],'secret':None
+}
+credentials['return_item_id']=return_item_id
 p=folder/'credentials.json'
 p.write_text(json.dumps(credentials));p.chmod(0o600)
 Image.new('RGB',(200,160),'#7c9379').save(folder/'product.png')
