@@ -238,12 +238,14 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.6');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
   const messagesPage=await page.request.get('/messages');
+  const casesPage=await page.request.get('/cases');
+  expect(casesPage.headers()['cache-control']).toBe('no-store');
   expect(messagesPage.headers()['cache-control']).toBe('no-store');
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
  const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.6');return(await c.keys()).map(r=>new URL(r.url).pathname);});
- expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
+ expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
   await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);
