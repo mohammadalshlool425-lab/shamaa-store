@@ -252,6 +252,7 @@ def seller_decision(
 
 @router.post("/returns/{request_id}/cancel")
 def cancel_return(request_id: int, request: Request, user=Depends(verified_user)):
+    throttle(request,"return_cancel",limit=10,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
         row = _participant_return(c, request_id, user)
         if row["buyer_id"] != user["id"] or row["status"] not in ("requested","approved"):
@@ -299,6 +300,7 @@ def confirm_return_received(
     request_id: int, body: schemas.ReturnReceived,
     request: Request, user=Depends(verified_user)
 ):
+    throttle(request,"return_receive",limit=20,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
         row = _participant_return(c,request_id,user)
         if row["seller_id"] != user["id"] or row["status"] != "return_shipped":
@@ -352,6 +354,7 @@ def admin_decide_return(
     request_id: int, body: schemas.ReturnAdminDecision,
     request: Request, user=Depends(recent_admin)
 ):
+    throttle(request,"return_admin_decision",limit=30,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
         row = _return_row(c,request_id)
         if not row:
