@@ -237,3 +237,49 @@ def test_return_events_and_identity_are_immutable(market):
                    VALUES(?,?,'buyer','buyer_cancelled','unauthorized',1)""",
                 (request_id,stranger["id"]),
             )
+
+def test_return_database_guards_reject_forged_owner_quantity_and_initial_status(market):
+    factory = market["factory"]
+    _, item = _delivered_item(factory, market["a"], market["buyer"], market["p"], 2)
+    admin = factory.user("admin")
+    stranger = factory.user()
+    with factory.db.read() as c:
+        shipment_id = c.execute(
+            "SELECT seller_order_id FROM order_items WHERE id=?",
+            (item["id"],),
+        ).fetchone()["seller_order_id"]
+
+    common = (
+        item["id"], shipment_id, market["buyer"]["id"], market["a"]["id"],
+        "other", "Direct database guard test with a delivered purchased item.",
+    )
+    with factory.db.transaction() as c:
+        # A user cannot replace the actual buyer identity in the row.
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                """INSERT INTO return_requests(
+                     order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
+                     status,requested_at,response_due_at,updated_at
+                   ) VALUES(?,?,?,?,1,?,?,'requested',100,200,100)""",
+                (item["id"],shipment_id,stranger["id"],market["a"]["id"],"other",common[5]),
+            )
+        # Quantity is constrained by the purchased order-item row, not by caller input.
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                """INSERT INTO return_requests(
+                     order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
+                     status,requested_at,response_due_at,updated_at
+                   ) VALUES(?,?,?,?,3,?,?,'requested',100,200,100)""",
+                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5]),
+            )
+        # A row cannot be inserted directly as already resolved, even with closure fields filled.
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(
+                """INSERT INTO return_requests(
+                     order_item_id,seller_order_id,buyer_id,seller_id,quantity,reason,description,
+                     status,requested_at,response_due_at,updated_at,return_carrier,
+                     return_tracking_number,closed_at,closed_by,decision_note
+                   ) VALUES(?,?,?,?,1,?,?,'resolved',100,200,100,'Carrier','TRACK-001',100,?,'Forged closure')""",
+                (item["id"],shipment_id,market["buyer"]["id"],market["a"]["id"],"other",common[5],admin["id"]),
+            )
+
