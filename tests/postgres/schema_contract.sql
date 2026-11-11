@@ -12,6 +12,7 @@ DECLARE
   review_guard_count integer;
   case_guard_count integer;
   case_attachment_guard_count integer;
+  return_guard_count integer;
 BEGIN
   SELECT count(*), count(*) FILTER (WHERE c.relrowsecurity),
          count(*) FILTER (WHERE c.relforcerowsecurity)
@@ -20,8 +21,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 28 OR rls_count <> 28 OR forced_count <> 28 THEN
-    RAISE EXCEPTION 'Expected 28 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 30 OR rls_count <> 30 OR forced_count <> 30 THEN
+    RAISE EXCEPTION 'Expected 30 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -83,6 +84,20 @@ BEGIN
                       'order_case_attachments_immutable_delete');
   IF case_attachment_guard_count <> 3 THEN
     RAISE EXCEPTION 'Expected three case-attachment guards; got %', case_attachment_guard_count;
+  END IF;
+  SELECT count(*) INTO return_guard_count
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN (
+       'return_request_event_authority','return_request_events_immutable_update',
+       'return_request_events_immutable_delete','return_request_identity_immutable',
+       'return_request_seller_note_guard','return_request_tracking_guard',
+       'return_request_status_guard'
+     );
+  IF return_guard_count <> 7 THEN
+    RAISE EXCEPTION 'Expected seven return-request guards; got %', return_guard_count;
   END IF;
 END $$;
 
@@ -361,7 +376,7 @@ BEGIN
 END $$;
 
 DO $$
-DECLARE case_columns integer; attachment_columns integer;
+DECLARE case_columns integer; attachment_columns integer; return_columns integer;
 BEGIN
  SELECT count(*) INTO case_columns
    FROM information_schema.columns
@@ -389,6 +404,23 @@ BEGIN
  IF attachment_columns <> 9 THEN
    RAISE EXCEPTION 'Expected nine case-attachment metadata columns; found %',attachment_columns;
  END IF;
+ SELECT count(*) INTO return_columns
+   FROM information_schema.columns
+  WHERE table_schema='shamaa_app'
+    AND (
+      (table_name='return_requests' AND column_name IN (
+        'id','order_item_id','seller_order_id','buyer_id','seller_id','quantity',
+        'reason','description','status','requested_at','response_due_at','updated_at',
+        'seller_note','return_carrier','return_tracking_number','closed_at','closed_by','decision_note'
+      ))
+      OR
+      (table_name='return_request_events' AND column_name IN (
+        'id','request_id','actor_id','actor_role','event_type','body','created_at'
+      ))
+    );
+ IF return_columns <> 25 THEN
+   RAISE EXCEPTION 'Expected 25 return-request columns; found %',return_columns;
+ END IF;
 
  IF NOT EXISTS (
    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -402,14 +434,22 @@ BEGIN
    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='shamaa_app' AND c.relname='order_case_attachments'
       AND c.relrowsecurity AND c.relforcerowsecurity
+ ) OR NOT EXISTS (
+   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='return_requests'
+      AND c.relrowsecurity AND c.relforcerowsecurity
+ ) OR NOT EXISTS (
+   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='return_request_events'
+      AND c.relrowsecurity AND c.relforcerowsecurity
  ) THEN
-   RAISE EXCEPTION 'Case and attachment tables must enforce row-level security';
+   RAISE EXCEPTION 'Case, attachment and return tables must enforce row-level security';
  END IF;
 
  IF EXISTS (
    SELECT 1 FROM pg_policies WHERE schemaname='shamaa_app'
-     AND tablename IN ('order_cases','order_case_events','order_case_attachments')
+     AND tablename IN ('order_cases','order_case_events','order_case_attachments','return_requests','return_request_events')
  ) THEN
-   RAISE EXCEPTION 'Case tables must remain closed until reviewed runtime policies exist';
+   RAISE EXCEPTION 'Private case and return tables must remain closed until reviewed runtime policies exist';
  END IF;
 END $$;
