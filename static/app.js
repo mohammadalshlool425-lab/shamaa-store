@@ -251,26 +251,88 @@ async function checkoutView(route){
  S.checkout={key,cart};
  main.innerHTML=`<div class="container">${breadcrumb([{text:tr('السلة','Bag'),href:'/cart'},{text:tr('إتمام الطلب','Checkout')}])}<div class="page-heading"><div><h1>${tr('باقي خطوة، وتوصل اختياراتك.','One more step to your next find.')}</h1><p>${tr('راجع التفاصيل، وسندع كل متجر يهتم بشحنته.','Check the details. Each store will prepare its own shipment.')}</p></div></div>${S.boot.development?`<div class="notice warn">${icon('info')}<p>${tr('طلب محلي للتجربة: سيُحفظ في قاعدة البيانات، دون شحن أو تحصيل نقدي فعلي.','Local test order: it will be saved in the database, without real shipping or cash collection.')}</p></div>`:''}<div class="cart-layout"><form id="checkout-form" class="checkout-form"><section class="panel"><h2>${tr('وين نوصل اختياراتك؟','Where should your finds go?')}</h2>${errorBox('checkout-error')}<div class="form-row">${input('recipient',tr('اسم المستلم','Recipient name'),{value:S.user.name,max:80,min:2,autocomplete:'name'})}${input('phone',tr('رقم الهاتف الأردني','Jordanian phone number'),{type:'tel',max:10,hint:tr('مثال: 0791234567','For example: 0791234567'),autocomplete:'tel-national',direction:'ltr'})}</div><div class="form-field"><label for="city">${tr('مدينة التوصيل','Delivery city')}</label><select name="city" id="city" required><option value="">${tr('اختر المدينة','Select a city')}</option>${cityOptions('')}</select></div>${textarea('address',tr('العنوان بالتفصيل','Full delivery address'),'',true,400)}<p class="small-text">${tr('الحي، الشارع، رقم المبنى والطابق، وأقرب نقطة دالة. لا نستخدم عنوانك لأغراض تسويقية.','Include your neighbourhood, street, building and floor. Your address is not used for marketing.')}</p></section><section class="panel"><h2>${tr('طريقة الدفع','Payment method')}</h2><label class="checkout-method"><input type="radio" name="payment" value="cod" checked><span>${tr('الدفع عند الاستلام','Cash on delivery')}<small>${tr('ادفع للمتجر أو مندوب التوصيل عند الاستلام.','Pay the store or delivery driver when your shipment arrives.')}</small></span>${icon('wallet')}</label><p class="small-text gap-top">${tr('الدفع الإلكتروني غير مفعّل. بتأكيدك، توافق على','Online payment is not enabled. By confirming, you accept the')} ${link('/help#terms',tr('شروط النسخة الحالية وسياسة الإلغاء.','current terms and cancellation policy.'),'text-link')}</p></section></form><aside class="panel order-summary"><h2>${tr('اختياراتك','Your finds')}</h2><div class="mini-items">${cart.groups.map(g=>`<strong class="small-text">${esc(field(g,'name'))}</strong>${miniItems(g.items)}`).join('')}</div><div class="summary-row"><span>${tr('المنتجات','Items')}</span><strong>${money(cart.subtotal_fils)} ${currency()}</strong></div><div class="summary-row"><span>${tr('الشحن','Shipping')} (${number(cart.groups.length)})</span><strong>${money(cart.shipping_fils)} ${currency()}</strong></div><div class="summary-row total"><span>${tr('الإجمالي','Total')}</span>${price(cart.total_fils)}</div><button form="checkout-form" type="submit" class="btn btn-primary btn-block" ${navigator.onLine?'':'disabled'}>${icon('check')}${S.boot.development?tr('تأكيد الطلب التجريبي','Confirm test order'):tr('تأكيد الطلب','Confirm order')}</button><p class="summary-caption">${tr('سيتم التحقق من الأسعار والمخزون على الخادم قبل التأكيد.','Prices and stock will be verified on the server before confirmation.')}</p></aside></div></div>`;
 }
-function shipmentHTML(s,order,{admin=false,seller=false,caseRecord=null}={}){
+function openReturnModal(itemId,remaining){
+ if(!S.user){S.afterAuth='/orders';openAuth();return;}
+ if(!S.user.email_verified_at){toast(tr('أكد بريدك الإلكتروني أولًا قبل طلب الإرجاع.','Confirm your email before requesting a return.'),true);navigate('/account');return;}
+ modal(tr('طلب إرجاع','Request a return'),
+  '<p class="dialog-description">'+tr('يمكن طلب إرجاع البند بعد تسليم الشحنة خلال المدة التشغيلية المحددة. اختر الكمية والسبب واشرح الحالة. قبول الطلب لا يعني صدور رد مالي تلقائي.','A return may be requested after delivery within the operating window. Choose quantity and reason and explain the issue. Approval does not trigger an automatic refund.')+'</p>'+
+  '<form id="return-create-form">'+errorBox('return-create-error')+
+  '<input type="hidden" name="order_item_id" value="'+Number(itemId)+'">'+
+  '<div class="form-row"><div class="form-field"><label for="return-quantity">'+tr('الكمية','Quantity')+'</label><input id="return-quantity" name="quantity" type="number" min="1" max="'+Number(remaining)+'" value="'+Number(remaining)+'" required></div><div class="form-field"><label for="return-reason">'+tr('سبب الإرجاع','Return reason')+'</label><select id="return-reason" name="reason" required><option value="damaged">'+tr('المنتج تالف','Damaged item')+'</option><option value="wrong_item">'+tr('منتج مختلف','Wrong item')+'</option><option value="missing_item">'+tr('عناصر ناقصة','Missing items')+'</option><option value="not_as_described">'+tr('لا يطابق الوصف','Not as described')+'</option><option value="changed_mind">'+tr('تغيير الرأي','Changed my mind')+'</option><option value="other">'+tr('سبب آخر','Other')+'</option></select></div></div>'+
+  '<div class="form-field"><label for="return-description">'+tr('اشرح سبب الإرجاع','Describe the return reason')+'</label><textarea id="return-description" name="description" rows="4" minlength="20" maxlength="2000" required></textarea><small class="small-text">'+tr('مدة الإرجاع التشغيلية 14 يومًا من حدث التسليم المسجل؛ وليست إعلانًا عن حق قانوني أو ضمان معتمد.','The operating return window is 14 days from the recorded delivery event; it is not a statement of a legal right or approved warranty.')+'</small></div>'+
+  '<button type="submit" class="btn btn-primary btn-block">'+tr('إرسال طلب الإرجاع','Submit return request')+'</button></form>');
+}
+function shipmentHTML(s,order,{admin=false,seller=false,caseRecord=null,returnsByItem={}}={}){
  const next={new:['confirmed','cancelled'],confirmed:['preparing','cancelled'],preparing:['shipped','cancelled'],shipped:['delivered']};
  const caseAction=caseRecord
   ? '<button class="btn btn-soft btn-small" data-action="select-case" data-id="'+Number(caseRecord.id)+'">'+icon('shield-check')+tr('متابعة الشكوى','View case')+'</button>'
   : !admin&&!seller&&['shipped','delivered'].includes(s.status)
    ? '<button class="btn btn-light btn-small" data-action="case-shipment" data-id="'+Number(s.id)+'" data-status="'+esc(s.status)+'">'+icon('file-warning')+tr('فتح شكوى','Open a case')+'</button>'
    : '';
- return '<section class="shipment"><div class="shipment-top"><h3>'+link('/store/'+s.store_slug,esc(s.store_name_ar?field(s,'store_name'):field(S.store,'name')))+'</h3>'+pill(s.status)+'</div>'+miniItems(s.items)+'<div class="shipment-footer"><span class="small-text">'+tr('هذه الشحنة:','This shipment:')+' <strong>'+money(s.subtotal_fils+s.shipping_fils)+' '+currency()+'</strong></span>'+(!admin?'<button class="btn btn-light btn-small" data-action="message-shipment" data-id="'+s.id+'">'+icon('message-circle')+(seller?tr('مراسلة المشتري','Message buyer'):tr('مراسلة المتجر','Message store'))+'</button>':'')+caseAction+(!admin&&!seller&&['new','confirmed'].includes(s.status)?'<button class="btn btn-danger btn-small" data-action="cancel-order" data-order="'+order.id+'" data-id="'+s.id+'">'+tr('إلغاء هذه الشحنة','Cancel this shipment')+'</button>':'')+'</div>'+(seller||admin?'<div class="notice gap-top">'+icon('pin')+'<div>'+esc(order.recipient)+' · <bdi>'+esc(order.phone)+'</bdi><p>'+esc(cityName(order.city))+' · '+esc(order.address)+'</p></div></div><div class="info-row"><span>'+tr('عمولة هذا الطلب','Order commission')+'</span><strong>'+money(s.commission_fils)+' '+currency()+'</strong></div>'+(next[s.status]?'<form class="status-form gap-top" data-id="'+s.id+'" data-current="'+s.status+'" data-admin="'+admin+'"><div class="form-row"><div class="form-field"><label for="state-'+s.id+'">'+tr('الحالة الجديدة','Next status')+'</label><select id="state-'+s.id+'" name="status">'+next[s.status].map(v=>'<option value="'+v+'">'+status(v)+'</option>').join('')+'</select></div><div class="form-field"><label for="note-'+s.id+'">'+tr('ملاحظة للمشتري','Buyer-visible note')+'</label><input id="note-'+s.id+'" name="note" maxlength="500"></div></div>'+errorBox('status-error-'+s.id)+'<button class="btn btn-primary btn-small" type="submit">'+tr('حفظ تحديث الحالة','Save status update')+'</button></form>':''):'')+'<details><summary>'+tr('سجل الشحنة','Shipment history')+'</summary><div class="timeline">'+s.events.map(e=>'<div class="timeline-item"><strong>'+esc(status(e.to_status))+'</strong><small>'+date(e.created_at)+'</small>'+(e.note?'<p>'+esc(e.note)+'</p>':'')+'</div>').join('')+'</div></details></section>';
+ const returnActions=!admin&&!seller?s.items.map(item=>{
+  const history=returnsByItem[item.id]||[];
+  const active=history.find(record=>['requested','approved','return_shipped','received'].includes(record.status));
+  const already=history.filter(record=>!['rejected','cancelled'].includes(record.status)).reduce((sum,record)=>sum+Number(record.quantity||0),0);
+  const remaining=Math.max(0,Number(item.quantity)-already);
+  if(s.status!=='delivered')return '';
+  if(active)return '<button class="btn btn-soft btn-small" data-action="select-return" data-id="'+Number(active.id)+'">'+icon('package-check')+tr('متابعة الإرجاع','Track return')+' · '+esc(field(item,'title'))+'</button>';
+  if(remaining>0)return '<button class="btn btn-light btn-small" data-action="open-return" data-id="'+Number(item.id)+'" data-remaining="'+remaining+'">'+icon('package-plus')+tr('إرجاع','Return')+' '+esc(field(item,'title'))+' ('+number(remaining)+')</button>';
+  return '';
+ }).join(''):'';
+ return '<section class="shipment"><div class="shipment-top"><h3>'+link('/store/'+s.store_slug,esc(s.store_name_ar?field(s,'store_name'):field(S.store,'name')))+'</h3>'+pill(s.status)+'</div>'+miniItems(s.items)+(returnActions?'<div class="shipment-return-actions">'+returnActions+'</div>':'')+'<div class="shipment-footer"><span class="small-text">'+tr('هذه الشحنة:','This shipment:')+' <strong>'+money(s.subtotal_fils+s.shipping_fils)+' '+currency()+'</strong></span>'+(!admin?'<button class="btn btn-light btn-small" data-action="message-shipment" data-id="'+s.id+'">'+icon('message-circle')+(seller?tr('مراسلة المشتري','Message buyer'):tr('مراسلة المتجر','Message store'))+'</button>':'')+caseAction+(!admin&&!seller&&['new','confirmed'].includes(s.status)?'<button class="btn btn-danger btn-small" data-action="cancel-order" data-order="'+order.id+'" data-id="'+s.id+'">'+tr('إلغاء هذه الشحنة','Cancel this shipment')+'</button>':'')+'</div>'+(seller||admin?'<div class="notice gap-top">'+icon('pin')+'<div>'+esc(order.recipient)+' · <bdi>'+esc(order.phone)+'</bdi><p>'+esc(cityName(order.city))+' · '+esc(order.address)+'</p></div></div><div class="info-row"><span>'+tr('عمولة هذا الطلب','Order commission')+'</span><strong>'+money(s.commission_fils)+' '+currency()+'</strong></div>'+(next[s.status]?'<form class="status-form gap-top" data-id="'+s.id+'" data-current="'+s.status+'" data-admin="'+admin+'"><div class="form-row"><div class="form-field"><label for="state-'+s.id+'">'+tr('الحالة الجديدة','Next status')+'</label><select id="state-'+s.id+'" name="status">'+next[s.status].map(v=>'<option value="'+v+'">'+status(v)+'</option>').join('')+'</select></div><div class="form-field"><label for="note-'+s.id+'">'+tr('ملاحظة للمشتري','Buyer-visible note')+'</label><input id="note-'+s.id+'" name="note" maxlength="500"></div></div>'+errorBox('status-error-'+s.id)+'<button class="btn btn-primary btn-small" type="submit">'+tr('حفظ تحديث الحالة','Save status update')+'</button></form>':''):'')+'<details><summary>'+tr('سجل الشحنة','Shipment history')+'</summary><div class="timeline">'+s.events.map(e=>'<div class="timeline-item"><strong>'+esc(status(e.to_status))+'</strong><small>'+date(e.created_at)+'</small>'+(e.note?'<p>'+esc(e.note)+'</p>':'')+'</div>').join('')+'</div></details></section>';
 }
-function orderCard(o,admin=false,caseByShipment={}){
- return '<article class="order-card"><header class="order-head"><div><h2>'+esc(o.number)+'</h2><p>'+date(o.created_at)+' · '+tr('الدفع عند الاستلام','Cash on delivery')+(o.is_demo?' · '+tr('طلب تجريبي','Test order'):'')+'</p></div>'+price(o.live_total_fils)+'</header><div class="order-body"><p class="small-text">'+tr('التوصيل إلى:','Deliver to:')+' '+esc(o.recipient)+' · '+esc(cityName(o.city))+'</p>'+o.shipments.map(s=>shipmentHTML(s,o,{admin,caseRecord:caseByShipment[s.id]||null})).join('')+'</div></article>';
+function orderCard(o,admin=false,caseByShipment={},returnsByItem={}){
+ return '<article class="order-card"><header class="order-head"><div><h2>'+esc(o.number)+'</h2><p>'+date(o.created_at)+' · '+tr('الدفع عند الاستلام','Cash on delivery')+(o.is_demo?' · '+tr('طلب تجريبي','Test order'):'')+'</p></div>'+price(o.live_total_fils)+'</header><div class="order-body"><p class="small-text">'+tr('التوصيل إلى:','Deliver to:')+' '+esc(o.recipient)+' · '+esc(cityName(o.city))+'</p>'+o.shipments.map(s=>shipmentHTML(s,o,{admin,caseRecord:caseByShipment[s.id]||null,returnsByItem})).join('')+'</div></article>';
 }
 async function ordersView(route){
  title(tr('طلباتي','My orders'));if(!S.user){main.innerHTML=authGate('/orders');return;}
- const data=await api('/api/orders');
- const caseResult=S.user.email_verified_at&&S.user.role!=='admin'?await api('/api/cases'):{cases:[]};
+ const [data,caseResult,returnResult]=await Promise.all([
+  api('/api/orders'),
+  S.user.email_verified_at&&S.user.role!=='admin'?api('/api/cases'):{cases:[]},
+  S.user.email_verified_at&&S.user.role!=='admin'?api('/api/returns'):{returns:[]}
+ ]);
  if(route!==S.route)return;
  const caseByShipment=Object.fromEntries((caseResult.cases||[]).map(item=>[item.seller_order_id,item]));
- main.innerHTML='<div class="container page-space"><div class="page-heading"><div><h1>'+tr('اختياراتك، في الطريق.','Your finds, every step of the way.')+'</h1><p>'+tr('لكل متجر شحنة وحالة مستقلة. الإجمالي المعروض يستثني الشحنات الملغاة. يمكنك فتح شكوى للشحنات المؤهلة.','Each store has a separate shipment and status. Totals exclude cancelled shipments. You can open a case for eligible shipments.')+'</p></div>'+link('/search',tr('اكتشف المزيد','Discover more'),'btn btn-outline btn-small')+'</div>'+(data.orders.length?data.orders.map(o=>orderCard(o,false,caseByShipment)).join(''):empty(tr('أول طلب، أول حكاية.','Your first order starts a story.'),tr('عندما تؤكد طلبًا ستجد تفاصيله وتحديثاته هنا.','When you confirm an order, its details and updates will appear here.'),link('/search',tr('اكتشف المنتجات','Explore products'),'btn btn-primary'),'bag'))+'</div>';
+ const returnsByItem={};
+ for(const item of returnResult.returns||[]){(returnsByItem[item.order_item_id]??=[]).push(item);}
+ main.innerHTML='<div class="container page-space"><div class="page-heading"><div><h1>'+tr('اختياراتك، في الطريق.','Your finds, every step of the way.')+'</h1><p>'+tr('لكل متجر شحنة وحالة مستقلة. الإجمالي المعروض يستثني الشحنات الملغاة. يمكنك متابعة الشكاوى وطلبات الإرجاع من هنا.','Each store has a separate shipment and status. Totals exclude cancelled shipments. You can track disputes and returns here.')+'</p></div>'+link('/returns',tr('طلبات الإرجاع','Returns'),'btn btn-outline btn-small')+'</div>'+(data.orders.length?data.orders.map(o=>orderCard(o,false,caseByShipment,returnsByItem)).join(''):empty(tr('أول طلب، أول حكاية.','Your first order starts a story.'),tr('عندما تؤكد طلبًا ستجد تفاصيله وتحديثاته هنا.','When you confirm an order, its details and updates will appear here.'),link('/search',tr('اكتشف المنتجات','Explore products'),'btn btn-primary'),'bag'))+'</div>';
 }
+async function returnsView(route){
+ title(tr('طلبات الإرجاع','Returns'));
+ if(!S.user){main.innerHTML=authGate('/returns');return;}
+ if(!S.user.email_verified_at){main.innerHTML='<div class="container page-space">'+verificationNotice()+'</div>';return;}
+ const isAdmin=S.user.role==='admin';
+ const endpoint=isAdmin?'/api/admin/returns':'/api/returns';
+ const result=await api(endpoint);if(route!==S.route)return;
+ const returns=result.returns||[];
+ const labelReason=value=>({
+  damaged:tr('المنتج تالف','Damaged item'),wrong_item:tr('منتج مختلف','Wrong item'),
+  missing_item:tr('عناصر ناقصة','Missing items'),not_as_described:tr('لا يطابق الوصف','Not as described'),
+  changed_mind:tr('تغيير الرأي','Changed my mind'),other:tr('سبب آخر','Other')
+ })[value]||value;
+ const cards=returns.map(item=>{
+  const titleText=lang==='ar'?item.title_ar:item.title_en;
+  const events=(item.events||[]).map(event=>'<article class="timeline-item"><strong>'+esc(event.event_type.replaceAll('_',' '))+'</strong><small>'+date(event.created_at)+' · '+(event.actor_role==='buyer'?tr('المشتري','Buyer'):event.actor_role==='seller'?tr('البائع','Seller'):tr('الإدارة','Administration'))+'</small><p class="pre-wrap">'+esc(event.body)+'</p></article>').join('');
+  const parties=isAdmin?'<p class="small-text">'+tr('المشتري','Buyer')+': '+esc(item.buyer_name||'')+' · '+tr('البائع','Seller')+': '+esc(item.seller_name||'')+'</p>':'';
+  let actions='';
+  if(item.can_seller_decide){
+   actions='<form id="return-seller-decision-form" data-id="'+item.id+'" class="message-form">'+errorBox('return-seller-error')+'<label for="return-seller-note-'+item.id+'">'+tr('ملاحظة المتجر','Store response note')+'</label><textarea id="return-seller-note-'+item.id+'" name="note" rows="3" maxlength="1000"></textarea><div class="form-actions"><button type="submit" name="decision" value="approved" class="btn btn-primary">'+tr('قبول الإرجاع','Approve return')+'</button><button type="submit" name="decision" value="rejected" class="btn btn-danger">'+tr('رفض الإرجاع','Reject return')+'</button></div></form>';
+  }else if(item.can_buyer_ship){
+   actions='<form id="return-shipment-form" data-id="'+item.id+'" class="message-form">'+errorBox('return-shipment-error')+'<h3>'+tr('بيانات شحن المرتجع','Return shipment details')+'</h3><div class="form-row"><div class="form-field"><label for="return-carrier-'+item.id+'">'+tr('شركة التوصيل','Carrier')+'</label><input id="return-carrier-'+item.id+'" name="carrier" minlength="2" maxlength="50" required></div><div class="form-field"><label for="return-tracking-'+item.id+'">'+tr('رقم التتبع','Tracking number')+'</label><input id="return-tracking-'+item.id+'" name="tracking_number" minlength="3" maxlength="100" required dir="ltr"></div></div><button type="submit" class="btn btn-primary">'+tr('تسجيل شحن المرتجع','Record return shipment')+'</button></form>';
+  }else if(item.can_seller_receive){
+   actions='<form id="return-received-form" data-id="'+item.id+'" class="message-form">'+errorBox('return-received-error')+'<label for="return-received-note-'+item.id+'">'+tr('ملاحظة استلام اختيارية','Optional receipt note')+'</label><textarea id="return-received-note-'+item.id+'" name="note" rows="2" maxlength="1000"></textarea><button type="submit" class="btn btn-primary">'+tr('تأكيد استلام المرتجع','Confirm return received')+'</button></form>';
+  }else if(isAdmin&&!['resolved','rejected','cancelled'].includes(item.status)){
+   actions='<form id="return-admin-decision-form" data-id="'+item.id+'" class="message-form">'+errorBox('return-admin-error')+'<label for="return-admin-note-'+item.id+'">'+tr('ملاحظة القرار الإداري','Administrator decision note')+'</label><textarea id="return-admin-note-'+item.id+'" name="note" rows="3" minlength="5" maxlength="1000" required></textarea><div class="form-actions"><button type="button" class="btn btn-light" data-action="reauth">'+icon('lock')+tr('إعادة التحقق الأمني','Re-authenticate')+'</button><button type="submit" name="decision" value="resolved" class="btn btn-primary" '+(item.status!=='received'?'disabled':'')+'>'+tr('إغلاق بعد الاستلام','Resolve after receipt')+'</button><button type="submit" name="decision" value="rejected" class="btn btn-danger">'+tr('رفض الإرجاع','Reject return')+'</button></div></form>';
+  }else if(item.can_buyer_cancel){
+   actions='<button type="button" class="btn btn-light btn-small" data-action="cancel-return" data-id="'+item.id+'">'+tr('إلغاء طلب الإرجاع','Cancel return request')+'</button>';
+  }
+  const tracking=item.return_tracking_number?'<div class="info-row"><span>'+tr('التوصيل العكسي','Return carrier')+'</span><strong>'+esc(item.return_carrier)+' · <bdi>'+esc(item.return_tracking_number)+'</bdi></strong></div>':'';
+  const financialNotice='<p class="small-text">'+tr('هذا المسار يوثق الإرجاع وحالة استلام المنتج فقط؛ لا ينشئ ردًا ماليًا أو حركة دفتر أستاذ تلقائية.','This workflow records the return and item receipt only; it does not create an automatic refund or ledger movement.')+'</p>';
+  return '<article class="panel return-card" data-return-id="'+item.id+'"><header class="row space-between"><div><p class="eyebrow">'+tr('طلب الإرجاع','Return request')+' #'+number(item.id)+' · '+esc(item.order_number)+'</p><h2>'+esc(titleText||'')+'</h2><p>'+esc(item.store_name_ar||'')+' · '+labelReason(item.reason)+'</p>'+parties+'</div>'+pill(item.status)+'</header><div class="info-row"><span>'+tr('الكمية المطلوبة','Requested quantity')+'</span><strong>'+number(item.quantity)+' / '+number(item.purchased_quantity)+'</strong></div><div class="info-row"><span>'+tr('تاريخ الطلب','Requested')+'</span><strong>'+date(item.requested_at)+'</strong></div><div class="notice"><p>'+esc(item.description)+'</p></div>'+tracking+(item.seller_note?'<div class="notice"><p>'+esc(item.seller_note)+'</p></div>':'')+'<div class="timeline return-timeline">'+events+'</div>'+actions+financialNotice+(item.status==='rejected'||item.status==='resolved'||item.status==='cancelled'?'<div class="notice"><p>'+esc(item.decision_note||'')+'</p></div>':'')+'</article>';
+ }).join('');
+ main.innerHTML='<div class="container page-space"><div class="page-heading"><div><h1>'+tr('طلبات الإرجاع','Return requests')+'</h1><p>'+tr('سجل مستقل لكل بند مشتَرى؛ يبدأ بعد التسليم ويحتفظ بمراحل موافقة المتجر وشحن المرتجع واستلامه.','A separate record for each purchased item; it begins after delivery and records store approval, return shipment and receipt.')+'</p></div>'+link(isAdmin?'/admin':'/orders',isAdmin?tr('لوحة الإدارة','Admin dashboard'):tr('طلباتي','My orders'),'btn btn-outline btn-small')+'</div><div class="returns-list">'+(cards||'<section class="panel">'+empty(tr('لا توجد طلبات إرجاع بعد.','No return requests yet.'),tr('يمكنك طلب إرجاع بند من صفحة طلباتي بعد تسجيل تسليمه.','You can request a return for an item from My Orders after its delivery is recorded.'),link('/orders',tr('الذهاب إلى طلباتي','Go to My orders'),'btn btn-primary'),'package')+'</section>')+'</div></div>';
+}
+
 function openAuth(mode='login'){
  const register=mode==='register',forgot=mode==='forgot';
  modal(forgot?tr('نرجّعك لحسابك.','Let’s get you back in.'):register?tr('أهلًا ببدايتك الجديدة.','Here’s to new beginnings.'):tr('يا أهلًا بعودتك.','Lovely to see you again.'),`
@@ -526,6 +588,7 @@ async function renderRoute(){
   else if(path==='/orders')await ordersView(route);
   else if(path==='/messages')await messagesView(route);
   else if(path==='/cases')await casesView(route);
+  else if(path==='/returns')await returnsView(route);
   else if(path==='/account')await accountView(route);
   else if(path==='/seller')await sellerView(route);
   else if(path==='/admin')await adminView(route);
@@ -613,6 +676,9 @@ document.addEventListener('click',async e=>{
   else if(action==='message-shipment')openShipmentConversation(id);
   else if(action==='case-shipment')openShipmentCase(id,button.dataset.status);
   else if(action==='select-case')await navigate('/cases?case='+id);
+  else if(action==='open-return')openReturnModal(id,Number(button.dataset.remaining));
+  else if(action==='select-return')await navigate('/returns?return='+id);
+  else if(action==='cancel-return')confirmAction(tr('إلغاء طلب الإرجاع؟','Cancel return request?'),tr('يمكن إلغاء الطلب قبل شحن المنتج المرتجع فقط.','A return request can only be cancelled before the item is shipped back.'),async()=>{await api('/api/returns/'+id+'/cancel',{method:'POST',body:{}});toast(tr('أُلغي طلب الإرجاع.','Return request cancelled.'));await renderRoute();});
    else if(action==='select-conversation')await navigate('/messages?conversation='+id);
    else if(action==='new-product')await openProduct();
   else if(action==='edit-product')await openProduct(S.products.get(id));
@@ -684,6 +750,26 @@ document.addEventListener('submit',async e=>{
     const conversationId=Number(form.dataset.id);
     await api('/api/conversations/'+conversationId+'/messages',{method:'POST',body:{body:v('body'),client_key:v('client_key')}});
     await renderRoute();
+   }
+   else if(form.id==='return-create-form'){
+    const result=await api('/api/returns',{method:'POST',body:{order_item_id:Number(v('order_item_id')),quantity:Number(v('quantity')),reason:v('reason'),description:v('description')}});
+    closeModal();toast(tr('سُجل طلب الإرجاع.','Return request recorded.'));navigate('/returns?return='+result.return.id);
+   }
+   else if(form.id==='return-seller-decision-form'){
+    await api('/api/returns/'+Number(form.dataset.id)+'/seller-decision',{method:'POST',body:{status:submit?.value,note:v('note')}});
+    toast(tr('تم حفظ ردّ المتجر على الإرجاع.','The store response to the return was saved.'));await renderRoute();
+   }
+   else if(form.id==='return-shipment-form'){
+    await api('/api/returns/'+Number(form.dataset.id)+'/shipment',{method:'POST',body:{carrier:v('carrier'),tracking_number:v('tracking_number')}});
+    toast(tr('تم تسجيل بيانات شحن المرتجع.','Return shipment tracking was recorded.'));await renderRoute();
+   }
+   else if(form.id==='return-received-form'){
+    await api('/api/returns/'+Number(form.dataset.id)+'/received',{method:'POST',body:{note:v('note')}});
+    toast(tr('تم تأكيد استلام المرتجع.','Return receipt confirmed.'));await renderRoute();
+   }
+   else if(form.id==='return-admin-decision-form'){
+    await api('/api/admin/returns/'+Number(form.dataset.id)+'/decision',{method:'POST',body:{status:submit?.value,note:v('note')}});
+    toast(tr('حُفظ القرار النهائي لطلب الإرجاع. لم تُجرَ أي حركة مالية تلقائية.','The final return decision was saved. No automatic financial transaction was created.'));await renderRoute();
    }
    else if(form.id==='case-create-form'){
     const result=await api('/api/cases',{method:'POST',body:{seller_order_id:Number(v('seller_order_id')),reason:v('reason'),description:v('description')}});
