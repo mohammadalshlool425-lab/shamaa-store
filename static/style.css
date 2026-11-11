@@ -105,3 +105,18 @@ a[href="/search?sort=recent"],a[href="/?collection=featured"]{display:inline-fle
 .case-attachment-form .btn{justify-self:start}
 @media(max-width:680px){.case-evidence{padding:14px}.case-attachment-list li{align-items:flex-start;flex-direction:column;gap:5px}.case-attachment-list small{text-align:start}.case-attachment-form .btn{width:100%}}
 
+/* Return request workflow. */
+.shipment-return-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px;padding-top:10px;border-top:1px dashed var(--line)}
+.shipment-return-actions .btn{min-width:0;max-width:100%;white-space:normal;text-align:start}
+.return-card{margin-bottom:18px}
+.return-card>header{gap:14px;align-items:flex-start}
+.return-card>header h2{font-size:1.125rem;overflow-wrap:anywhere}
+.return-card>header .eyebrow{font-size:.6875rem}
+.return-card .timeline{margin:16px 0}
+.return-card .message-form{margin-top:18px}
+.return-card .notice{margin-top:12px}
+.return-card .form-actions{display:flex;flex-wrap:wrap;gap:9px}
+.return-card .form-actions .row{gap:8px}
+.returns-list{display:grid;gap:14px}
+@media(max-width:680px){.shipment-return-actions{align-items:stretch}.shipment-return-actions .btn{width:100%;justify-content:flex-start}.return-card{padding:18px}.return-card>header{flex-direction:column}}
+
