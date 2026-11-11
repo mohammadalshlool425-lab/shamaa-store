@@ -21,7 +21,7 @@ SCHEMA_TABLES = (
     "media", "products", "carts", "orders", "seller_orders", "order_items",
     "order_events", "inventory_movements", "ledger", "notifications",
     "audit_log", "settings", "mail_outbox", "product_images", "product_variants",
-    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events",
+    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events", "order_case_attachments",
 )
 
 
@@ -109,7 +109,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 7 only when foundation, catalog, messaging, reviews and shipment cases exist."""
+        """Return 8 only when the foundation, commerce, reviews and case-evidence schema exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -184,6 +184,15 @@ class PostgresDatabase:
                    )""",
                 (self.schema,),
             ).fetchone()
+            attachments = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND table_name='order_case_attachments'
+                     AND column_name IN (
+                       'id','case_id','uploader_id','uploader_role','storage_key',
+                       'content_type','bytes','digest','created_at'
+                     )""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
                     and gallery and int(gallery[0]) == 4
@@ -191,13 +200,14 @@ class PostgresDatabase:
                     and variant_columns and int(variant_columns[0]) == 6
                     and messaging and int(messaging[0]) == 11
                     and reviews and int(reviews[0]) == 23
-                    and cases and int(cases[0]) == 20)
-        return 7 if complete else 0
+                    and cases and int(cases[0]) == 20
+                    and attachments and int(attachments[0]) == 9)
+        return 8 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 7:
+        if self.schema_version() != 8:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply all reviewed Supabase migrations before starting the app."
+                "apply all reviewed Supabase migrations through version 0008 before starting the app."
             )
