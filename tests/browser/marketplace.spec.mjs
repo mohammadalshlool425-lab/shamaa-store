@@ -300,10 +300,18 @@ test('buyer, seller and administrator complete an item return without automatic 
  await expect(buyer).toHaveURL(/\/returns\?return=\d+$/);
  await expect(buyer.locator('.return-card .pill')).toContainText('طلب إرجاع جديد');
  await expect(buyer.locator('#return-seller-decision-form')).toHaveCount(0);
+ const requestId=Number(new URL(buyer.url()).searchParams.get('return'));
+ const buyerApi=await buyer.request.get('/api/returns/'+requestId);
+ console.log('return buyer fixture:',fixture.return_buyer.id,'seller fixture:',fixture.return_seller.id,'created request:',(await buyerApi.json()).return);
 
  const sellerContext=await browser.newContext({locale:'ar-JO',viewport:{width:390,height:844}});
  const seller=await sellerContext.newPage();
  await login(seller,'return_seller',{destination:'/returns'});
+ const sellerApi=await seller.request.get('/api/returns');
+ const sellerPayload=await sellerApi.json();
+ console.log('return seller fixture:',fixture.return_seller.id,'seller API:',sellerApi.status(),sellerPayload.returns?.map(item=>({id:item.id,seller_id:item.seller_id,status:item.status,viewer_role:item.viewer_role,can_seller_decide:item.can_seller_decide})));
+ expect(sellerApi.status()).toBe(200);
+ expect(sellerPayload.returns?.some(item=>item.id===requestId)).toBe(true);
  await expect(seller.locator('#return-seller-decision-form')).toBeVisible();
  await seller.locator('#return-seller-decision-form textarea[name=note]').fill('تم قبول الإرجاع وفق وصف حالة المنتج.');
  await seller.locator('#return-seller-decision-form button[value=approved]').click();
