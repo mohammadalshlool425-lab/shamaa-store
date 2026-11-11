@@ -110,7 +110,10 @@ credentials['return_seller']={
     'id':return_seller['id'],'email':return_seller['email'],
     'password':return_seller['password'],'secret':None
 }
-credentials['return_admin']={
+# Keep the store-review administrator separate from the return-resolution
+# administrator so TOTP replay protection is exercised without cross-test reuse.
+credentials['store_admin']=credentials['admin']
+credentials['admin']={
     'id':return_admin['id'],'email':return_admin['email'],
     'password':return_admin['password'],'secret':return_admin['secret']
 }
