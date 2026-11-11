@@ -1,10 +1,14 @@
+import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
 from contextlib import closing
+from io import BytesIO
 import tarfile
 from io import BytesIO
 import pytest
+from PIL import Image
 from cryptography.fernet import Fernet
 from cryptography.exceptions import InvalidTag
 from server.backup import HEADER, create_backup, encrypt_file, restore_backup, rotate_backups
@@ -15,6 +19,26 @@ from server.security import digest
 def test_encrypted_backup_and_validated_restore_with_media(factory,tmp_path):
     seller=factory.seller();product=factory.product(seller)
     buyer=factory.user();factory.cart(buyer,product);result,_,_=factory.checkout(buyer);assert result.status_code==201
+    shipment=result.json()['order']['shipments'][0]
+    previous='new'
+    for status in ('confirmed','preparing','shipped'):
+        changed=seller['client'].patch(
+            f"/api/seller/orders/{shipment['id']}/status",
+            json={"status":status,"expected_status":previous},
+        )
+        assert changed.status_code==200,changed.text
+        previous=status
+    opened=buyer['client'].post('/api/cases',json={
+        "seller_order_id":shipment['id'],"reason":"not_received",
+        "description":"لم تصل الشحنة وأحتاج إلى إرفاق صورة دليل في النسخة الاحتياطية.",
+    })
+    assert opened.status_code==201,opened.text
+    image=BytesIO();Image.new('RGB',(80,60),(25,75,125)).save(image,format='PNG')
+    uploaded=buyer['client'].post(
+        f"/api/cases/{opened.json()['case']['id']}/attachments",
+        files={"file":("evidence.png",image.getvalue(),"image/png")},
+    )
+    assert uploaded.status_code==201,uploaded.text
     with factory.db.transaction() as c:c.execute("INSERT INTO auth_tokens VALUES(?,?,'reset',?,NULL)",(digest('generated'),buyer['id'],now()+500))
     key=Fernet.generate_key().decode();backup=tmp_path/'snapshot.shama'
     create_backup(factory.db,factory.settings,backup,key)
@@ -29,6 +53,13 @@ def test_encrypted_backup_and_validated_restore_with_media(factory,tmp_path):
         assert c.execute('SELECT COUNT(*) FROM auth_tokens WHERE used_at IS NULL').fetchone()[0]==0
         for (storage_key,) in c.execute('SELECT storage_key FROM media'):
             for size in (480,960):assert (restored/'media'/f'{storage_key}-{size}.webp').is_file()
+        attachments=c.execute('SELECT storage_key,digest,bytes FROM order_case_attachments').fetchall()
+        assert len(attachments)==1
+        for storage_key,digest,bytes_count in attachments:
+            path=restored/'case-attachments'/f'{storage_key}.webp'
+            assert path.is_file() and path.stat().st_size==bytes_count
+            assert hashlib.sha256(path.read_bytes()).hexdigest()==digest
+    assert json.loads((restored/'backup-info.json').read_text())['case_attachment_records']==1
     assert (restored/'development.key').read_bytes()==(tmp_path/'development.key').read_bytes()
 
 
