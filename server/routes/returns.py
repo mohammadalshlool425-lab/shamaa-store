@@ -119,15 +119,10 @@ def list_returns(request: Request, user=Depends(verified_user)):
 def create_return(body: schemas.ReturnCreate, request: Request, user=Depends(verified_user)):
     throttle(request, "return_open", limit=5, window=3600, identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
-        # The no-op UPDATE acquires a row lock in PostgreSQL; SQLite's
-        # BEGIN IMMEDIATE already serializes writers. This protects the
-        # remaining-quantity calculation against concurrent return requests.
-        item_exists = c.execute(
-            "UPDATE order_items SET quantity=quantity WHERE id=?",
-            (body.order_item_id,),
-        )
-        if item_exists.rowcount != 1:
-            fail("not_found", 404)
+        # SQLite BEGIN IMMEDIATE serializes writers. PostgreSQL migration
+        # 0009 uses SELECT ... FOR UPDATE in the purchase guard and a partial
+        # unique index to serialize/limit concurrent active returns without
+        # issuing a no-op UPDATE against the purchased order item.
         item = c.execute(
             """SELECT oi.id AS order_item_id,oi.quantity AS purchased_quantity,
                       so.id AS seller_order_id,so.status AS shipment_status,
