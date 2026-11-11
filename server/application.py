@@ -202,6 +202,7 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
     @app.get('/checkout')
     @app.get('/orders')
     @app.get('/messages')
+    @app.get('/cases')
     @app.get('/account')
     @app.get('/seller')
     @app.get('/admin')
