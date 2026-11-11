@@ -10,6 +10,7 @@ DECLARE
   trigger_count integer;
   message_guard_count integer;
   review_guard_count integer;
+  case_guard_count integer;
 BEGIN
   SELECT count(*), count(*) FILTER (WHERE c.relrowsecurity),
          count(*) FILTER (WHERE c.relforcerowsecurity)
@@ -18,8 +19,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 25 OR rls_count <> 25 OR forced_count <> 25 THEN
-    RAISE EXCEPTION 'Expected 25 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 27 OR rls_count <> 27 OR forced_count <> 27 THEN
+    RAISE EXCEPTION 'Expected 27 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -59,6 +60,17 @@ BEGIN
                       'review_report_content_immutable','review_report_moderation_authority');
   IF review_guard_count <> 6 THEN
     RAISE EXCEPTION 'Expected six verified-review and report guards; got %', review_guard_count;
+  END IF;
+  SELECT count(*) INTO case_guard_count
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN ('order_case_event_authority','order_case_events_immutable_update',
+                      'order_case_events_immutable_delete','order_case_content_immutable',
+                      'order_case_status_guard');
+  IF case_guard_count <> 5 THEN
+    RAISE EXCEPTION 'Expected five shipment-case security guards; got %', case_guard_count;
   END IF;
 END $$;
 
@@ -329,4 +341,44 @@ BEGIN
   IF variant_columns <> 6 THEN
     RAISE EXCEPTION 'Expected six variant-aware cart/order columns; found %',variant_columns;
   END IF;
+END $$;
+
+DO $$
+DECLARE case_columns integer;
+BEGIN
+ SELECT count(*) INTO case_columns
+   FROM information_schema.columns
+  WHERE table_schema='shamaa_app'
+    AND (
+      (table_name='order_cases' AND column_name IN (
+        'id','seller_order_id','buyer_id','seller_id','reason','description','status',
+        'opened_at','response_due_at','updated_at','closed_at','closed_by','resolution_note'
+      ))
+      OR
+      (table_name='order_case_events' AND column_name IN (
+        'id','case_id','actor_id','actor_role','event_type','body','created_at'
+      ))
+    );
+ IF case_columns <> 20 THEN
+   RAISE EXCEPTION 'Expected 20 case and event columns; found %',case_columns;
+ END IF;
+
+ IF NOT EXISTS (
+   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='order_cases'
+      AND c.relrowsecurity AND c.relforcerowsecurity
+ ) OR NOT EXISTS (
+   SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='order_case_events'
+      AND c.relrowsecurity AND c.relforcerowsecurity
+ ) THEN
+   RAISE EXCEPTION 'Order cases and events must enforce row-level security';
+ END IF;
+
+ IF EXISTS (
+   SELECT 1 FROM pg_policies WHERE schemaname='shamaa_app'
+     AND tablename IN ('order_cases','order_case_events')
+ ) THEN
+   RAISE EXCEPTION 'Case tables must remain closed until reviewed runtime policies exist';
+ END IF;
 END $$;
