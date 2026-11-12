@@ -109,7 +109,7 @@ class PostgresDatabase:
             connection.close()
 
     def schema_version(self) -> int:
-        """Return 9 only when the foundation, commerce, case evidence and returns schema exist."""
+        """Return 10 only when the foundation, commerce, cases, returns and coupons schema exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
