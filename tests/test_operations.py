@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from server import cli,mail
 from server.database import now
 from server.application import create_app
-from server.security import decrypt,verify_password
+from server.security import decrypt,verify_password,throttle
 
 
 def test_cli_create_admin_with_real_mfa_confirmation(factory,monkeypatch,capsys):
@@ -186,3 +186,30 @@ def test_cli_never_echoes_an_invalid_password(factory,monkeypatch,capsys):
     with pytest.raises(SystemExit) as error:cli.main()
     assert password not in str(error.value)
     assert password not in capsys.readouterr().out
+
+
+
+def test_reference_categories_use_idempotent_conflict_handling(factory):
+    from server.seed import initialize_catalog
+    before = None
+    with factory.db.read() as c:
+        before = c.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    initialize_catalog(factory.db, factory.settings)
+    with factory.db.read() as c:
+        after = c.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    assert after == before
+
+
+def test_expired_rate_limit_bucket_uses_portable_upsert(factory,monkeypatch):
+    from types import SimpleNamespace
+    from server import security
+    request=SimpleNamespace(client=SimpleNamespace(host='203.0.113.10'),
+        app=SimpleNamespace(state=SimpleNamespace(db=factory.db)))
+    monkeypatch.setattr(security,'now',lambda:1000)
+    throttle(request,'portable-upsert',limit=3,window=300)
+    monkeypatch.setattr(security,'now',lambda:1400)
+    throttle(request,'portable-upsert',limit=3,window=300)
+    key=security.digest('portable-upsert:203.0.113.10')
+    with factory.db.read() as c:
+        row=c.execute('SELECT window_start,count FROM rate_limits WHERE bucket=?',(key,)).fetchone()
+    assert row['window_start']==1400 and row['count']==1

@@ -1,4 +1,5 @@
 from typing import Literal
+import json
 from fastapi import APIRouter, Query, Request, Depends
 from ..commerce import CITIES, PRODUCT_SQL, PUBLIC_WHERE, product_dict, store_dict
 from ..errors import fail
@@ -11,7 +12,7 @@ router = APIRouter(prefix='/api', tags=['Catalog'])
 def bootstrap(request: Request):
     with request.app.state.db.read() as c:
         categories = [dict(r) for r in c.execute('''SELECT c.*,(SELECT COUNT(*) FROM products p JOIN stores s ON s.id=p.store_id
-          JOIN users u ON u.id=s.owner_id WHERE p.status='active' AND s.status='active' AND u.active=1
+          JOIN users u ON u.id=s.owner_id WHERE p.status='active' AND s.status='active' AND u.active=TRUE
           AND (p.category_id=c.id OR p.category_id IN (SELECT id FROM categories WHERE parent_id=c.id))) AS product_count FROM categories c''')]
         content = dict(c.execute('SELECT key,value FROM settings').fetchall())
     s = request.app.state.settings
@@ -60,22 +61,38 @@ def product(product_id: int,request: Request):
         row = c.execute(PRODUCT_SQL+' WHERE p.id=? AND '+PUBLIC_WHERE,(product_id,)).fetchone()
         if not row:
             fail('not_found',404)
+        gallery = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
+          JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
+                            (product_id,)).fetchall()
+        variants = c.execute('''SELECT id,attributes_json,price_fils,compare_at_fils,stock
+          FROM product_variants WHERE product_id=? AND active=TRUE ORDER BY price_fils,id''',
+                             (product_id,)).fetchall()
         similar = c.execute(PRODUCT_SQL+' WHERE p.id<>? AND (p.category_id=? OR c.parent_id=?) AND '+PUBLIC_WHERE+' LIMIT 4',
                             (product_id,row['category_id'],row['parent_id'])).fetchall()
-    return {'product':product_dict(row),'similar':[product_dict(r) for r in similar]}
+    images = [{'media_id':r['media_id'],'position':r['position'],'url':f"/media/{r['media_id']}/480.webp"}
+              for r in gallery]
+    if not images and row['media_id']:
+        images = [{'media_id':row['media_id'],'position':0,'url':f"/media/{row['media_id']}/480.webp"}]
+    if not images and product_dict(row)['image_url']:
+        images = [{'media_id':None,'position':0,'url':product_dict(row)['image_url']}]
+    return {'product':product_dict(row),'images':images,
+            'variants':[{'id':v['id'],'attributes':json.loads(v['attributes_json']),
+                         'price_fils':v['price_fils'],'compare_at_fils':v['compare_at_fils'],
+                         'stock':v['stock']} for v in variants],
+            'similar':[product_dict(r) for r in similar]}
 
 
 @router.get('/stores')
 def stores(request: Request):
     with request.app.state.db.read() as c:
-        rows = c.execute("SELECT s.*,(SELECT COUNT(*) FROM products p WHERE p.store_id=s.id AND p.status='active') AS product_count FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=1 ORDER BY s.id LIMIT 60").fetchall()
+        rows = c.execute("SELECT s.*,(SELECT COUNT(*) FROM products p WHERE p.store_id=s.id AND p.status='active') AS product_count FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=TRUE ORDER BY s.id LIMIT 60").fetchall()
     return {'stores':[{**store_dict(r),'product_count':r['product_count']} for r in rows]}
 
 
 @router.get('/stores/{slug}')
 def store(slug: str,request: Request):
     with request.app.state.db.read() as c:
-        r = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=1",(slug,)).fetchone()
+        r = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=TRUE",(slug,)).fetchone()
         if not r:
             fail('not_found',404)
     return {'store':store_dict(r)}

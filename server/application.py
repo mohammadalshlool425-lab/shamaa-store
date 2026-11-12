@@ -4,7 +4,6 @@ import html
 import logging
 from pathlib import Path
 import secrets
-import sqlite3
 from typing import Literal
 from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -13,12 +12,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import ROOT, Settings
-from .database import Database
+from .database import Database, DatabaseOperationalError, DatabaseProtocol, LATEST_SCHEMA_VERSION
 from .errors import error_body, fail, language
 from .security import optional_user
 from .seed import initialize_catalog
 from .commerce import PRODUCT_SQL, PUBLIC_WHERE
-from .routes import admin, auth, catalog, orders, seller
+from .routes import admin, auth, cases, catalog, messages, orders, returns, reviews, seller
 
 log = logging.getLogger('shamaa')
 STATIC = ROOT / 'static'
@@ -53,14 +52,14 @@ class RequestSizeLimit:
         await self.app(scope,replay,send)
 
 
-def create_app(settings=None):
+def create_app(settings=None, database: DatabaseProtocol | None = None):
     s = settings or Settings()
     s.prepare()
-    db = Database(s.db_path)
+    db = database if database is not None else Database(s.db_path)
     db.initialize()
     with db.read() as c:
-        if s.production and (c.execute('SELECT COUNT(*) FROM stores WHERE is_demo=1').fetchone()[0]
-                             or c.execute('SELECT COUNT(*) FROM orders WHERE is_demo=1').fetchone()[0]):
+        if s.production and (c.execute('SELECT COUNT(*) FROM stores WHERE is_demo=TRUE').fetchone()[0]
+                             or c.execute('SELECT COUNT(*) FROM orders WHERE is_demo=TRUE').fetchone()[0]):
             raise RuntimeError('Illustrative catalog or development orders exist. Use a clean production database.')
     initialize_catalog(db,s)
     app = FastAPI(title='SHAM’A · شمعة',version='1.0.0',docs_url=None,redoc_url=None,openapi_url=None)
@@ -99,8 +98,11 @@ def create_app(settings=None):
             if not public_api or response.status_code!=200:
                 response.headers['Vary'] = 'X-Language, Accept-Language'
         elif response.headers.get('content-type','').startswith('text/html'):
-            response.headers['Cache-Control'] = 'no-store' if path in ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites') else 'no-cache'
+            private_pages = ('/account','/seller','/admin','/orders','/cart','/checkout','/verify-email','/reset-password','/favorites','/messages','/cases','/returns')
+            response.headers['Cache-Control'] = 'no-store' if path in private_pages else 'no-cache'
             response.headers['Vary'] = 'Cookie, Accept-Language'
+            if path in private_pages:
+                response.headers['X-Robots-Tag'] = 'noindex, nofollow'
         if s.production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
         else:
@@ -111,7 +113,7 @@ def create_app(settings=None):
     app.add_middleware(RequestSizeLimit)
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=s.allowed_hosts)
     app.mount('/static',StaticFiles(directory=STATIC),name='static')
-    for router in (auth.router,catalog.router,seller.router,orders.router,admin.router):
+    for router in (auth.router,catalog.router,seller.router,orders.router,messages.router,reviews.router,cases.router,cases.admin_router,returns.router,returns.admin_router,admin.router):
         app.include_router(router)
 
     @app.exception_handler(HTTPException)
@@ -125,7 +127,7 @@ def create_app(settings=None):
         fields = list(dict.fromkeys('.'.join(str(x) for x in e['loc'][1:]) for e in exc.errors()))
         return JSONResponse(error_body('invalid_input',language(request),fields=fields),status_code=422)
 
-    @app.exception_handler(sqlite3.OperationalError)
+    @app.exception_handler(DatabaseOperationalError)
     async def database_error(request,exc):
         log.error('Database operation failed (%s)',type(exc).__name__)
         return JSONResponse(error_body('database_busy',language(request)),status_code=503)
@@ -144,7 +146,7 @@ def create_app(settings=None):
     @app.get('/healthz')
     def health():
         with db.read() as c:
-            if c.execute('PRAGMA user_version').fetchone()[0]!=1 or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
+            if db.schema_version()!=LATEST_SCHEMA_VERSION or not c.execute("SELECT 1 FROM settings WHERE key='commission_bps'").fetchone():
                 fail('database_busy',503)
         return {'ok':True,'version':'1.0.0','database':'ready'}
 
@@ -154,7 +156,12 @@ def create_app(settings=None):
             row = c.execute('SELECT * FROM media WHERE id=?',(media_id,)).fetchone()
             if not row:
                 fail('not_found',404)
-            public = c.execute('SELECT 1 FROM ('+PRODUCT_SQL+' WHERE p.media_id=? AND '+PUBLIC_WHERE+') LIMIT 1',(media_id,)).fetchone()
+            public = c.execute('''SELECT 1 FROM product_images pi
+              JOIN products p ON p.id=pi.product_id
+              JOIN stores s ON s.id=p.store_id
+              JOIN users u ON u.id=s.owner_id
+              WHERE pi.media_id=? AND p.status='active' AND s.status='active' AND u.active=TRUE
+              LIMIT 1''',(media_id,)).fetchone()
             private_access = bool(user) and (row['owner_id']==user['id'] or user['role']=='admin')
             if not public and not private_access:
                 fail('not_found',404)
@@ -177,7 +184,7 @@ def create_app(settings=None):
 
     @app.get('/robots.txt')
     def robots():
-        text = 'User-agent: *\nDisallow: /\n' if not s.production else ('User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /seller\nDisallow: /account\nDisallow: /orders\nDisallow: /cart\nDisallow: /checkout\nDisallow: /verify-email\nDisallow: /reset-password\nSitemap: '+s.public_url+'/sitemap.xml\n')
+        text = 'User-agent: *\nDisallow: /\n' if not s.production else ('User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /seller\nDisallow: /account\nDisallow: /orders\nDisallow: /cart\nDisallow: /checkout\nDisallow: /returns\nDisallow: /verify-email\nDisallow: /reset-password\nSitemap: '+s.public_url+'/sitemap.xml\n')
         return Response(text,media_type='text/plain')
 
     @app.get('/sitemap.xml')
@@ -185,7 +192,7 @@ def create_app(settings=None):
         urls = [s.public_url+'/',s.public_url+'/stores']
         with db.read() as c:
             urls += [s.public_url+f"/product/{r['id']}" for r in c.execute(PRODUCT_SQL+' WHERE '+PUBLIC_WHERE)]
-            urls += [s.public_url+'/store/'+r['slug'] for r in c.execute("SELECT s.slug FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=1")]
+            urls += [s.public_url+'/store/'+r['slug'] for r in c.execute("SELECT s.slug FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.status='active' AND u.active=TRUE")]
         xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>'+html.escape(u)+'</loc></url>' for u in urls)+'</urlset>'
         return Response(xml,media_type='application/xml')
 
@@ -197,6 +204,9 @@ def create_app(settings=None):
     @app.get('/cart')
     @app.get('/checkout')
     @app.get('/orders')
+    @app.get('/messages')
+    @app.get('/cases')
+    @app.get('/returns')
     @app.get('/account')
     @app.get('/seller')
     @app.get('/admin')
@@ -217,7 +227,7 @@ def create_app(settings=None):
                     if row:
                         title,description = row['title_'+lang]+' | شمعة SHAM’A',row['description_'+lang][:180]
                 else:
-                    row = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=1",(slug,)).fetchone()
+                    row = c.execute("SELECT s.* FROM stores s JOIN users u ON u.id=s.owner_id WHERE s.slug=? AND s.status='active' AND u.active=TRUE",(slug,)).fetchone()
                     if row:
                         title,description = row['name_'+lang]+' | شمعة SHAM’A',row['description_'+lang][:180]
                 if not row:

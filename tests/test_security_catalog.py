@@ -184,11 +184,13 @@ def test_seo_pwa_and_not_found_status(factory):
     assert client.get('/product/999').status_code==404
     assert client.get('/api/does-not-exist').status_code==404
     assert client.get('/api/does-not-exist').headers['content-type'].startswith('application/json')
-    for path in ['/','/search','/help','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
+    for path in ['/','/search','/help','/cases','/returns','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
         assert client.get(path).status_code==200
     assert client.get('/sw.js').headers['service-worker-allowed']=='/'
     assert 'Disallow: /' in client.get('/robots.txt').text
     assert 'noindex' in client.get('/account').text
+    assert client.get('/cases').headers['cache-control']=='no-store'
+    assert client.get('/returns').headers['cache-control']=='no-store'
     assert '/api/' not in client.get('/sitemap.xml').text
 
 
@@ -210,6 +212,11 @@ def test_secure_cookie_in_production_and_no_demo_catalog(factory):
     r=client.post('/api/auth/login',headers={'X-Requested-With':'shamaa'},json={'email':user['email'],'password':user['password']})
     assert r.status_code==200 and '; secure' in r.headers['set-cookie'].lower()
     assert r.headers['strict-transport-security'].startswith('max-age=')
+    returns=client.get('/returns')
+    assert returns.status_code==200
+    assert returns.headers['cache-control']=='no-store'
+    assert returns.headers['x-robots-tag']=='noindex, nofollow'
+    assert '/returns' in client.get('/robots.txt').text
 
 
 def test_memory_hard_password_work_is_bounded_without_weakening_hash_parameters(monkeypatch):

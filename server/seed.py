@@ -2,7 +2,7 @@
 No seeded login credentials, reviews, sales counts or trusted-seller badges.
 """
 import secrets
-from .database import now
+from .database import insert_id, now
 from .security import hash_password
 
 CATEGORIES = [
@@ -53,7 +53,7 @@ PRODUCTS = [
 def initialize_catalog(db, settings):
     with db.transaction() as c:
         for row in CATEGORIES:
-            c.execute('INSERT OR IGNORE INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?)',row)
+            c.execute('INSERT INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING',row)
     if not settings.demo:
         return
     with db.read() as c:
@@ -65,11 +65,11 @@ def initialize_catalog(db, settings):
             return
         store_ids = []
         for index,(slug,ar,en,desc_ar,desc_en,city,accent) in enumerate(STORES):
-            uid = c.execute('INSERT INTO users(name,email,password_hash,role,created_at) VALUES(?,?,?,?,?)',
-                            (en,f'preview-{index}@example.invalid',unusable,'seller',now())).lastrowid
-            sid = c.execute('''INSERT INTO stores(owner_id,slug,name_ar,name_en,description_ar,description_en,city,accent,
+            uid = insert_id(c, 'INSERT INTO users(name,email,password_hash,role,created_at) VALUES(?,?,?,?,?)',
+                            (en,f'preview-{index}@example.invalid',unusable,'seller',now()))
+            sid = insert_id(c, '''INSERT INTO stores(owner_id,slug,name_ar,name_en,description_ar,description_en,city,accent,
               shipping_fils,status,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,'active',1,?)''',
-              (uid,slug,ar,en,desc_ar,desc_en,city,accent,2500+index*500,now())).lastrowid
+              (uid,slug,ar,en,desc_ar,desc_en,city,accent,2500+index*500,now()))
             store_ids.append(sid)
         for i,(ar,en,cat,price,original,stock,image,store,desc_ar,desc_en) in enumerate(PRODUCTS):
             c.execute('''INSERT INTO products(store_id,category_id,title_ar,title_en,description_ar,description_en,price_fils,

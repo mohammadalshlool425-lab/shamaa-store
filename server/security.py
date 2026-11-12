@@ -75,7 +75,8 @@ def throttle(request, scope, limit=10, window=300, identifier=None):
                 fail('rate_limit', 429)
             c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
         else:
-            c.execute('INSERT OR REPLACE INTO rate_limits VALUES(?,?,1)', (key, t))
+            c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
+              ON CONFLICT(bucket) DO UPDATE SET window_start=excluded.window_start,count=excluded.count''', (key, t))
 
 
 def optional_user(request: Request):
@@ -87,7 +88,7 @@ def optional_user(request: Request):
         with request.app.state.db.read() as c:
             row = c.execute('''SELECT u.*,s.token_hash AS session_id,s.csrf_token,s.mfa_at,s.created_at AS session_created
               FROM sessions s JOIN users u ON u.id=s.user_id
-              WHERE s.token_hash=? AND s.expires_at>? AND u.active=1''', (digest(token), now())).fetchone()
+              WHERE s.token_hash=? AND s.expires_at>? AND u.active=TRUE''', (digest(token), now())).fetchone()
             user = dict(row) if row else None
     request.state.user = user
     return user

@@ -1,5 +1,7 @@
+import json
+import unicodedata
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictInt, field_validator, model_validator
 
 
 class Input(BaseModel):
@@ -82,6 +84,8 @@ class ProductInput(Input):
     stock: int = Field(ge=0, le=1000000, strict=True)
     sku: str = Field(min_length=1, max_length=60, pattern=r'^[\w.\-]+$')
     media_id: int | None = Field(default=None, ge=1, strict=True)
+    condition: Literal['new','used'] = 'new'
+    condition_note: str = Field(default='', max_length=500)
     status: Literal['pending','draft','paused'] = 'pending'
     expected_version: int | None = Field(default=None, ge=1, strict=True)
 
@@ -89,10 +93,78 @@ class ProductInput(Input):
     def valid_discount(self):
         if self.compare_at_fils is not None and self.compare_at_fils <= self.price_fils:
             raise ValueError('Original price must exceed the sale price')
+        if self.condition == 'used' and len(self.condition_note.strip()) < 10:
+            raise ValueError('Used products require an honest condition note of at least 10 characters')
+        if self.condition == 'new' and self.condition_note:
+            raise ValueError('Condition notes are only valid for used products')
         if self.status == 'pending' and self.media_id is None:
             raise ValueError('A product image is required for review')
         return self
 
+
+class ProductImagesInput(Input):
+    media_ids: list[StrictInt] = Field(min_length=1, max_length=8)
+    expected_version: int = Field(ge=1, strict=True)
+
+    @field_validator('media_ids')
+    @classmethod
+    def unique_media_ids(cls, value):
+        if any(type(item) is not int or item < 1 for item in value):
+            raise ValueError('Media identifiers must be positive integers')
+        if len(set(value)) != len(value):
+            raise ValueError('A product gallery cannot repeat the same image')
+        return value
+
+
+class ProductVariantInput(Input):
+    id: int | None = Field(default=None, ge=1, strict=True)
+    sku: str = Field(min_length=1, max_length=60, pattern='^[A-Za-z0-9_.-]+$')
+    attributes: dict[str, str] = Field(min_length=1, max_length=5)
+    price_fils: int = Field(ge=1, le=1000000000, strict=True)
+    compare_at_fils: int | None = Field(default=None, ge=2, le=1000000000, strict=True)
+    stock: int = Field(ge=0, le=1000000, strict=True)
+
+    @field_validator('attributes')
+    @classmethod
+    def validate_attributes(cls, value):
+        cleaned = {}
+        for key, item in value.items():
+            name, val = key.strip(), item.strip()
+            if not name or len(name) > 32 or not val or len(val) > 80:
+                raise ValueError('Variant attribute names and values must be concise and non-empty')
+            cleaned[name] = val
+        if len(cleaned) != len(value):
+            raise ValueError('Variant attributes cannot have blank names')
+        return cleaned
+
+    @model_validator(mode='after')
+    def valid_variant_price(self):
+        if self.compare_at_fils is not None and self.compare_at_fils <= self.price_fils:
+            raise ValueError('Variant original price must exceed its sale price')
+        return self
+
+
+class ProductVariantsInput(Input):
+    expected_version: int = Field(ge=1, strict=True)
+    variants: list[ProductVariantInput] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode='after')
+    def unique_variant_definitions(self):
+        skus = [variant.sku.casefold() for variant in self.variants]
+        attributes = [
+            json.dumps(variant.attributes, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+            for variant in self.variants
+        ]
+        if len(set(skus)) != len(skus):
+            raise ValueError('Variant SKUs must be unique')
+        if len(set(attributes)) != len(attributes):
+            raise ValueError('Variant attribute combinations must be unique')
+        if sum(variant.stock for variant in self.variants) > 1000000:
+            raise ValueError('Total variant stock exceeds the product stock limit')
+        ids = [variant.id for variant in self.variants if variant.id is not None]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Variant identifiers must be unique')
+        return self
 
 class StockInput(Input):
     stock: int = Field(ge=0, le=1000000, strict=True)
@@ -101,6 +173,7 @@ class StockInput(Input):
 
 class CartItem(Input):
     product_id: int = Field(ge=1, strict=True)
+    variant_id: int | None = Field(default=None, ge=1, strict=True)
     quantity: int = Field(ge=0, le=99, strict=True)
 
 
@@ -124,6 +197,74 @@ class Review(Input):
     note: str = Field(default='', max_length=500)
 
 
+
+def _normalize_message_body(value):
+    value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n')).strip()
+    if not value or len(value) > 4000:
+        raise ValueError('Message must contain between 1 and 4000 characters')
+    if any(unicodedata.category(char) == 'Cc' and char not in ('\n', '\t') for char in value):
+        raise ValueError('Message contains unsupported control characters')
+    return value
+
+
+class ConversationStart(Input):
+    seller_order_id: int = Field(ge=1, strict=True)
+    body: str = Field(min_length=1, max_length=4000)
+    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]{16,80}$')
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_message_body(value)
+
+
+class MessageSend(Input):
+    body: str = Field(min_length=1, max_length=4000)
+    client_key: str = Field(min_length=16, max_length=80, pattern=r'^[A-Za-z0-9_-]{16,80}$')
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_message_body(value)
+
+
+
+
+def _normalize_review_text(value, maximum):
+    value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n')).strip()
+    if len(value) > maximum:
+        raise ValueError('Text is too long')
+    if any(unicodedata.category(char) == 'Cc' and char not in ('\n', '\t') for char in value):
+        raise ValueError('Text contains unsupported control characters')
+    return value
+
+
+class ReviewCreate(Input):
+    order_item_id: int = Field(ge=1, strict=True)
+    rating: int = Field(ge=1, le=5, strict=True)
+    body: str = Field(default='', max_length=2000)
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_review_text(value, 2000)
+
+
+class ReviewReportCreate(Input):
+    reason: Literal['incorrect', 'personal_data', 'abuse', 'other']
+    details: str = Field(default='', max_length=500)
+
+    @field_validator('details')
+    @classmethod
+    def normalize_details(cls, value):
+        return _normalize_review_text(value, 500)
+
+
+class ReviewReportResolution(Input):
+    status: Literal['resolved', 'dismissed']
+    note: str = Field(default='', max_length=500)
+
+
 class UserActive(Input):
     active: bool
 
@@ -136,3 +277,84 @@ class SettingsInput(Input):
 
 class CommissionInput(Input):
     commission_bps: int | None = Field(default=None, ge=0, le=5000, strict=True)
+
+
+class CaseCreate(Input):
+    seller_order_id: int = Field(ge=1, strict=True)
+    reason: Literal['not_received','damaged','wrong_item','missing_item','not_as_described','other']
+    description: str = Field(min_length=20, max_length=3000)
+
+    @field_validator('description')
+    @classmethod
+    def normalize_description(cls, value):
+        return _normalize_review_text(value, 3000)
+
+
+class CaseMessage(Input):
+    body: str = Field(min_length=1, max_length=3000)
+
+    @field_validator('body')
+    @classmethod
+    def normalize_body(cls, value):
+        return _normalize_review_text(value, 3000)
+
+
+class CaseDecision(Input):
+    status: Literal['resolved','rejected']
+    note: str = Field(min_length=5, max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
+
+class ReturnCreate(Input):
+    order_item_id: int = Field(ge=1, strict=True)
+    quantity: int = Field(ge=1, le=99, strict=True)
+    reason: Literal['damaged','wrong_item','missing_item','not_as_described','changed_mind','other']
+    description: str = Field(min_length=20, max_length=2000)
+
+    @field_validator('description')
+    @classmethod
+    def normalize_description(cls, value):
+        return _normalize_review_text(value, 2000)
+
+
+class ReturnSellerDecision(Input):
+    status: Literal['approved','rejected']
+    note: str = Field(default='', max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
+
+
+class ReturnShipment(Input):
+    carrier: str = Field(min_length=2, max_length=50)
+    tracking_number: str = Field(min_length=3, max_length=100)
+
+    @field_validator('carrier','tracking_number')
+    @classmethod
+    def normalize_tracking(cls, value):
+        return _normalize_review_text(value, 100)
+
+
+class ReturnReceived(Input):
+    note: str = Field(default='', max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value or 'تم تأكيد استلام المرتجع. Received return item.', 1000)
+
+
+class ReturnAdminDecision(Input):
+    status: Literal['resolved','rejected']
+    note: str = Field(min_length=5, max_length=1000)
+
+    @field_validator('note')
+    @classmethod
+    def normalize_note(cls, value):
+        return _normalize_review_text(value, 1000)
+
