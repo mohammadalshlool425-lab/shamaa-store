@@ -235,7 +235,8 @@ class PostgresDatabase:
                     and reviews and int(reviews[0]) == 23
                     and cases and int(cases[0]) == 20
                     and attachments and int(attachments[0]) == 9
-                    and returns and int(returns[0]) == 25\n                    and coupons and int(coupons[0]) == 27)
+                    and returns and int(returns[0]) == 25
+                    and coupons and int(coupons[0]) == 26)
         return 10 if complete else 0
 
     def initialize(self) -> None:
