@@ -10,7 +10,7 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name('schema.sql')
 MIGRATION_DIR = Path(__file__).with_name('migrations')
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 
 
 class HybridRow(Mapping[str, Any]):
@@ -320,6 +320,16 @@ class Database:
                         c.rollback()
                     raise
                 version = 9
+            if version == 9:
+                migration = MIGRATION_DIR / '0010_coupons.sql'
+                try:
+                    c.executescript('BEGIN IMMEDIATE;\n' + migration.read_text(encoding='utf-8')
+                                    + '\nPRAGMA user_version=10; COMMIT;')
+                except BaseException:
+                    if c.in_transaction:
+                        c.rollback()
+                    raise
+                version = 10
             if version != LATEST_SCHEMA_VERSION:
                 raise RuntimeError('Database schema is incomplete; apply all numbered migrations.')
         Path(self.path).chmod(0o600)

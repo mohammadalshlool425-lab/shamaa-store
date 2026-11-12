@@ -21,8 +21,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='shamaa_app' AND c.relkind='r';
 
-  IF table_count <> 30 OR rls_count <> 30 OR forced_count <> 30 THEN
-    RAISE EXCEPTION 'Expected 30 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
+  IF table_count <> 32 OR rls_count <> 32 OR forced_count <> 32 THEN
+    RAISE EXCEPTION 'Expected 32 tables with ENABLE and FORCE RLS; got tables %, enabled %, forced %',
       table_count, rls_count, forced_count;
   END IF;
 
@@ -453,4 +453,62 @@ BEGIN
  ) THEN
    RAISE EXCEPTION 'Private case and return tables must remain closed until reviewed runtime policies exist';
  END IF;
+END $$;
+
+
+-- Phase 2 batch 8: coupon tables are private, row-locked and immutable at redemption.
+DO $$
+DECLARE
+  coupon_columns integer;
+  coupon_rls integer;
+  coupon_policies integer;
+  coupon_guards integer;
+BEGIN
+  SELECT count(*) INTO coupon_columns
+    FROM information_schema.columns
+   WHERE table_schema='shamaa_app' AND (
+     (table_name='coupons' AND column_name IN (
+       'id','store_id','code','discount_type','discount_value','minimum_subtotal_fils',
+       'maximum_discount_fils','starts_at','expires_at','max_uses','max_uses_per_buyer',
+       'used_count','active','created_at','updated_at'
+     ))
+     OR (table_name='coupon_redemptions' AND column_name IN (
+       'id','coupon_id','order_id','seller_order_id','store_id','buyer_id',
+       'code','discount_fils','redeemed_at'
+     ))
+     OR (table_name='orders' AND column_name='discount_fils')
+     OR (table_name='seller_orders' AND column_name='discount_fils')
+   );
+  IF coupon_columns <> 27 THEN
+    RAISE EXCEPTION 'Expected 27 coupon and order-discount columns; found %',coupon_columns;
+  END IF;
+
+  SELECT count(*) INTO coupon_rls
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND c.relname IN ('coupons','coupon_redemptions')
+     AND c.relrowsecurity AND c.relforcerowsecurity;
+  IF coupon_rls <> 2 THEN
+    RAISE EXCEPTION 'Both coupon tables must enforce ENABLE and FORCE RLS';
+  END IF;
+
+  SELECT count(*) INTO coupon_policies
+    FROM pg_policies WHERE schemaname='shamaa_app'
+      AND tablename IN ('coupons','coupon_redemptions');
+  IF coupon_policies <> 0 THEN
+    RAISE EXCEPTION 'Coupon tables must remain closed until reviewed runtime policies exist';
+  END IF;
+
+  SELECT count(*) INTO coupon_guards
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='shamaa_app' AND NOT t.tgisinternal
+     AND t.tgname IN (
+       'coupon_redemption_guard',
+       'coupon_redemptions_immutable_update',
+       'coupon_redemptions_immutable_delete'
+     );
+  IF coupon_guards <> 3 THEN
+    RAISE EXCEPTION 'Expected three coupon redemption guards; got %',coupon_guards;
+  END IF;
 END $$;

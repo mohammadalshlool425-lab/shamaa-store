@@ -21,7 +21,7 @@ SCHEMA_TABLES = (
     "media", "products", "carts", "orders", "seller_orders", "order_items",
     "order_events", "inventory_movements", "ledger", "notifications",
     "audit_log", "settings", "mail_outbox", "product_images", "product_variants",
-    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events", "order_case_attachments", "return_requests", "return_request_events",
+    "conversations", "messages", "reviews", "review_reports", "order_cases", "order_case_events", "order_case_attachments", "return_requests", "return_request_events", "coupons", "coupon_redemptions",
 )
 
 
@@ -208,6 +208,24 @@ class PostgresDatabase:
                    )""",
                 (self.schema,),
             ).fetchone()
+            coupons = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND (
+                     (table_name='coupons' AND column_name IN (
+                       'id','store_id','code','discount_type','discount_value','minimum_subtotal_fils',
+                       'maximum_discount_fils','starts_at','expires_at','max_uses','max_uses_per_buyer',
+                       'used_count','active','created_at','updated_at'
+                     ))
+                     OR
+                     (table_name='coupon_redemptions' AND column_name IN (
+                       'id','coupon_id','order_id','seller_order_id','store_id','buyer_id',
+                       'code','discount_fils','redeemed_at'
+                     ))
+                     OR (table_name='orders' AND column_name='discount_fils')
+                     OR (table_name='seller_orders' AND column_name='discount_fils')
+                   )""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
                     and gallery and int(gallery[0]) == 4
@@ -217,13 +235,13 @@ class PostgresDatabase:
                     and reviews and int(reviews[0]) == 23
                     and cases and int(cases[0]) == 20
                     and attachments and int(attachments[0]) == 9
-                    and returns and int(returns[0]) == 25)
-        return 9 if complete else 0
+                    and returns and int(returns[0]) == 25\n                    and coupons and int(coupons[0]) == 27)
+        return 10 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 9:
+        if self.schema_version() != 10:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply all reviewed Supabase migrations through version 0009 before starting the app."
+                "apply all reviewed Supabase migrations through version 0010 before starting the app."
             )
