@@ -479,8 +479,8 @@ BEGIN
      OR (table_name='orders' AND column_name='discount_fils')
      OR (table_name='seller_orders' AND column_name='discount_fils')
    );
-  IF coupon_columns <> 27 THEN
-    RAISE EXCEPTION 'Expected 27 coupon and order-discount columns; found %',coupon_columns;
+  IF coupon_columns <> 26 THEN
+    RAISE EXCEPTION 'Expected 26 coupon and order-discount columns; found %',coupon_columns;
   END IF;
 
   SELECT count(*) INTO coupon_rls
