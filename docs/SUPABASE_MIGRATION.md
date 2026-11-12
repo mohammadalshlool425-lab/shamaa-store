@@ -133,3 +133,8 @@
 - CI يطبق 0009 على PostgreSQL 17 معزولًا بعد 0001–0008 ويتحقق من 30 جدولًا مع RLS مفروض. يلزم نجاح الاختبارات النهائية للواجهة على الالتزام نفسه قبل اعتماد الدفعة.
 
 **حالة التنفيذ:** الترحيل موجود على فرع agent/supabase-integration فقط. لا تُطبقه على مشروع Supabase الحي قبل مراجعة سياسات الوصول الفعلية ودور قاعدة البيانات وخطة النشر والاستعادة.
+
+
+## Migration 0010 — coupons (foundation under verification)
+
+Migration `0010_coupons.sql` adds store-scoped coupon definitions and immutable redemption records. Order and seller-order discount amounts are stored in fils. PostgreSQL locks the coupon row during redemption validation and keeps both coupon tables under ENABLE+FORCE RLS with no policies or PUBLIC grants. The runtime does not expose coupon management or checkout redemption yet; do not apply this migration to the live Supabase project until CI and the complete application workflow have been reviewed.

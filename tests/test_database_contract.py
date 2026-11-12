@@ -89,7 +89,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
-    assert adapter.schema_version() == 9
+    assert adapter.schema_version() == 10
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")
@@ -268,3 +268,37 @@ def test_verified_review_migration_creates_review_and_report_guards(tmp_path):
             "review_report_moderation_authority",
         } <= triggers
 
+
+
+
+def test_coupon_migration_is_applied_and_keeps_redemptions_immutable(tmp_path):
+    db = Database(tmp_path / "coupons.sqlite3")
+    db.initialize()
+    with db.read() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(orders)")}
+        seller_order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(seller_orders)")}
+        coupon_columns = {row["name"] for row in connection.execute("PRAGMA table_info(coupons)")}
+        redemption_columns = {row["name"] for row in connection.execute("PRAGMA table_info(coupon_redemptions)")}
+        assert "discount_fils" in order_columns
+        assert "discount_fils" in seller_order_columns
+        assert {
+            "id", "store_id", "code", "discount_type", "discount_value",
+            "minimum_subtotal_fils", "maximum_discount_fils", "starts_at",
+            "expires_at", "max_uses", "max_uses_per_buyer", "used_count",
+            "active", "created_at", "updated_at",
+        } <= coupon_columns
+        assert {
+            "id", "coupon_id", "order_id", "seller_order_id", "store_id",
+            "buyer_id", "code", "discount_fils", "redeemed_at",
+        } <= redemption_columns
+        trigger_names = {
+            row["name"] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+            )
+        }
+        assert {
+            "coupon_redemption_guard",
+            "coupon_redemptions_immutable_update",
+            "coupon_redemptions_immutable_delete",
+        } <= trigger_names
