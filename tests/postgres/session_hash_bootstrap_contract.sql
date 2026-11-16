@@ -66,24 +66,24 @@ DECLARE
   active_user_id BIGINT;
   inactive_user_id BIGINT;
 BEGIN
-  SELECT id INTO active_user_id FROM shamaa_app.users
-    WHERE email='bootstrap-active@example.invalid';
-  SELECT id INTO inactive_user_id FROM shamaa_app.users
-    WHERE email='bootstrap-inactive@example.invalid';
-
   IF current_user <> 'shamaa_session_probe' THEN
     RAISE EXCEPTION 'Session bootstrap probe did not assume restricted role';
   END IF;
 
   -- Valid cookie digest: exactly its unexpired session and active user appear.
   PERFORM set_config('app.session_token_hash', 'a' || repeat('a',63), TRUE);
+  SELECT user_id INTO active_user_id FROM shamaa_app.sessions;
   IF (SELECT count(*) FROM shamaa_app.sessions) <> 1
      OR (SELECT count(*) FROM shamaa_app.users) <> 1
      OR NOT EXISTS (SELECT 1 FROM shamaa_app.users WHERE id=active_user_id) THEN
     RAISE EXCEPTION 'Valid session hash did not reveal exactly its active user';
   END IF;
 
-  -- A client-forged current_user_id must not widen the bootstrap result.
+  -- Read the inactive account id through its valid session, then verify a
+  -- forged current_user_id cannot widen the active-session user result.
+  PERFORM set_config('app.session_token_hash', 'c' || repeat('c',63), TRUE);
+  SELECT user_id INTO inactive_user_id FROM shamaa_app.sessions;
+  PERFORM set_config('app.session_token_hash', 'a' || repeat('a',63), TRUE);
   PERFORM set_config('app.current_user_id', inactive_user_id::text, TRUE);
   IF (SELECT count(*) FROM shamaa_app.users) <> 1
      OR EXISTS (SELECT 1 FROM shamaa_app.users WHERE id=inactive_user_id) THEN
