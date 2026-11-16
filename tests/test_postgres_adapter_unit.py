@@ -62,3 +62,17 @@ def test_postgres_connection_translates_qmark_parameters():
     connection = PostgresConnection(driver)
     assert connection.execute("SELECT ? AS value", [23]) == "cursor"
     assert driver.call == ("SELECT %s AS value", (23,))
+
+
+
+@pytest.mark.parametrize("user_id", [0, -1, True, False, "7", None])
+def test_postgres_user_scope_rejects_untrusted_or_invalid_identity(user_id):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="positive integer"):
+        database.for_user(user_id)
+
+
+def test_postgres_user_scope_accepts_positive_integer_identity():
+    database = PostgresDatabase("postgresql://localhost/db")
+    scoped = database.for_user(17)
+    assert scoped.user_id == 17
