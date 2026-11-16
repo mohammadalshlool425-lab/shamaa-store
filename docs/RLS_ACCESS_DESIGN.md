@@ -146,7 +146,9 @@ The media route also needs a split policy: published product media may be public
 5. Test public catalog and public media association chains separately from private uploads and case attachments.
 
 
-## 10. Proposed context model — implementation contract (reviewed, not yet coded)
+## 10. Trusted operation context model — implementation contract
+
+The PostgreSQL adapter now enforces a closed operation allowlist with nested-scope and exception-safe restoration. Authentication routes enter operation scopes for registration, login, verification, forgot-password and reset-password; the mail worker enters its worker scope; rate limiting enters its dedicated scope with a server-derived bucket digest. These are application context controls only: they do not replace SQL grants or RLS, and custom GUC values are not cryptographically unforgeable.
 
 The following is the smallest useful context vocabulary identified from the current call graph. These labels are internal server constants, not request parameters. A route must call a specific service function; it must not accept an operation label from JSON, query parameters, headers or cookies.
 
@@ -180,12 +182,12 @@ Current `initialize_catalog(db, settings)` always inserts reference categories b
 
 ### Implementation sequence and acceptance evidence
 
-1. Add unit tests for the closed operation allowlist, rejection of unknown/client-supplied labels, context restoration after exceptions, nested-context behavior and isolation across database instances.
-2. Add a migration for the stable category reference data; remove the unconditional startup upsert and add a restricted-role startup test.
-3. Implement auth operations one at a time with tests proving each operation can affect only its token/account subject.
-4. Implement the rate-limit repository operation and test that the caller can observe only its own bucket outcome.
-5. Split mail delivery onto the worker credential/context and test that it cannot query any non-outbox table.
-6. Only then create the runtime role/grants and begin small RLS policy migrations with cross-user negative tests.
+1. **Implemented:** closed operation allowlist, invalid-label rejection, nested-scope rules, exception-safe restoration and per-database-instance isolation are covered by adapter tests.
+2. **Implemented:** stable reference categories are installed by migration 0011; PostgreSQL web startup no longer writes catalog rows.
+3. **Partially implemented:** auth routes use separate operation scopes, but each flow still needs restricted-role tests proving that reads and mutations are confined to the matching email, token and account subject.
+4. **Partially implemented:** rate limiting updates one atomic server-derived bucket and now carries its digest in transaction-local context. A restricted-role contract and separately bounded retention cleanup remain outstanding.
+5. **Partially implemented:** the mail worker uses its own operation scope, but a separate worker credential and proof of outbox-only privileges are still required before RLS policies can be enabled.
+6. **Not started:** decide and test the dedicated runtime role/grants, implement the non-recursive admin assertion, and then add small RLS policy migrations with cross-user negative tests.
 
 No role, grant, policy, production connection or runtime setting is changed by this design section. The current deny-all RLS posture remains intentional until the restricted-role tests pass.
 
