@@ -15,7 +15,12 @@ def test_psycopg_adapter_executes_portable_contract_against_postgresql():
 
     db = PostgresDatabase(conninfo)
     assert db.schema_version() == 10
+    assert db.catalog_seeded_by_migrations is True
     db.initialize()
+    # Category reference rows must already exist from migration 0011; adapter
+    # startup itself does not insert or otherwise mutate the catalog.
+    with db.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 9
 
     # This table is test-only and is removed even if an assertion fails.
     with psycopg.connect(conninfo, autocommit=True) as admin:
