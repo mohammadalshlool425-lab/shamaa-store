@@ -108,6 +108,16 @@ class PostgresDatabase:
         finally:
             connection.close()
 
+    def for_user(self, user_id: int):
+        """Return a request-scoped facade that sets transaction-local RLS identity.
+
+        Call only with an id obtained from the server-validated application
+        session, never with a value supplied directly by the client.
+        """
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return _UserScopedPostgresDatabase(self, user_id)
+
     def schema_version(self) -> int:
         """Return 10 only when the foundation, commerce, cases, returns and coupons schema exist."""
         with self.read() as connection:
@@ -246,3 +256,40 @@ class PostgresDatabase:
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
                 "apply all reviewed Supabase migrations through version 0010 before starting the app."
             )
+
+
+
+class _UserScopedPostgresDatabase:
+    """PostgreSQL facade whose every operation carries one verified user id.
+
+    SET LOCAL semantics are provided by set_config(..., true) inside a fresh
+    transaction. The setting is automatically cleared on commit/rollback,
+    including exceptional exits, so a later request cannot inherit identity.
+    """
+
+    def __init__(self, database: PostgresDatabase, user_id: int):
+        self._database = database
+        self.user_id = user_id
+
+    @contextmanager
+    def _scope(self):
+        connection = self._database._connect()
+        try:
+            try:
+                with connection.transaction():
+                    wrapped = PostgresConnection(connection)
+                    wrapped.execute(
+                        "SELECT set_config('app.current_user_id', ?, TRUE)",
+                        (str(self.user_id),),
+                    )
+                    yield wrapped
+            except (psycopg.IntegrityError, psycopg.OperationalError) as exc:
+                _raise_database_error(exc)
+        finally:
+            connection.close()
+
+    def read(self):
+        return self._scope()
+
+    def transaction(self):
+        return self._scope()
