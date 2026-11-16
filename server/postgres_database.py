@@ -61,6 +61,12 @@ class PostgresConnection:
 class PostgresDatabase:
     """One short-lived Psycopg connection per operation; no implicit migrations.
 
+    Reference catalog rows are installed by versioned migrations, never at web startup.
+    """
+    catalog_seeded_by_migrations = True
+
+    """One short-lived Psycopg connection per operation; no implicit migrations.
+
     The schema identifier is validated before it is interpolated into libpq's
     startup search_path option. Values in application SQL remain parameterized.
     """
