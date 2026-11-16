@@ -12,7 +12,7 @@ from PIL import Image
 from cryptography.fernet import Fernet
 from cryptography.exceptions import InvalidTag
 from server.backup import HEADER, create_backup, encrypt_file, restore_backup, rotate_backups
-from server.database import now, Database, SCHEMA_PATH
+from server.database import now, Database, LATEST_SCHEMA_VERSION, SCHEMA_PATH
 from server.security import digest
 
 
@@ -158,4 +158,4 @@ def test_restore_accepts_v1_backup_and_application_initializer_upgrades_it(facto
     # The ordinary application initializer performs the transactional forward migration.
     Database(restored_db).initialize()
     with closing(sqlite3.connect(restored_db)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == LATEST_SCHEMA_VERSION
