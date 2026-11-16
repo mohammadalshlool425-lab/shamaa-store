@@ -17,6 +17,18 @@ from .database import (
     qmark_to_format,
 )
 
+SYSTEM_OPERATIONS = frozenset({
+    "auth.register",
+    "auth.login",
+    "auth.verify_email",
+    "auth.forgot_password",
+    "auth.reset_password",
+    "rate_limit.consume",
+    "mail.worker",
+    "audit.append",
+})
+
+
 SCHEMA_TABLES = (
     "users", "sessions", "auth_tokens", "rate_limits", "categories", "stores",
     "media", "products", "carts", "orders", "seller_orders", "order_items",
@@ -80,6 +92,9 @@ class PostgresDatabase:
         self._request_identity: ContextVar[dict | None] = ContextVar(
             f"shamaa_pg_identity_{id(self)}", default=None
         )
+        self._system_operation: ContextVar[str | None] = ContextVar(
+            f"shamaa_pg_operation_{id(self)}", default=None
+        )
 
     def _connect(self):
         try:
@@ -113,23 +128,50 @@ class PostgresDatabase:
             try:
                 with connection.transaction():
                     wrapped = PostgresConnection(connection)
-                    identity = self._request_identity.get()
-                    if identity is not None:
-                        if identity["session_token_hash"] is not None:
-                            wrapped.execute(
-                                "SELECT set_config('app.session_token_hash', ?, TRUE)",
-                                (identity["session_token_hash"],),
-                            )
-                        if identity["user_id"] is not None:
-                            wrapped.execute(
-                                "SELECT set_config('app.current_user_id', ?, TRUE)",
-                                (str(identity["user_id"]),),
-                            )
+                    self._apply_transaction_context(wrapped)
                     yield wrapped
             except (psycopg.IntegrityError, psycopg.OperationalError) as exc:
                 _raise_database_error(exc)
         finally:
             connection.close()
+
+    @contextmanager
+    def system_operation(self, operation: str):
+        """Enter a fixed server-selected operation context for narrow RLS policies.
+
+        Operation names are internal constants, never request parameters. Nested
+        scopes may repeat the same operation but cannot switch privileges.
+        """
+        if not isinstance(operation, str) or operation not in SYSTEM_OPERATIONS:
+            raise ValueError("Unsupported PostgreSQL system operation")
+        active = self._system_operation.get()
+        if active is not None and active != operation:
+            raise RuntimeError("Cannot nest different PostgreSQL system operations")
+        token = self._system_operation.set(operation)
+        try:
+            yield
+        finally:
+            self._system_operation.reset(token)
+
+    def _apply_transaction_context(self, wrapped: PostgresConnection) -> None:
+        identity = self._request_identity.get()
+        if identity is not None:
+            if identity["session_token_hash"] is not None:
+                wrapped.execute(
+                    "SELECT set_config('app.session_token_hash', ?, TRUE)",
+                    (identity["session_token_hash"],),
+                )
+            if identity["user_id"] is not None:
+                wrapped.execute(
+                    "SELECT set_config('app.current_user_id', ?, TRUE)",
+                    (str(identity["user_id"]),),
+                )
+        operation = self._system_operation.get()
+        if operation is not None:
+            wrapped.execute(
+                "SELECT set_config('app.system_operation', ?, TRUE)",
+                (operation,),
+            )
 
     @contextmanager
     def request_scope(self, session_token_hash: str | None):
@@ -168,21 +210,13 @@ class PostgresDatabase:
     def _request_operation(self, connection):
         """Run an operation with transaction-local request identity, if present."""
         identity = self._request_identity.get()
-        if identity is None or not any(identity.values()):
+        operation = self._system_operation.get()
+        if (identity is None or not any(identity.values())) and operation is None:
             yield PostgresConnection(connection)
             return
         with connection.transaction():
             wrapped = PostgresConnection(connection)
-            if identity["session_token_hash"] is not None:
-                wrapped.execute(
-                    "SELECT set_config('app.session_token_hash', ?, TRUE)",
-                    (identity["session_token_hash"],),
-                )
-            if identity["user_id"] is not None:
-                wrapped.execute(
-                    "SELECT set_config('app.current_user_id', ?, TRUE)",
-                    (str(identity["user_id"]),),
-                )
+            self._apply_transaction_context(wrapped)
             yield wrapped
 
     def for_user(self, user_id: int):
