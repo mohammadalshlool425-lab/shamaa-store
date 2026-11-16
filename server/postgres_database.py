@@ -147,11 +147,13 @@ class PostgresDatabase:
         active = self._system_operation.get()
         if active is not None and active != operation:
             raise RuntimeError("Cannot nest different PostgreSQL system operations")
-        token = self._system_operation.set(operation)
+        operation_token = self._system_operation.set(operation)
+        identity_token = self._request_identity.set(None)
         try:
             yield
         finally:
-            self._system_operation.reset(token)
+            self._request_identity.reset(identity_token)
+            self._system_operation.reset(operation_token)
 
     def _apply_transaction_context(self, wrapped: PostgresConnection) -> None:
         identity = self._request_identity.get()
