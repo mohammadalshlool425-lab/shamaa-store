@@ -217,3 +217,34 @@ def test_postgres_system_operation_is_allowlisted_transaction_local_and_reset():
         assert connection.execute(
             "SELECT current_setting('app.system_operation', TRUE)"
         ).fetchone()[0] is None
+
+
+
+def test_postgres_rate_limit_bucket_is_transaction_local_and_cleared():
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL rate-limit context test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(conninfo)
+    bucket = "d" * 64
+    with db.system_operation("rate_limit.consume", bucket=bucket):
+        with db.read() as connection:
+            row = connection.execute(
+                "SELECT current_setting('app.system_operation', TRUE), "
+                "current_setting('app.rate_limit_bucket', TRUE)"
+            ).fetchone()
+            assert row[0] == "rate_limit.consume"
+            assert row[1] == bucket
+        with pytest.raises(RuntimeError, match="different rate-limit buckets"):
+            with db.system_operation("rate_limit.consume", bucket="e" * 64):
+                pass
+
+    with db.read() as connection:
+        row = connection.execute(
+            "SELECT current_setting('app.system_operation', TRUE), "
+            "current_setting('app.rate_limit_bucket', TRUE)"
+        ).fetchone()
+        assert row[0] is None
+        assert row[1] is None
