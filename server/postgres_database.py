@@ -95,6 +95,9 @@ class PostgresDatabase:
         self._system_operation: ContextVar[str | None] = ContextVar(
             f"shamaa_pg_operation_{id(self)}", default=None
         )
+        self._rate_limit_bucket: ContextVar[str | None] = ContextVar(
+            f"shamaa_pg_rate_limit_bucket_{id(self)}", default=None
+        )
 
     def _connect(self):
         try:
@@ -136,23 +139,38 @@ class PostgresDatabase:
             connection.close()
 
     @contextmanager
-    def system_operation(self, operation: str):
+    def system_operation(self, operation: str, *, bucket: str | None = None):
         """Enter a fixed server-selected operation context for narrow RLS policies.
 
-        Operation names are internal constants, never request parameters. Nested
-        scopes may repeat the same operation but cannot switch privileges.
+        Operation names are internal constants, never request parameters. The
+        rate-limit bucket is accepted only for the rate-limit operation and must
+        be a server-computed SHA-256 digest. It is a policy input, not a secret
+        or an independent authorization boundary.
         """
         if not isinstance(operation, str) or operation not in SYSTEM_OPERATIONS:
             raise ValueError("Unsupported PostgreSQL system operation")
+        if bucket is not None and (
+            operation != "rate_limit.consume"
+            or not isinstance(bucket, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", bucket)
+        ):
+            raise ValueError("Rate-limit bucket must be a lowercase SHA-256 digest")
         active = self._system_operation.get()
+        active_bucket = self._rate_limit_bucket.get()
         if active is not None and active != operation:
             raise RuntimeError("Cannot nest different PostgreSQL system operations")
+        if active_bucket is not None and bucket not in (None, active_bucket):
+            raise RuntimeError("Cannot nest different rate-limit buckets")
         operation_token = self._system_operation.set(operation)
+        bucket_token = self._rate_limit_bucket.set(
+            bucket if bucket is not None else active_bucket
+        )
         identity_token = self._request_identity.set(None)
         try:
             yield
         finally:
             self._request_identity.reset(identity_token)
+            self._rate_limit_bucket.reset(bucket_token)
             self._system_operation.reset(operation_token)
 
     def _apply_transaction_context(self, wrapped: PostgresConnection) -> None:
@@ -173,6 +191,12 @@ class PostgresDatabase:
             wrapped.execute(
                 "SELECT set_config('app.system_operation', ?, TRUE)",
                 (operation,),
+            )
+        bucket = self._rate_limit_bucket.get()
+        if bucket is not None:
+            wrapped.execute(
+                "SELECT set_config('app.rate_limit_bucket', ?, TRUE)",
+                (bucket,),
             )
 
     @contextmanager
@@ -213,7 +237,8 @@ class PostgresDatabase:
         """Run an operation with transaction-local request identity, if present."""
         identity = self._request_identity.get()
         operation = self._system_operation.get()
-        if (identity is None or not any(identity.values())) and operation is None:
+        bucket = self._rate_limit_bucket.get()
+        if (identity is None or not any(identity.values())) and operation is None and bucket is None:
             yield PostgresConnection(connection)
             return
         with connection.transaction():
