@@ -64,17 +64,17 @@ def verify_totp(conn, user, code, settings):
     return False
 
 
-def trusted_operation(database, operation):
+def trusted_operation(database, operation, **context):
     """Return a fixed internal PostgreSQL operation scope; SQLite remains unchanged."""
     factory = getattr(database, "system_operation", None)
-    return factory(operation) if factory is not None else nullcontext()
+    return factory(operation, **context) if factory is not None else nullcontext()
 
 
 def throttle(request, scope, limit=10, window=300, identifier=None):
     ip = request.client.host if request.client else 'local'
     key = digest(scope + ':' + (identifier if identifier is not None else ip))
     t = now()
-    with trusted_operation(request.app.state.db, "rate_limit.consume"):
+    with trusted_operation(request.app.state.db, "rate_limit.consume", bucket=key):
         with request.app.state.db.transaction() as c:
             row = c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
               ON CONFLICT(bucket) DO UPDATE SET
