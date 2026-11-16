@@ -31,6 +31,25 @@ def test_fastapi_application_smoke_on_postgresql(tmp_path):
     )
     database = PostgresDatabase(conninfo)
     app = create_app(settings=settings, database=database)
+
+    # A test-only route proves the FastAPI middleware resolves the cookie
+    # before sync handlers execute and carries only the verified identity.
+    from fastapi import Depends, Request
+    from server.security import digest, require_user
+
+    def request_identity_probe(request: Request, user=Depends(require_user)):
+        with request.app.state.db.read() as connection:
+            row = connection.execute(
+                "SELECT current_setting('app.session_token_hash', TRUE), "
+                "current_setting('app.current_user_id', TRUE)"
+            ).fetchone()
+        return {"user_id": user["id"], "session_hash": row[0], "db_user_id": row[1]}
+
+    app.add_api_route(
+        "/api/test/request-identity",
+        request_identity_probe,
+        methods=["GET"],
+    )
     email = f"pg-smoke-{uuid4().hex}@example.com"
     payload = {
         "name": "PostgreSQL Smoke Test",
@@ -69,6 +88,12 @@ def test_fastapi_application_smoke_on_postgresql(tmp_path):
         assert me.status_code == 200
         assert me.json()["user"]["email"] == email
         assert me.json()["csrf_token"] == body["csrf_token"]
+
+        identity = client.get("/api/test/request-identity")
+        assert identity.status_code == 200, identity.text
+        assert identity.json()["user_id"] == body["user"]["id"]
+        assert identity.json()["db_user_id"] == str(body["user"]["id"])
+        assert identity.json()["session_hash"] == digest(client.cookies.get("shamaa_session"))
 
         # Exercise PostgreSQL unique-constraint translation through the real route.
         duplicate = client.post(
