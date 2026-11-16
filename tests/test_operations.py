@@ -258,3 +258,31 @@ def test_throttle_does_not_prune_unrelated_expired_buckets(factory,monkeypatch):
     # Request-time throttling must not delete or mutate unrelated expired buckets.
     assert stale is not None and stale['window_start']==1 and stale['count']==9
     assert own is not None and own['window_start']==100000 and own['count']==1
+
+
+def test_throttle_enforces_limit_atomically_under_concurrency(factory,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from server import security
+
+    request=SimpleNamespace(client=SimpleNamespace(host='203.0.113.12'),
+        app=SimpleNamespace(state=SimpleNamespace(db=factory.db)))
+    monkeypatch.setattr(security,'now',lambda:2000)
+
+    def attempt(_):
+        try:
+            throttle(request,'concurrent-limit',limit=3,window=300)
+            return True
+        except HTTPException as exc:
+            assert exc.status_code==429
+            return False
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results=list(pool.map(attempt,range(12)))
+
+    assert sum(results)==3
+    key=security.digest('concurrent-limit:203.0.113.12')
+    with factory.db.read() as c:
+        row=c.execute('SELECT window_start,count FROM rate_limits WHERE bucket=?',(key,)).fetchone()
+    assert row['window_start']==2000 and row['count']==3

@@ -76,14 +76,17 @@ def throttle(request, scope, limit=10, window=300, identifier=None):
     t = now()
     with trusted_operation(request.app.state.db, "rate_limit.consume"):
         with request.app.state.db.transaction() as c:
-            row = c.execute('SELECT * FROM rate_limits WHERE bucket=?', (key,)).fetchone()
-            if row and row['window_start'] + window > t:
-                if row['count'] >= limit:
-                    fail('rate_limit', 429)
-                c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
-            else:
-                c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
-                  ON CONFLICT(bucket) DO UPDATE SET window_start=excluded.window_start,count=excluded.count''', (key, t))
+            row = c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
+              ON CONFLICT(bucket) DO UPDATE SET
+                window_start=CASE WHEN rate_limits.window_start + ? <= ? THEN excluded.window_start
+                                  ELSE rate_limits.window_start END,
+                count=CASE WHEN rate_limits.window_start + ? <= ? THEN 1
+                           ELSE rate_limits.count + 1 END
+              RETURNING count''', (key, t, window, t, window, t)).fetchone()
+            # The upsert serializes concurrent requests on this bucket. Raising inside
+            # the transaction rolls back rejected increments, keeping count at the limit.
+            if row['count'] > limit:
+                fail('rate_limit', 429)
 
 
 def optional_user(request: Request):
