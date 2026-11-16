@@ -92,3 +92,39 @@ def test_postgres_adapter_rejects_unsafe_configuration():
         PostgresDatabase(conninfo, schema="shamaa_app; DROP SCHEMA public")
     with pytest.raises(ValueError):
         PostgresDatabase("sqlite:///not-postgres")
+
+
+
+def test_user_scoped_adapter_sets_identity_only_for_each_transaction():
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL adapter integration test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(conninfo)
+    scoped = db.for_user(4242)
+
+    with scoped.read() as connection:
+        assert connection.execute(
+            "SELECT current_setting('app.current_user_id', TRUE)"
+        ).fetchone()[0] == "4242"
+
+    # A fresh unscoped connection must not inherit the previous request identity.
+    with db.read() as connection:
+        assert connection.execute(
+            "SELECT current_setting('app.current_user_id', TRUE)"
+        ).fetchone()[0] is None
+
+    # The setting is also cleared after a transaction exits exceptionally.
+    with pytest.raises(RuntimeError, match="rollback identity"):
+        with scoped.transaction() as connection:
+            assert connection.execute(
+                "SELECT current_setting('app.current_user_id', TRUE)"
+            ).fetchone()[0] == "4242"
+            raise RuntimeError("rollback identity")
+
+    with db.read() as connection:
+        assert connection.execute(
+            "SELECT current_setting('app.current_user_id', TRUE)"
+        ).fetchone()[0] is None
