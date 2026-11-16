@@ -51,9 +51,16 @@ PRODUCTS = [
 
 
 def initialize_catalog(db, settings):
-    with db.transaction() as c:
-        for row in CATEGORIES:
-            c.execute('INSERT INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING',row)
+    # PostgreSQL reference rows are installed by versioned migrations. The web
+    # runtime must not need INSERT privileges merely to start serving requests.
+    if getattr(db, "catalog_seeded_by_migrations", False):
+        if settings.demo:
+            raise RuntimeError("Demo catalog seeding requires a separate development setup path.")
+    else:
+        # SQLite development/test databases retain their local bootstrap behavior.
+        with db.transaction() as c:
+            for row in CATEGORIES:
+                c.execute('INSERT INTO categories(id,name_ar,name_en,icon,parent_id) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING',row)
     if not settings.demo:
         return
     with db.read() as c:
