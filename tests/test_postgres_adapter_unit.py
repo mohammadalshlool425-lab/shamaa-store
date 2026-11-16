@@ -105,3 +105,23 @@ def test_postgres_request_scope_binds_only_positive_integer_user_ids():
             "session_token_hash": "a" * 64,
             "user_id": 17,
         }
+
+
+
+def test_postgres_system_operation_temporarily_clears_and_restores_request_identity():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope("a" * 64) as bind_user:
+        bind_user(17)
+        original = database._request_identity.get()
+        with database.system_operation("mail.worker"):
+            assert database._request_identity.get() is None
+            assert database._system_operation.get() == "mail.worker"
+        assert database._request_identity.get() == original
+        assert database._system_operation.get() is None
+        with pytest.raises(RuntimeError, match="worker failure"):
+            with database.system_operation("mail.worker"):
+                assert database._request_identity.get() is None
+                raise RuntimeError("worker failure")
+        assert database._request_identity.get() == original
+        assert database._system_operation.get() is None
+    assert database._request_identity.get() is None
