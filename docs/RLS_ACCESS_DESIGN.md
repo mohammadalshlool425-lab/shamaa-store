@@ -188,3 +188,10 @@ Current `initialize_catalog(db, settings)` always inserts reference categories b
 6. Only then create the runtime role/grants and begin small RLS policy migrations with cross-user negative tests.
 
 No role, grant, policy, production connection or runtime setting is changed by this design section. The current deny-all RLS posture remains intentional until the restricted-role tests pass.
+
+
+## 11. Startup category seeding moved to migration (implemented)
+
+The stable nine reference categories are now installed by `supabase/migrations/0011_seed_reference_categories.sql` using idempotent inserts. The PostgreSQL adapter declares that its catalog is migration-managed; `initialize_catalog` therefore performs no category writes for PostgreSQL startup. Demo seeding through the PostgreSQL web runtime is rejected and remains a separate development setup concern. SQLite development/test bootstrap behavior is unchanged.
+
+The PostgreSQL CI workflow applies migration 0011 before the schema contract. The contract checks the nine expected categories and the electronics/audio parent relationship. The adapter integration test checks that migration-managed categories exist before application startup. This proves migration ownership and removes the unconditional category upsert from PostgreSQL runtime startup; it does not yet prove operation under a restricted NOBYPASSRLS runtime login, which remains a required gate.
