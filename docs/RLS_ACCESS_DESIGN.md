@@ -205,7 +205,16 @@ A regression test seeds a different bucket that is far beyond the former 24-hour
 ### Remaining controls before enabling a rate-limit RLS policy
 
 - Expired unrelated buckets are currently retained. Storage cleanup must be implemented separately as a reviewed maintenance operation with a fixed context, bounded batch size and explicit retention rule; it must not run on anonymous request paths.
-- The current PostgreSQL operation context carries only `app.system_operation = 'rate_limit.consume'`; it does not cryptographically bind a bucket identity. A custom PostgreSQL setting is not, by itself, an authorization boundary because a database role can set custom GUC values.
-- Before any policy is granted, add a restricted-role contract that proves the actual application execution path can affect only its designated bucket and cannot read or modify another bucket. Do not treat a caller-supplied or freely settable GUC as proof of isolation.
+- The PostgreSQL operation context now carries both `app.system_operation = 'rate_limit.consume'` and the server-computed bucket digest in transaction-local `app.rate_limit_bucket`. The adapter accepts that digest only for the rate-limit operation, validates its SHA-256 format, prevents nested scopes from switching buckets, and restores the context after exceptions. The application derives the digest from the route scope and normalized client identifier; the browser never supplies it.
+- This GUC remains a policy input, not an independent authorization boundary: a database role can set custom GUC values. Before any policy is granted, add a restricted-role contract that proves the actual application execution path can affect only its designated bucket and cannot read or modify another bucket. Do not treat a caller-supplied GUC as proof of isolation.
 
 No rate-limit policy or grant is added here. The current deny-all RLS posture remains intentional.
+
+
+## 13. Rate-limit bucket context — transaction-local binding implemented
+
+The rate-limit operation now binds the server-computed SHA-256 bucket digest alongside its fixed operation name. The PostgreSQL adapter rejects malformed digests, rejects bucket context on every other operation, prevents nested operation scopes from switching an active bucket, and restores both context variables after normal or exceptional exits. The context is applied with transaction-local `set_config(..., TRUE)` for reads and writes.
+
+Unit tests cover allowlist enforcement, bucket validation, nested-scope behavior, exception cleanup and isolation. The live PostgreSQL adapter contract verifies that both settings are visible only inside the operation scope and are absent on the next connection. The request path remains atomic per bucket and does not prune unrelated rows.
+
+This change does not add a rate-limit RLS policy, table grant, runtime role or production connection. A custom GUC is still settable by the database role and is not a standalone authorization boundary. The restricted-role contract for the actual application execution path remains a required gate.
