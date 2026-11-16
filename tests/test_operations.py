@@ -213,3 +213,23 @@ def test_expired_rate_limit_bucket_uses_portable_upsert(factory,monkeypatch):
     with factory.db.read() as c:
         row=c.execute('SELECT window_start,count FROM rate_limits WHERE bucket=?',(key,)).fetchone()
     assert row['window_start']==1400 and row['count']==1
+
+
+
+def test_mail_worker_runs_in_isolated_postgres_operation_and_restores_context(factory,monkeypatch):
+    from server.postgres_database import PostgresDatabase
+
+    database=PostgresDatabase('postgresql://localhost/db')
+    observed=[]
+    def fake_delivery(db,settings,limit):
+        observed.append((db._system_operation.get(),db._request_identity.get(),limit))
+        raise RuntimeError('worker failure')
+    monkeypatch.setattr(mail,'_deliver_pending',fake_delivery)
+    with database.request_scope('a'*64) as bind_user:
+        bind_user(23)
+        original=database._request_identity.get()
+        with pytest.raises(RuntimeError,match='worker failure'):
+            mail.deliver_pending(database,factory.settings,limit=7)
+        assert database._request_identity.get()==original
+        assert database._system_operation.get() is None
+    assert observed==[('mail.worker',None,7)]
