@@ -1,5 +1,6 @@
 """SHAM’A marketplace — one same-origin web/API server, no simulated payments."""
 import hmac
+from contextlib import nullcontext
 import html
 import logging
 from pathlib import Path
@@ -14,7 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import ROOT, Settings
 from .database import Database, DatabaseOperationalError, DatabaseProtocol, LATEST_SCHEMA_VERSION
 from .errors import error_body, fail, language
-from .security import optional_user
+from .security import digest, optional_user
 from .seed import initialize_catalog
 from .commerce import PRODUCT_SQL, PUBLIC_WHERE
 from .routes import admin, auth, cases, catalog, messages, orders, returns, reviews, seller
@@ -67,22 +68,31 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
 
     @app.middleware('http')
     async def security_headers(request, call_next):
-        if request.method not in ('GET','HEAD','OPTIONS') and request.url.path.startswith('/api/'):
-            origin = request.headers.get('origin')
-            host = request.headers.get('host','')
-            allowed = {s.public_url, str(request.base_url).rstrip('/')}
-            if not s.production and (host.split(':')[0].endswith('.e2b.app')):
-                allowed.add('https://'+host)
-            if request.headers.get('x-requested-with')!='shamaa' or (origin and origin not in allowed):
-                response = JSONResponse(error_body('csrf',language(request)),status_code=403)
-            else:
-                user = optional_user(request)
-                if user and not hmac.compare_digest(request.headers.get('x-csrf-token',''),user['csrf_token']):
+        scoped_path = request.url.path.startswith(('/api/', '/media/'))
+        token = request.cookies.get('shamaa_session')
+        request_scope = getattr(db, 'request_scope', None)
+        identity_context = (
+            request_scope(digest(token) if token and len(token) < 256 else None)
+            if scoped_path and request_scope is not None
+            else nullcontext()
+        )
+        with identity_context:
+            if request.method not in ('GET','HEAD','OPTIONS') and request.url.path.startswith('/api/'):
+                origin = request.headers.get('origin')
+                host = request.headers.get('host','')
+                allowed = {s.public_url, str(request.base_url).rstrip('/')}
+                if not s.production and (host.split(':')[0].endswith('.e2b.app')):
+                    allowed.add('https://'+host)
+                if request.headers.get('x-requested-with')!='shamaa' or (origin and origin not in allowed):
                     response = JSONResponse(error_body('csrf',language(request)),status_code=403)
                 else:
-                    response = await call_next(request)
-        else:
-            response = await call_next(request)
+                    user = optional_user(request)
+                    if user and not hmac.compare_digest(request.headers.get('x-csrf-token',''),user['csrf_token']):
+                        response = JSONResponse(error_body('csrf',language(request)),status_code=403)
+                    else:
+                        response = await call_next(request)
+            else:
+                response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
