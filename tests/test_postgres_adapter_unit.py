@@ -125,3 +125,29 @@ def test_postgres_system_operation_temporarily_clears_and_restores_request_ident
         assert database._request_identity.get() == original
         assert database._system_operation.get() is None
     assert database._request_identity.get() is None
+
+@pytest.mark.parametrize("operation", ["", "auth.admin", "mail.worker ", None, 7, True])
+def test_postgres_system_operation_rejects_unlisted_or_non_string_labels(operation):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="Unsupported PostgreSQL system operation"):
+        with database.system_operation(operation):
+            pass
+
+
+def test_postgres_system_operation_rejects_privilege_switch_inside_nested_scope():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.system_operation("auth.login"):
+        with pytest.raises(RuntimeError, match="Cannot nest different"):
+            with database.system_operation("mail.worker"):
+                pass
+        assert database._system_operation.get() == "auth.login"
+
+
+def test_postgres_system_operation_context_isolated_between_database_instances():
+    first = PostgresDatabase("postgresql://localhost/db")
+    second = PostgresDatabase("postgresql://localhost/db")
+    with first.system_operation("auth.register"):
+        assert first._system_operation.get() == "auth.register"
+        assert second._system_operation.get() is None
+    assert first._system_operation.get() is None
+    assert second._system_operation.get() is None
