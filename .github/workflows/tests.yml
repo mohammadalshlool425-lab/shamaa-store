@@ -111,6 +111,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/rls_deny_all_contract.sql
       - name: Verify session-hash bootstrap RLS under a restricted role
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/session_hash_bootstrap_contract.sql
+      - name: Verify actor-scoped audit append RLS under a restricted role
+        run: psql -v ON_ERROR_STOP=1 -f tests/postgres/audit_append_contract.sql
       - name: Run Psycopg 3 adapter integration contract
         env:
           SHAMAA_TEST_DATABASE_URL: postgresql://shamaa_ci:ci-only-password@localhost:5432/shamaa_ci
