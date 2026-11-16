@@ -151,3 +151,37 @@ def test_postgres_system_operation_context_isolated_between_database_instances()
         assert second._system_operation.get() is None
     assert first._system_operation.get() is None
     assert second._system_operation.get() is None
+
+
+
+def test_postgres_rate_limit_operation_binds_one_hashed_bucket_and_restores_it():
+    database = PostgresDatabase("postgresql://localhost/db")
+    bucket = "a" * 64
+    with pytest.raises(ValueError, match="lowercase SHA-256 digest"):
+        with database.system_operation("rate_limit.consume", bucket="not-a-digest"):
+            pass
+    with pytest.raises(ValueError, match="lowercase SHA-256 digest"):
+        with database.system_operation("auth.login", bucket=bucket):
+            pass
+
+    with database.system_operation("rate_limit.consume", bucket=bucket):
+        assert database._system_operation.get() == "rate_limit.consume"
+        assert database._rate_limit_bucket.get() == bucket
+        with database.system_operation("rate_limit.consume"):
+            assert database._rate_limit_bucket.get() == bucket
+        with pytest.raises(RuntimeError, match="different rate-limit buckets"):
+            with database.system_operation("rate_limit.consume", bucket="b" * 64):
+                pass
+        assert database._rate_limit_bucket.get() == bucket
+
+    assert database._system_operation.get() is None
+    assert database._rate_limit_bucket.get() is None
+
+
+def test_postgres_rate_limit_bucket_context_restores_after_exception():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(RuntimeError, match="bucket failure"):
+        with database.system_operation("rate_limit.consume", bucket="c" * 64):
+            raise RuntimeError("bucket failure")
+    assert database._system_operation.get() is None
+    assert database._rate_limit_bucket.get() is None
