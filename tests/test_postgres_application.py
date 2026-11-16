@@ -50,6 +50,14 @@ def test_fastapi_application_smoke_on_postgresql(tmp_path):
         request_identity_probe,
         methods=["GET"],
     )
+    # The application intentionally registers a final /api/{path:path}
+    # not-found route; place this test-only route ahead of that fallback.
+    probe_route = app.router.routes.pop()
+    fallback_index = next(
+        index for index, route in enumerate(app.router.routes)
+        if getattr(route, "path", None) == "/api/{path:path}"
+    )
+    app.router.routes.insert(fallback_index, probe_route)
     email = f"pg-smoke-{uuid4().hex}@example.com"
     payload = {
         "name": "PostgreSQL Smoke Test",
