@@ -144,3 +144,47 @@ The media route also needs a split policy: published product media may be public
 3. Prove mail worker privileges are limited to leasing/updating outbox rows and cannot read users, orders, ledger or messages.
 4. Replace startup category writes with migration-owned seed data or a controlled one-time setup step, then test normal application startup under the restricted runtime role.
 5. Test public catalog and public media association chains separately from private uploads and case attachments.
+
+
+## 10. Proposed context model — implementation contract (reviewed, not yet coded)
+
+The following is the smallest useful context vocabulary identified from the current call graph. These labels are internal server constants, not request parameters. A route must call a specific service function; it must not accept an operation label from JSON, query parameters, headers or cookies.
+
+| Context | Allowed purpose | Explicitly excluded |
+|---|---|---|
+| `auth.register` | Insert one new user and the associated initial session, verification token, audit event and verification-mail outbox item as one bounded operation. | Listing users, reading arbitrary existing users, changing roles, reading existing sessions/tokens. |
+| `auth.login` | Look up one normalized email for password verification; after successful verification create a session and update only the intended login metadata. | User listing, password-hash export, arbitrary account mutation, token enumeration. |
+| `auth.verify_email` | Consume one matching unexpired verification token and update only its subject account. | Enumerating tokens/users or consuming a token for a different subject. |
+| `auth.forgot_password` | Create a reset token for a matching account without changing the externally observable response for unknown email addresses. | Reading arbitrary account details or returning whether an email exists. |
+| `auth.reset_password` | Consume one matching unexpired reset token and update that subject's password/session revocation state. | Arbitrary password or role updates. |
+| `rate_limit.consume` | Atomically prune expired buckets and read/increment/upsert only the single server-computed bucket key. | Listing buckets, reading other bucket values, caller-selected SQL/table access. |
+| `mail.worker` | Lease eligible outbox rows, update delivery status/attempt metadata and finish the lease. | Reading users, sessions, orders, ledger, messages or arbitrary outbox history. |
+| `catalog.setup` | No normal-runtime context should be needed after category/reference rows are moved into versioned migrations. If a one-time setup command remains, it must use a separate deployment credential and not the web runtime. | Startup writes under the normal runtime login; demo seeding in production. |
+| `audit.append` | Prefer actor-bound append from the verified user context. A system actor may be used only by a fixed internal worker/service path. | General audit reads, update/delete, arbitrary actor attribution from client input. |
+
+### Context construction and transaction rules
+
+- Keep the existing per-database-instance `ContextVar` isolation and transaction-local PostgreSQL settings. Add a distinct internal operation field only if it is set by a fixed server-side context manager with a closed allowlist.
+- The context manager must restore its previous value in `finally`, including exceptions and nested calls. No context may survive request completion, rollback or pooled-connection reuse.
+- Bind the authenticated user only after the session lookup has succeeded. The identity bootstrap query must be independently constrained by the cookie digest and session validity; it cannot rely on an already-bound user id.
+- Authentication contexts should be implemented as narrowly scoped repository/service methods, not as a general-purpose `run_as_system(operation, callback)` API exposed throughout route code.
+- Prefer SQL statements that constrain the affected subject using the token row itself (for example, a token-consumption CTE returning its subject id) rather than granting a context broad table-wide SELECT or UPDATE rights.
+- Rate-limit bucket keys must be derived on the server from route scope and a normalized IP/account identifier, then hashed. The client must never supply the bucket key.
+- Mail delivery should use a separate worker connection/login when the hosting topology supports it. If transaction-local operation context is retained instead, the database policy must still limit the worker to the outbox operations and the context must be unforgeable by normal request code.
+- The runtime login must be a non-owner, `NOBYPASSRLS` role. Context labels do not replace SQL grants: table grants and RLS policies must both enforce least privilege.
+- Do not implement these contexts by granting `service_role`, `BYPASSRLS`, schema ownership, or unrestricted `SECURITY DEFINER` functions.
+
+### Startup catalog correction
+
+Current `initialize_catalog(db, settings)` always inserts reference categories before checking whether demo mode is enabled. The safe target is to move the nine stable category records into a versioned migration using idempotent inserts. Normal application startup should then perform no database writes for category initialization. Demo users/stores/products remain an explicit development-only fixture path and must not run on production startup. A startup test under the restricted runtime role must prove this.
+
+### Implementation sequence and acceptance evidence
+
+1. Add unit tests for the closed operation allowlist, rejection of unknown/client-supplied labels, context restoration after exceptions, nested-context behavior and isolation across database instances.
+2. Add a migration for the stable category reference data; remove the unconditional startup upsert and add a restricted-role startup test.
+3. Implement auth operations one at a time with tests proving each operation can affect only its token/account subject.
+4. Implement the rate-limit repository operation and test that the caller can observe only its own bucket outcome.
+5. Split mail delivery onto the worker credential/context and test that it cannot query any non-outbox table.
+6. Only then create the runtime role/grants and begin small RLS policy migrations with cross-user negative tests.
+
+No role, grant, policy, production connection or runtime setting is changed by this design section. The current deny-all RLS posture remains intentional until the restricted-role tests pass.
