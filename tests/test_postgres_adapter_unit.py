@@ -76,3 +76,32 @@ def test_postgres_user_scope_accepts_positive_integer_identity():
     database = PostgresDatabase("postgresql://localhost/db")
     scoped = database.for_user(17)
     assert scoped.user_id == 17
+
+
+
+@pytest.mark.parametrize("session_hash", ["not-a-digest", "A" * 64, "a" * 63, 123, True])
+def test_postgres_request_scope_rejects_invalid_session_digest(session_hash):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="SHA-256 digest"):
+        with database.request_scope(session_hash):
+            pass
+
+
+def test_postgres_request_scope_requires_verified_session_before_binding_user():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope(None):
+        with pytest.raises(RuntimeError, match="verified session"):
+            database.bind_request_user(17)
+        with pytest.raises(ValueError, match="positive integer"):
+            with database.request_scope("a" * 64) as bind_user:
+                bind_user(True)
+
+
+def test_postgres_request_scope_binds_only_positive_integer_user_ids():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope("a" * 64) as bind_user:
+        bind_user(17)
+        assert database._request_identity.get() == {
+            "session_token_hash": "a" * 64,
+            "user_id": 17,
+        }
