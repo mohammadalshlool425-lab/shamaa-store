@@ -233,3 +233,28 @@ def test_mail_worker_runs_in_isolated_postgres_operation_and_restores_context(fa
         assert database._request_identity.get()==original
         assert database._system_operation.get() is None
     assert observed==[('mail.worker',None,7)]
+
+
+def test_throttle_does_not_prune_unrelated_expired_buckets(factory,monkeypatch):
+    from types import SimpleNamespace
+    from server import security
+
+    stale_key='f'*64
+    with factory.db.transaction() as c:
+        c.execute('INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,?)',
+                  (stale_key,1,9))
+
+    request=SimpleNamespace(client=SimpleNamespace(host='203.0.113.11'),
+        app=SimpleNamespace(state=SimpleNamespace(db=factory.db)))
+    monkeypatch.setattr(security,'now',lambda:100000)
+    throttle(request,'single-request-bucket',limit=3,window=300)
+
+    own_key=security.digest('single-request-bucket:203.0.113.11')
+    with factory.db.read() as c:
+        stale=c.execute('SELECT window_start,count FROM rate_limits WHERE bucket=?',
+                        (stale_key,)).fetchone()
+        own=c.execute('SELECT window_start,count FROM rate_limits WHERE bucket=?',
+                      (own_key,)).fetchone()
+    # Request-time throttling must not delete or mutate unrelated expired buckets.
+    assert stale is not None and stale['window_start']==1 and stale['count']==9
+    assert own is not None and own['window_start']==100000 and own['count']==1

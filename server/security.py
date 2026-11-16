@@ -76,7 +76,6 @@ def throttle(request, scope, limit=10, window=300, identifier=None):
     t = now()
     with trusted_operation(request.app.state.db, "rate_limit.consume"):
         with request.app.state.db.transaction() as c:
-            c.execute('DELETE FROM rate_limits WHERE window_start<?', (t - 86400,))
             row = c.execute('SELECT * FROM rate_limits WHERE bucket=?', (key,)).fetchone()
             if row and row['window_start'] + window > t:
                 if row['count'] >= limit:

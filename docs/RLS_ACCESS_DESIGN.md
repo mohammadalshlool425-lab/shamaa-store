@@ -196,22 +196,16 @@ The stable nine reference categories are now installed by `supabase/migrations/0
 
 The PostgreSQL CI workflow applies migration 0011 before the schema contract. The contract checks the nine expected categories and the electronics/audio parent relationship. The adapter integration test checks that migration-managed categories exist before application startup. This proves migration ownership and removes the unconditional category upsert from PostgreSQL runtime startup; it does not yet prove operation under a restricted NOBYPASSRLS runtime login, which remains a required gate.
 
-## 12. Rate-limit operation boundary — verified follow-up
+## 12. Rate-limit operation boundary — request-path correction implemented
 
-A focused review of `server/security.py::throttle` found that the current implementation performs three database actions inside the `rate_limit.consume` operation:
+The request-time throttle path previously deleted every row older than 24 hours before selecting and updating the current bucket. That global prune was removed. The request now reads and updates only its server-computed SHA-256 bucket. The existing atomic `ON CONFLICT` upsert continues to reset an expired current bucket to the new window with count 1.
 
-1. Deletes every expired row in `rate_limits` using `window_start < now - 86400`.
-2. Selects the one server-derived bucket.
-3. Increments or upserts that bucket.
+A regression test seeds a different bucket that is far beyond the former 24-hour deletion threshold, calls throttle for a separate client/scope, and verifies that the unrelated expired row remains unchanged while the current bucket is created. The existing portable-upsert test continues to verify reset behavior for the current expired bucket.
 
-The bucket is a SHA-256 digest of the route scope and normalized identifier, so the client does not choose a raw bucket key. However, the current PostgreSQL operation context carries only the broad label `app.system_operation = 'rate_limit.consume'`; it does not bind the one bucket key. A future policy that grants this label unrestricted DELETE/SELECT/INSERT/UPDATE on the table would therefore exceed the intended “single bucket” boundary. The global prune is the concrete conflict: it intentionally touches unrelated buckets.
+### Remaining controls before enabling a rate-limit RLS policy
 
-### Required correction before a rate-limit policy is written
+- Expired unrelated buckets are currently retained. Storage cleanup must be implemented separately as a reviewed maintenance operation with a fixed context, bounded batch size and explicit retention rule; it must not run on anonymous request paths.
+- The current PostgreSQL operation context carries only `app.system_operation = 'rate_limit.consume'`; it does not cryptographically bind a bucket identity. A custom PostgreSQL setting is not, by itself, an authorization boundary because a database role can set custom GUC values.
+- Before any policy is granted, add a restricted-role contract that proves the actual application execution path can affect only its designated bucket and cannot read or modify another bucket. Do not treat a caller-supplied or freely settable GUC as proof of isolation.
 
-- Remove global pruning from the request-time throttle transaction. Keep the request path limited to reading and upserting its single server-computed bucket.
-- For an expired bucket, preserve the existing atomic `ON CONFLICT` reset behavior; it already replaces the stale window/count for that exact key.
-- If storage cleanup is required, implement it as a separately reviewed maintenance operation with its own fixed context, bounded batch size and explicit retention rule. It must not be inherited by anonymous authentication requests.
-- Add a PostgreSQL restricted-role contract proving that a throttle operation can read/increment/reset its designated bucket but cannot read or modify another bucket, even if the caller changes `app.current_user_id` or supplies a forged setting.
-- Add an adapter/service test proving that request-time throttling no longer issues a table-wide DELETE.
-
-Until these changes and tests exist, `rate_limit.consume` remains a design label only. Do not add a policy that grants broad table access based solely on that label. The current deny-all posture is retained.
+No rate-limit policy or grant is added here. The current deny-all RLS posture remains intentional.
