@@ -5,6 +5,7 @@ import secrets
 import time
 from threading import BoundedSemaphore
 from cryptography.fernet import Fernet
+from contextlib import nullcontext
 from fastapi import Depends, Request
 import pyotp
 from .database import now
@@ -63,20 +64,27 @@ def verify_totp(conn, user, code, settings):
     return False
 
 
+def trusted_operation(database, operation):
+    """Return a fixed internal PostgreSQL operation scope; SQLite remains unchanged."""
+    factory = getattr(database, "system_operation", None)
+    return factory(operation) if factory is not None else nullcontext()
+
+
 def throttle(request, scope, limit=10, window=300, identifier=None):
     ip = request.client.host if request.client else 'local'
     key = digest(scope + ':' + (identifier if identifier is not None else ip))
     t = now()
-    with request.app.state.db.transaction() as c:
-        c.execute('DELETE FROM rate_limits WHERE window_start<?', (t - 86400,))
-        row = c.execute('SELECT * FROM rate_limits WHERE bucket=?', (key,)).fetchone()
-        if row and row['window_start'] + window > t:
-            if row['count'] >= limit:
-                fail('rate_limit', 429)
-            c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
-        else:
-            c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
-              ON CONFLICT(bucket) DO UPDATE SET window_start=excluded.window_start,count=excluded.count''', (key, t))
+    with trusted_operation(request.app.state.db, "rate_limit.consume"):
+        with request.app.state.db.transaction() as c:
+            c.execute('DELETE FROM rate_limits WHERE window_start<?', (t - 86400,))
+            row = c.execute('SELECT * FROM rate_limits WHERE bucket=?', (key,)).fetchone()
+            if row and row['window_start'] + window > t:
+                if row['count'] >= limit:
+                    fail('rate_limit', 429)
+                c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
+            else:
+                c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
+                  ON CONFLICT(bucket) DO UPDATE SET window_start=excluded.window_start,count=excluded.count''', (key, t))
 
 
 def optional_user(request: Request):
