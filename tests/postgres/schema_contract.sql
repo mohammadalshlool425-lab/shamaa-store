@@ -32,6 +32,13 @@ BEGIN
     RAISE EXCEPTION 'Foundation migration must remain closed until reviewed policies are installed; found % policies', policy_count;
   END IF;
 
+  IF (SELECT count(*) FROM shamaa_app.categories) <> 9
+     OR NOT EXISTS (SELECT 1 FROM shamaa_app.categories WHERE id='electronics')
+     OR NOT EXISTS (SELECT 1 FROM shamaa_app.categories WHERE id='audio' AND parent_id='electronics')
+     OR NOT EXISTS (SELECT 1 FROM shamaa_app.categories WHERE id='accessories') THEN
+    RAISE EXCEPTION 'Expected nine migration-seeded reference categories with valid parent linkage';
+  END IF;
+
   SELECT count(*) INTO trigger_count
     FROM pg_trigger t
     JOIN pg_class c ON c.oid=t.tgrelid
