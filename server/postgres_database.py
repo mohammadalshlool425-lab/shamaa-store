@@ -4,6 +4,7 @@ Migrations are applied out-of-band. This adapter validates the installed
 foundation and never creates roles, grants privileges, or changes RLS.
 """
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 import re
 from typing import Any, Sequence
 
@@ -74,6 +75,9 @@ class PostgresDatabase:
         self._conninfo = conninfo
         self.schema = schema
         self.connect_timeout = connect_timeout
+        self._request_identity: ContextVar[dict | None] = ContextVar(
+            f"shamaa_pg_identity_{id(self)}", default=None
+        )
 
     def _connect(self):
         try:
@@ -92,7 +96,11 @@ class PostgresDatabase:
     def read(self):
         connection = self._connect()
         try:
-            yield PostgresConnection(connection)
+            try:
+                with self._request_operation(connection) as wrapped:
+                    yield wrapped
+            except (psycopg.IntegrityError, psycopg.OperationalError) as exc:
+                _raise_database_error(exc)
         finally:
             connection.close()
 
@@ -102,11 +110,78 @@ class PostgresDatabase:
         try:
             try:
                 with connection.transaction():
-                    yield PostgresConnection(connection)
+                    wrapped = PostgresConnection(connection)
+                    identity = self._request_identity.get()
+                    if identity is not None:
+                        if identity["session_token_hash"] is not None:
+                            wrapped.execute(
+                                "SELECT set_config('app.session_token_hash', ?, TRUE)",
+                                (identity["session_token_hash"],),
+                            )
+                        if identity["user_id"] is not None:
+                            wrapped.execute(
+                                "SELECT set_config('app.current_user_id', ?, TRUE)",
+                                (str(identity["user_id"]),),
+                            )
+                    yield wrapped
             except (psycopg.IntegrityError, psycopg.OperationalError) as exc:
                 _raise_database_error(exc)
         finally:
             connection.close()
+
+    @contextmanager
+    def request_scope(self, session_token_hash: str | None):
+        """Bind a verified-session lookup and subsequent user identity to one request context.
+
+        The cookie itself must never be passed here: callers pass only its SHA-256
+        digest. The context is reset even when request handling raises.
+        """
+        if session_token_hash is not None and (
+            not isinstance(session_token_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", session_token_hash)
+        ):
+            raise ValueError("session_token_hash must be a lowercase SHA-256 digest")
+        token = self._request_identity.set({
+            "session_token_hash": session_token_hash,
+            "user_id": None,
+        })
+        try:
+            yield self.bind_request_user
+        finally:
+            self._request_identity.reset(token)
+
+    def bind_request_user(self, user_id: int) -> None:
+        """Bind the id returned by the server-validated session lookup."""
+        identity = self._request_identity.get()
+        if identity is None or identity["session_token_hash"] is None:
+            raise RuntimeError("A verified session lookup is required before binding a user")
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        self._request_identity.set({
+            "session_token_hash": identity["session_token_hash"],
+            "user_id": user_id,
+        })
+
+    @contextmanager
+    def _request_operation(self, connection):
+        """Run an operation with transaction-local request identity, if present."""
+        identity = self._request_identity.get()
+        if identity is None or not any(identity.values()):
+            yield PostgresConnection(connection)
+            return
+        with connection.transaction():
+            wrapped = PostgresConnection(connection)
+            if identity["session_token_hash"] is not None:
+                wrapped.execute(
+                    "SELECT set_config('app.session_token_hash', ?, TRUE)",
+                    (identity["session_token_hash"],),
+                )
+            if identity["user_id"] is not None:
+                wrapped.execute(
+                    "SELECT set_config('app.current_user_id', ?, TRUE)",
+                    (str(identity["user_id"]),),
+                )
+            yield wrapped
 
     def for_user(self, user_id: int):
         """Return a request-scoped facade that sets transaction-local RLS identity.
