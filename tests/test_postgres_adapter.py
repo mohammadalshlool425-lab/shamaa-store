@@ -171,3 +171,49 @@ def test_postgres_request_scope_binds_session_then_verified_user_and_resets():
         ).fetchone()
         assert row[0] is None
         assert row[1] is None
+
+
+def test_postgres_system_operation_is_allowlisted_transaction_local_and_reset():
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL system operation test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(conninfo)
+    with pytest.raises(ValueError, match="Unsupported PostgreSQL system operation"):
+        with db.system_operation("auth.arbitrary"):
+            pass
+
+    with db.system_operation("auth.register"):
+        with db.read() as connection:
+            assert connection.execute(
+                "SELECT current_setting('app.system_operation', TRUE)"
+            ).fetchone()[0] == "auth.register"
+        with pytest.raises(RuntimeError, match="Cannot nest different"):
+            with db.system_operation("auth.login"):
+                pass
+        with db.system_operation("auth.register"):
+            with db.transaction() as connection:
+                assert connection.execute(
+                    "SELECT current_setting('app.system_operation', TRUE)"
+                ).fetchone()[0] == "auth.register"
+
+    # Transaction-local settings and ContextVar scope must both be cleared.
+    with db.read() as connection:
+        assert connection.execute(
+            "SELECT current_setting('app.system_operation', TRUE)"
+        ).fetchone()[0] is None
+
+    # Exceptional exits restore the previous operation context as well.
+    with pytest.raises(RuntimeError, match="abort operation"):
+        with db.system_operation("auth.reset_password"):
+            with db.read() as connection:
+                assert connection.execute(
+                    "SELECT current_setting('app.system_operation', TRUE)"
+                ).fetchone()[0] == "auth.reset_password"
+            raise RuntimeError("abort operation")
+    with db.read() as connection:
+        assert connection.execute(
+            "SELECT current_setting('app.system_operation', TRUE)"
+        ).fetchone()[0] is None
