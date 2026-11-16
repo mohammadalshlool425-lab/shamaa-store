@@ -138,3 +138,16 @@
 ## Migration 0010 — coupons (foundation under verification)
 
 Migration `0010_coupons.sql` adds store-scoped coupon definitions and immutable redemption records. Order and seller-order discount amounts are stored in fils. PostgreSQL locks the coupon row during redemption validation and keeps both coupon tables under ENABLE+FORCE RLS with no policies or PUBLIC grants. The runtime does not expose coupon management or checkout redemption yet; do not apply this migration to the live Supabase project until CI and the complete application workflow have been reviewed.
+
+
+## 11. جسر هوية PostgreSQL على مستوى المعاملة — 16 نوفمبر 2026
+
+أضيف إلى محول PostgreSQL الأساس البرمجي `PostgresDatabase.for_user(user_id)`. يعيد هذا الأساس واجهة قاعدة بيانات محدودة بهوية واحدة، ويضبط `app.current_user_id` بواسطة `set_config(..., TRUE)` داخل معاملة جديدة لكل قراءة أو كتابة.
+
+- تُقبل هوية عدد صحيح موجب فقط؛ تُرفض القيم المنطقية والسلاسل والأرقام غير الموجبة.
+- تُستخدم معاملة فعلية حتى في عمليات القراءة، لأن `SET LOCAL` لا يكون مضمونًا خارج معاملة.
+- تنتهي الهوية تلقائيًا عند commit أو rollback، بما في ذلك الاستثناءات؛ ولا تستخدم إعداد جلسة دائمًا أو connection pool مشتركًا.
+- أضيف اختبار تكامل PostgreSQL يتحقق من الهوية داخل القراءة والمعاملة، ثم يتأكد أن اتصالًا جديدًا غير مقيّد لا يرث الهوية بعد الإنهاء الطبيعي أو rollback.
+- أضيفت اختبارات وحدات للتحقق من قبول ورفض قيم الهوية.
+
+**حدود هذه الخطوة:** لم تُنشأ سياسات RLS أو صلاحيات دور التشغيل بعد، ولم يُربط FastAPI بعد بهذا الأساس. يجب أن تأتي قيمة `user_id` حصريًا من جلسة التطبيق التي تحقق منها الخادم، لا من جسم الطلب أو ترويسة يرسلها العميل. لا يُعد وجود هذا الجسر وحده إثباتًا لعزل الصفوف؛ المرحلة التالية هي ربطه بطبقة الطلبات ثم إضافة سياسات واختبارات مستخدمين منفصلين بدور PostgreSQL غير مالك للجداول ولا يملك `BYPASSRLS`.
