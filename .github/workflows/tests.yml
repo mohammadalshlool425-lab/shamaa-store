@@ -107,6 +107,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0011_seed_reference_categories.sql
       - name: Verify schema, RLS, append-only guards and core constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/schema_contract.sql
+      - name: Verify deny-all RLS with a non-owner NOBYPASSRLS role
+        run: psql -v ON_ERROR_STOP=1 -f tests/postgres/rls_deny_all_contract.sql
       - name: Run Psycopg 3 adapter integration contract
         env:
           SHAMAA_TEST_DATABASE_URL: postgresql://shamaa_ci:ci-only-password@localhost:5432/shamaa_ci
