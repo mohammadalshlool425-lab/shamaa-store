@@ -128,3 +128,41 @@ def test_user_scoped_adapter_sets_identity_only_for_each_transaction():
         assert connection.execute(
             "SELECT current_setting('app.current_user_id', TRUE)"
         ).fetchone()[0] is None
+
+
+
+def test_postgres_request_scope_binds_session_then_verified_user_and_resets():
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL request identity test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(conninfo)
+    session_hash = "a" * 64
+
+    with db.request_scope(session_hash) as bind_user:
+        with db.read() as connection:
+            row = connection.execute(
+                "SELECT current_setting('app.session_token_hash', TRUE), "
+                "current_setting('app.current_user_id', TRUE)"
+            ).fetchone()
+            assert row[0] == session_hash
+            assert row[1] is None
+
+        bind_user(4242)
+        with db.transaction() as connection:
+            row = connection.execute(
+                "SELECT current_setting('app.session_token_hash', TRUE), "
+                "current_setting('app.current_user_id', TRUE)"
+            ).fetchone()
+            assert row[0] == session_hash
+            assert row[1] == "4242"
+
+    with db.read() as connection:
+        row = connection.execute(
+            "SELECT current_setting('app.session_token_hash', TRUE), "
+            "current_setting('app.current_user_id', TRUE)"
+        ).fetchone()
+        assert row[0] is None
+        assert row[1] is None
