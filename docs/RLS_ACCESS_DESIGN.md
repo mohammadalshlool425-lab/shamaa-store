@@ -195,3 +195,23 @@ No role, grant, policy, production connection or runtime setting is changed by t
 The stable nine reference categories are now installed by `supabase/migrations/0011_seed_reference_categories.sql` using idempotent inserts. The PostgreSQL adapter declares that its catalog is migration-managed; `initialize_catalog` therefore performs no category writes for PostgreSQL startup. Demo seeding through the PostgreSQL web runtime is rejected and remains a separate development setup concern. SQLite development/test bootstrap behavior is unchanged.
 
 The PostgreSQL CI workflow applies migration 0011 before the schema contract. The contract checks the nine expected categories and the electronics/audio parent relationship. The adapter integration test checks that migration-managed categories exist before application startup. This proves migration ownership and removes the unconditional category upsert from PostgreSQL runtime startup; it does not yet prove operation under a restricted NOBYPASSRLS runtime login, which remains a required gate.
+
+## 12. Rate-limit operation boundary — verified follow-up
+
+A focused review of `server/security.py::throttle` found that the current implementation performs three database actions inside the `rate_limit.consume` operation:
+
+1. Deletes every expired row in `rate_limits` using `window_start < now - 86400`.
+2. Selects the one server-derived bucket.
+3. Increments or upserts that bucket.
+
+The bucket is a SHA-256 digest of the route scope and normalized identifier, so the client does not choose a raw bucket key. However, the current PostgreSQL operation context carries only the broad label `app.system_operation = 'rate_limit.consume'`; it does not bind the one bucket key. A future policy that grants this label unrestricted DELETE/SELECT/INSERT/UPDATE on the table would therefore exceed the intended “single bucket” boundary. The global prune is the concrete conflict: it intentionally touches unrelated buckets.
+
+### Required correction before a rate-limit policy is written
+
+- Remove global pruning from the request-time throttle transaction. Keep the request path limited to reading and upserting its single server-computed bucket.
+- For an expired bucket, preserve the existing atomic `ON CONFLICT` reset behavior; it already replaces the stale window/count for that exact key.
+- If storage cleanup is required, implement it as a separately reviewed maintenance operation with its own fixed context, bounded batch size and explicit retention rule. It must not be inherited by anonymous authentication requests.
+- Add a PostgreSQL restricted-role contract proving that a throttle operation can read/increment/reset its designated bucket but cannot read or modify another bucket, even if the caller changes `app.current_user_id` or supplies a forged setting.
+- Add an adapter/service test proving that request-time throttling no longer issues a table-wide DELETE.
+
+Until these changes and tests exist, `rate_limit.consume` remains a design label only. Do not add a policy that grants broad table access based solely on that label. The current deny-all posture is retained.
