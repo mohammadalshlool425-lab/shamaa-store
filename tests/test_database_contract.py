@@ -225,7 +225,7 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
 def test_conversation_migration_creates_private_append_only_message_tables(tmp_path):
     db = Database(tmp_path / "messages-schema.sqlite3")
     db.initialize()
-    assert db.schema_version() == 9
+    assert db.schema_version() == LATEST_SCHEMA_VERSION
     with db.read() as connection:
         tables = {row["name"] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
@@ -245,7 +245,7 @@ def test_conversation_migration_creates_private_append_only_message_tables(tmp_p
 def test_verified_review_migration_creates_review_and_report_guards(tmp_path):
     db = Database(tmp_path / "reviews-schema.sqlite3")
     db.initialize()
-    assert db.schema_version() == 9
+    assert db.schema_version() == LATEST_SCHEMA_VERSION
     with db.read() as connection:
         tables = {
             row["name"] for row in connection.execute(
@@ -303,3 +303,35 @@ def test_coupon_migration_is_applied_and_keeps_redemptions_immutable(tmp_path):
             "coupon_redemptions_immutable_update",
             "coupon_redemptions_immutable_delete",
         } <= trigger_names
+
+
+
+def test_insert_id_rejects_insert_without_returned_identifier():
+    class EmptyReturningConnection:
+        def execute(self, sql, parameters=()):
+            class EmptyCursor:
+                def fetchone(self):
+                    return None
+            assert sql == "INSERT INTO sample(value) VALUES(?) RETURNING id"
+            assert parameters == ("sample",)
+            return EmptyCursor()
+
+    try:
+        insert_id(EmptyReturningConnection(), "INSERT INTO sample(value) VALUES(?)", ("sample",))
+    except RuntimeError as error:
+        assert "did not return" in str(error)
+    else:
+        raise AssertionError("insert_id must reject an INSERT without a returned id")
+
+
+def test_database_refuses_to_open_a_newer_schema(tmp_path):
+    path = tmp_path / "future-schema.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(f"PRAGMA user_version={LATEST_SCHEMA_VERSION + 1}")
+
+    try:
+        Database(path).initialize()
+    except RuntimeError as error:
+        assert "newer than this application" in str(error)
+    else:
+        raise AssertionError("The database adapter must never downgrade a newer schema")
