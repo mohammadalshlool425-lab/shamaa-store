@@ -196,7 +196,7 @@ class PostgresDatabase:
         return _UserScopedPostgresDatabase(self, user_id)
 
     def schema_version(self) -> int:
-        """Return 10 only when the foundation, commerce, cases, returns and coupons schema exist."""
+        """Return 10 when the foundation, commerce, cases, returns and coupons schema exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -331,7 +331,7 @@ class PostgresDatabase:
         if self.schema_version() != 10:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply all reviewed Supabase migrations through version 0010 before starting the app."
+                "apply structural Supabase migrations 0001-0010 and reference-data migration 0011 before starting the app."
             )
 
 
