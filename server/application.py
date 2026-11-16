@@ -92,6 +92,10 @@ def create_app(settings=None, database: DatabaseProtocol | None = None):
                     else:
                         response = await call_next(request)
             else:
+                # Resolve any cookie session in this async request context so the
+                # verified user identity is inherited by all sync route handlers.
+                if scoped_path:
+                    optional_user(request)
                 response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
