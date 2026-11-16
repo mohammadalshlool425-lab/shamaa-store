@@ -103,3 +103,44 @@ Tests must run against PostgreSQL using the actual restricted runtime role with 
 5. Add RLS policies in small migration batches by access class, keeping all unreviewed tables deny-all.
 6. Add restricted-role cross-user tests and negative tests for anonymous, seller, buyer and admin boundaries.
 7. Only after all gates pass, consider a separate reviewed runtime-enablement and data-migration plan. Do not connect production or apply these policies to the live Supabase project as part of this design phase.
+
+
+## 9. Route-to-table operation inventory (verified source review)
+
+This inventory was checked against the route modules and shared services on the target branch. It records the current route boundary; it does not replace SQL-by-SQL policy tests. Tables not listed under a route remain deny-all until their consumers and workers are explicitly assigned.
+
+| Area / route family | Current route guard | Tables and sensitive operations that policies must cover |
+|---|---|---|
+| Authentication: `/api/auth/*` | Mixed anonymous and authenticated | `users`, `sessions`, `auth_tokens`, `audit_log`, `mail_outbox`, `rate_limits`. Registration creates identity/session/token/outbox records; login reads by email and creates sessions; verification/reset consume one-time tokens; session listing/revocation is owner-scoped; MFA updates session state. |
+| Public catalog: `/api/catalog/bootstrap`, `/products`, `/products/{id}`, `/stores` | Public reads; store detail currently requires `require_user` | `categories`, `settings`, `products`, `stores`, `users` (active seller check), `product_images`, `product_variants`, `media`. Anonymous visibility must be restricted to active/published rows and approved bootstrap settings. |
+| Notifications: `/api/notifications*` | `require_user` | `notifications`; list/update must match `user_id = app.current_user_id`. Notification email enqueue also touches `users` and `mail_outbox` through shared service code. |
+| Seller store/catalog: `/api/seller/store*`, `/products*`, `/inventory*`, `/media` | `verified_user` or `seller_user` | `users`, `stores`, `products`, `categories`, `media`, `product_images`, `product_variants`, `inventory_movements`. Store/product/media ownership must be derived through the verified owner/store relationship; client-supplied ids alone are not authority. |
+| Buyer cart/checkout/orders: `/api/cart*`, `/api/orders*` | `require_user` or `verified_user` | `carts`, `orders`, `seller_orders`, `order_items`, `order_events`, `products`, `product_variants`, `stores`, `inventory_movements`, `ledger`. Buyer reads follow `orders.buyer_id`; seller suborders follow store ownership. Seller access must not expose unrelated buyer address/contact columns on the parent order. |
+| Seller order management: `/api/seller/orders*` | `seller_user` | `seller_orders`, `stores`, `orders`, `order_items`, `order_events`, `inventory_movements`, `ledger`. Mutations must verify that the seller owns the specific `seller_orders.store_id`; transitions must remain constrained by application state rules. |
+| Conversations/messages: `/api/conversations*` | `require_user` for reads; `verified_user` for writes | `conversations`, `messages`, and related `seller_orders` when a conversation is order-linked. Both conversation participants are the access boundary; message sender must equal the verified current user. |
+| Reviews/reports: `/api/reviews*` | Public approved-review reads; authenticated report; verified review creation | `reviews`, `review_reports`, `orders`, `order_items`, `seller_orders`, `stores`, `products`. Public reads are approved-only; creation must prove an eligible completed purchase; reports are reporter-owned; moderation is admin-only. |
+| Cases/attachments: `/api/cases*` | `verified_user`; admin routes use `admin_user` / `recent_admin` | `order_cases`, `order_case_events`, `order_case_attachments`, `orders`, `seller_orders`, `stores`, `users`. Buyer and seller participant checks apply to every list, detail, event and attachment access; admin decisions retain recent-MFA route checks. |
+| Returns: `/api/returns*` | `verified_user`; admin routes use `admin_user` / `recent_admin` | `return_requests`, `return_request_events`, `orders`, `seller_orders`, `stores`, `users`. Buyer and relevant seller are the only normal participants; admin decisions remain separately guarded. |
+| Admin: `/api/admin/*` | `admin_user` for reads/ordinary moderation; `recent_admin` for sensitive changes | Cross-table reads/writes include `users`, `sessions`, `stores`, `products`, `orders`, `seller_orders`, `settings`, `categories`, `audit_log`, `ledger`, `reviews`, `review_reports`, `mail_outbox`. RLS admin assertion must be trusted and non-recursive; route-level recent reauthentication remains required. |
+| Media delivery: `/media/{media_id}` | Request middleware establishes optional verified identity; actual media row lookup is in application layer | `media`, and for public product images the related `product_images` / `products` / `stores` publication chain. Private media (especially case attachments) must not inherit public catalog visibility. |
+| Startup and workers | Not a user route | `categories`, `settings`, `mail_outbox`, and optional demo `users` / `stores` / `products`. Startup catalog upsert must be removed from normal runtime or replaced by a separately reviewed migration/setup action. The mail worker needs an outbox-only role/context and must not receive broad application-table access. |
+
+### Identity bootstrap dependency that must be solved first
+
+The current verified-session lookup joins `sessions` to `users` before `app.current_user_id` can be set. Therefore the first authenticated database operation has only `app.session_token_hash`. The eventual policies must deliberately support this narrow bootstrap:
+
+- Permit a session row lookup only when its `token_hash` equals the transaction-local `app.session_token_hash` and the session is not expired/revoked.
+- Permit the joined user row only when a matching session for that same user and hash exists and the user is active.
+- Do not grant general anonymous reads on `sessions` or `users`.
+- Login-by-email, registration, verification and password-reset cannot use the verified-user context; they require separate server-only operations with narrowly scoped SQL/functions or a dedicated auth connection role. A client must not be able to select the operation name or supply an arbitrary user id.
+- Rate limiting is invoked before several authentication routes and therefore needs an anonymous-safe, isolated path that exposes only the specific bucket operation, not general `rate_limits` table reads.
+
+The media route also needs a split policy: published product media may be public, but unassociated uploads and case evidence must remain private and owner/participant-scoped. A single `media.status` public policy is not sufficient unless the association and parent publication checks are enforced.
+
+### Remaining evidence required before policy migrations
+
+1. Add focused tests for the session-hash-only bootstrap query, including invalid, expired, revoked and inactive-user sessions under the restricted role.
+2. Exercise each auth operation through its proposed context and prove that it cannot read arbitrary users, tokens, sessions or outbox rows.
+3. Prove mail worker privileges are limited to leasing/updating outbox rows and cannot read users, orders, ledger or messages.
+4. Replace startup category writes with migration-owned seed data or a controlled one-time setup step, then test normal application startup under the restricted runtime role.
+5. Test public catalog and public media association chains separately from private uploads and case attachments.
