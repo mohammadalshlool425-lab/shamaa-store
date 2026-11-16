@@ -246,3 +246,32 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
             (shipment["id"],),
         ).fetchone()["status"] == "delivered"
 
+
+
+def test_postgres_catalog_startup_does_not_open_a_write_transaction():
+    from types import SimpleNamespace
+
+    from server.seed import initialize_catalog
+
+    class MigrationManagedDatabase:
+        catalog_seeded_by_migrations = True
+
+        def transaction(self):
+            raise AssertionError("PostgreSQL startup must not write reference categories")
+
+    initialize_catalog(MigrationManagedDatabase(), SimpleNamespace(demo=False))
+
+
+def test_postgres_demo_seed_is_rejected_before_any_database_write():
+    from types import SimpleNamespace
+
+    from server.seed import initialize_catalog
+
+    class MigrationManagedDatabase:
+        catalog_seeded_by_migrations = True
+
+        def transaction(self):
+            raise AssertionError("Demo seeding must not run through PostgreSQL web startup")
+
+    with pytest.raises(RuntimeError, match="separate development setup path"):
+        initialize_catalog(MigrationManagedDatabase(), SimpleNamespace(demo=True))
