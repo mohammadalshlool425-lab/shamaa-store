@@ -4,7 +4,7 @@ Migrations are applied out-of-band. This adapter validates the installed
 foundation and never creates roles, grants privileges, or changes RLS.
 """
 from contextlib import contextmanager
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 import re
 from typing import Any, Sequence
 
