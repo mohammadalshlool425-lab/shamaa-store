@@ -7,6 +7,7 @@ from server.database import (
     DatabaseOperationalError,
     DatabaseProtocol,
     HybridRow,
+    LATEST_SCHEMA_VERSION,
     insert_id,
 )
 from server.config import Settings
@@ -202,7 +203,7 @@ def test_existing_sqlite_v1_database_is_upgraded_without_losing_data(tmp_path):
     db = Database(path)
     assert db.schema_version() == 1
     db.initialize()
-    assert db.schema_version() == 9
+    assert db.schema_version() == LATEST_SCHEMA_VERSION
 
     with db.read() as connection:
         assert connection.execute(
