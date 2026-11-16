@@ -90,6 +90,10 @@ def optional_user(request: Request):
               FROM sessions s JOIN users u ON u.id=s.user_id
               WHERE s.token_hash=? AND s.expires_at>? AND u.active=TRUE''', (digest(token), now())).fetchone()
             user = dict(row) if row else None
+            if user:
+                bind_identity = getattr(request.app.state.db, "bind_request_user", None)
+                if bind_identity is not None:
+                    bind_identity(user["id"])
     request.state.user = user
     return user
 
