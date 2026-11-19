@@ -519,3 +519,89 @@ BEGIN
     RAISE EXCEPTION 'Expected three coupon redemption guards; got %',coupon_guards;
   END IF;
 END $$;
+
+
+-- Phase 2 batch 8: exercise coupon redemption guards, not only table shape.
+BEGIN;
+DO $$
+DECLARE
+  buyer_id BIGINT;
+  other_buyer_id BIGINT;
+  seller_id BIGINT;
+  store_id BIGINT;
+  order_id BIGINT;
+  seller_order_id BIGINT;
+  other_order_id BIGINT;
+  other_seller_order_id BIGINT;
+  coupon_id BIGINT;
+  rejected BOOLEAN;
+BEGIN
+  INSERT INTO shamaa_app.users(name,email,password_hash,created_at)
+  VALUES ('Coupon buyer','coupon-buyer@example.invalid','test-only',20)
+  RETURNING id INTO buyer_id;
+  INSERT INTO shamaa_app.users(name,email,password_hash,created_at)
+  VALUES ('Other coupon buyer','coupon-other@example.invalid','test-only',20)
+  RETURNING id INTO other_buyer_id;
+  INSERT INTO shamaa_app.users(name,email,password_hash,role,created_at)
+  VALUES ('Coupon seller','coupon-seller@example.invalid','test-only','seller',20)
+  RETURNING id INTO seller_id;
+  INSERT INTO shamaa_app.stores(owner_id,slug,name_ar,name_en,city,status,created_at)
+  VALUES (seller_id,'coupon-contract-store','متجر القسائم','Coupon contract store','Irbid','active',20)
+  RETURNING id INTO store_id;
+
+  INSERT INTO shamaa_app.orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
+    subtotal_fils,shipping_fils,total_fils,payment_method,created_at)
+  VALUES ('COUPON-VALID',buyer_id,'coupon-valid-key','coupon-valid-hash','Buyer','0790000000','Irbid',
+    'Coupon contract address',1000,0,1000,'cod',21)
+  RETURNING id INTO order_id;
+  INSERT INTO shamaa_app.seller_orders(order_id,store_id,subtotal_fils,shipping_fils,commission_fils,net_fils,updated_at)
+  VALUES (order_id,store_id,1000,0,0,1000,21)
+  RETURNING id INTO seller_order_id;
+
+  INSERT INTO shamaa_app.orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
+    subtotal_fils,shipping_fils,total_fils,payment_method,created_at)
+  VALUES ('COUPON-MISMATCH',other_buyer_id,'coupon-mismatch-key','coupon-mismatch-hash','Buyer','0790000000',
+    'Irbid','Coupon contract address',1000,0,1000,'cod',22)
+  RETURNING id INTO other_order_id;
+  INSERT INTO shamaa_app.seller_orders(order_id,store_id,subtotal_fils,shipping_fils,commission_fils,net_fils,updated_at)
+  VALUES (other_order_id,store_id,1000,0,0,1000,22)
+  RETURNING id INTO other_seller_order_id;
+
+  INSERT INTO shamaa_app.coupons(store_id,code,discount_type,discount_value,max_uses,
+    max_uses_per_buyer,used_count,created_at,updated_at)
+  VALUES (store_id,'SAVE10','percent',1000,2,1,1,20,20)
+  RETURNING id INTO coupon_id;
+
+  UPDATE shamaa_app.orders SET discount_fils=100 WHERE id=order_id;
+  UPDATE shamaa_app.seller_orders SET discount_fils=100 WHERE id=seller_order_id;
+  INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,
+    code,discount_fils,redeemed_at)
+  VALUES (coupon_id,order_id,seller_order_id,store_id,buyer_id,'SAVE10',100,21);
+
+  rejected := FALSE;
+  BEGIN
+    UPDATE shamaa_app.coupon_redemptions SET discount_fils=90 WHERE order_id=order_id;
+  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption UPDATE was not rejected'; END IF;
+
+  rejected := FALSE;
+  BEGIN
+    DELETE FROM shamaa_app.coupon_redemptions WHERE order_id=order_id;
+  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption DELETE was not rejected'; END IF;
+
+  UPDATE shamaa_app.orders SET discount_fils=90 WHERE id=other_order_id;
+  UPDATE shamaa_app.seller_orders SET discount_fils=90 WHERE id=other_seller_order_id;
+  rejected := FALSE;
+  BEGIN
+    INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,
+      code,discount_fils,redeemed_at)
+    VALUES (coupon_id,other_order_id,other_seller_order_id,store_id,other_buyer_id,'SAVE10',90,22);
+  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Mismatched coupon discount was accepted'; END IF;
+END $$;
+ROLLBACK;
+
