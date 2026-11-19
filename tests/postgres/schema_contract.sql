@@ -580,20 +580,20 @@ BEGIN
 
   rejected := FALSE;
   BEGIN
-    UPDATE shamaa_app.coupon_redemptions SET discount_fils=90 WHERE order_id=order_id;
+    UPDATE shamaa_app.coupon_redemptions AS redemption SET discount_fils=90 WHERE redemption.order_id=order_id;
   EXCEPTION WHEN raise_exception THEN rejected := TRUE;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption UPDATE was not rejected'; END IF;
 
   rejected := FALSE;
   BEGIN
-    DELETE FROM shamaa_app.coupon_redemptions WHERE order_id=order_id;
+    DELETE FROM shamaa_app.coupon_redemptions AS redemption WHERE redemption.order_id=order_id;
   EXCEPTION WHEN raise_exception THEN rejected := TRUE;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption DELETE was not rejected'; END IF;
 
   UPDATE shamaa_app.orders SET discount_fils=90 WHERE id=other_order_id;
-  UPDATE shamaa_app.seller_orders SET discount_fils=90 WHERE id=other_seller_order_id;
+  UPDATE shamaa_app.seller_orders SET discount_fils=80 WHERE id=other_seller_order_id;
   rejected := FALSE;
   BEGIN
     INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,
