@@ -387,34 +387,6 @@ class ReturnAdminDecision(Input):
     def normalize_note(cls, value):
         return _normalize_review_text(value, 1000)
 
-)
-    discount_type: Literal['percent','fixed']
-    discount_value: int = Field(ge=1, le=100000000000, strict=True)
-    minimum_subtotal_fils: int = Field(default=0, ge=0, le=100000000000, strict=True)
-    maximum_discount_fils: int | None = Field(default=None, ge=1, le=100000000000, strict=True)
-    starts_at: int | None = Field(default=None, ge=0, strict=True)
-    expires_at: int | None = Field(default=None, ge=0, strict=True)
-    max_uses: int | None = Field(default=None, ge=1, le=1000000000, strict=True)
-    max_uses_per_buyer: int = Field(default=1, ge=1, le=100, strict=True)
-    active: bool = True
-
-    @field_validator('code')
-    @classmethod
-    def normalize_code(cls, value):
-        value = value.strip().upper()
-        if not value.isascii():
-            raise ValueError('Coupon codes must use ASCII letters and numbers')
-        return value
-
-    @model_validator(mode='after')
-    def validate_coupon_rules(self):
-        if self.discount_type == 'percent' and self.discount_value > 10000:
-            raise ValueError('Percentage discounts cannot exceed 100 percent')
-        if self.expires_at is not None and self.starts_at is not None and self.expires_at <= self.starts_at:
-            raise ValueError('Coupon expiry must be later than its start')
-        return self
-
-
 class StatusChange(Input):
     status: Literal['confirmed','preparing','shipped','delivered','cancelled']
     expected_status: Literal['new','confirmed','preparing','shipped','delivered','cancelled']
