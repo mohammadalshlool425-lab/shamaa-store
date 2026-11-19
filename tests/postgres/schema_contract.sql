@@ -581,7 +581,7 @@ BEGIN
   rejected := FALSE;
   BEGIN
     UPDATE shamaa_app.coupon_redemptions AS redemption SET discount_fils=90 WHERE redemption.order_id=v_order_id;
-  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  EXCEPTION WHEN insufficient_privilege THEN rejected := TRUE;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption UPDATE was not rejected'; END IF;
 
