@@ -413,3 +413,64 @@ def upload_image(request: Request,file: UploadFile=File(...),user=Depends(seller
             p.unlink(missing_ok=True)
         raise
     return {'id':media_id,'url':f'/media/{media_id}/480.webp','duplicate':False}
+
+
+@router.get('/coupons')
+def list_coupons(request: Request,user=Depends(seller_user)):
+    with request.app.state.db.read() as c:
+        store = own_store(c,user)
+        rows = c.execute('''SELECT id,store_id,code,discount_type,discount_value,minimum_subtotal_fils,
+          maximum_discount_fils,starts_at,expires_at,max_uses,max_uses_per_buyer,used_count,active,created_at,updated_at
+          FROM coupons WHERE store_id=? ORDER BY id DESC LIMIT 100''',(store['id'],)).fetchall()
+    return {'coupons':[dict(row) for row in rows]}
+
+
+@router.post('/coupons',status_code=201)
+def create_coupon(body: schemas.CouponInput,request: Request,user=Depends(seller_user)):
+    throttle(request,'coupon_create',20,3600,str(user['id']))
+    try:
+        with request.app.state.db.transaction() as c:
+            store = own_store(c,user)
+            if store['status'] != 'active':
+                fail('store_pending',403)
+            data = body.model_dump()
+            stamp = now()
+            coupon_id = insert_id(c, '''INSERT INTO coupons(
+              store_id,code,discount_type,discount_value,minimum_subtotal_fils,maximum_discount_fils,
+              starts_at,expires_at,max_uses,max_uses_per_buyer,active,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+              store['id'],data['code'],data['discount_type'],data['discount_value'],
+              data['minimum_subtotal_fils'],data['maximum_discount_fils'],data['starts_at'],
+              data['expires_at'],data['max_uses'],data['max_uses_per_buyer'],
+              int(data['active']),stamp,stamp))
+            audit(c,user['id'],'coupon_created','coupon',coupon_id)
+            row = c.execute('SELECT * FROM coupons WHERE id=? AND store_id=?',(coupon_id,store['id'])).fetchone()
+    except DatabaseIntegrityError:
+        fail('coupon_code_exists',409)
+    return {'coupon':dict(row)}
+
+
+@router.put('/coupons/{coupon_id}')
+def update_coupon(coupon_id: int,body: schemas.CouponInput,request: Request,user=Depends(seller_user)):
+    try:
+        with request.app.state.db.transaction() as c:
+            store = own_store(c,user)
+            if store['status'] != 'active':
+                fail('store_pending',403)
+            existing = c.execute('SELECT * FROM coupons WHERE id=? AND store_id=?',(coupon_id,store['id'])).fetchone()
+            if not existing:
+                fail('not_found',404)
+            if body.max_uses is not None and body.max_uses < existing['used_count']:
+                fail('invalid_input',422)
+            data = body.model_dump()
+            c.execute('''UPDATE coupons SET code=?,discount_type=?,discount_value=?,minimum_subtotal_fils=?,
+              maximum_discount_fils=?,starts_at=?,expires_at=?,max_uses=?,max_uses_per_buyer=?,active=?,updated_at=?
+              WHERE id=? AND store_id=?''',(
+              data['code'],data['discount_type'],data['discount_value'],data['minimum_subtotal_fils'],
+              data['maximum_discount_fils'],data['starts_at'],data['expires_at'],data['max_uses'],
+              data['max_uses_per_buyer'],int(data['active']),now(),coupon_id,store['id']))
+            audit(c,user['id'],'coupon_updated','coupon',coupon_id)
+            row = c.execute('SELECT * FROM coupons WHERE id=? AND store_id=?',(coupon_id,store['id'])).fetchone()
+    except DatabaseIntegrityError:
+        fail('coupon_code_exists',409)
+    return {'coupon':dict(row)}
