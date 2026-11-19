@@ -1,4 +1,5 @@
 import json
+import re
 import unicodedata
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictInt, field_validator, model_validator
@@ -184,8 +185,29 @@ class Checkout(Input):
     address: str = Field(min_length=10, max_length=400)
     expected_total_fils: int = Field(ge=1, le=100000000000, strict=True)
     quote_hash: str = Field(min_length=64, max_length=64)
-    coupon_code: str | None = Field(default=None, min_length=3, max_length=32, pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{2,31}
+    coupon_code: str | None = Field(default=None, min_length=3, max_length=32)
 
+    @field_validator('coupon_code')
+    @classmethod
+    def normalize_checkout_coupon(cls, value):
+        if value is None:
+            return None
+        value = value.strip().upper()
+        if not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{2,31}', value):
+            raise ValueError('Invalid coupon code')
+        return value
+
+
+class CouponQuote(Input):
+    code: str = Field(min_length=3, max_length=32)
+
+    @field_validator('code')
+    @classmethod
+    def normalize_quote_coupon(cls, value):
+        value = value.strip().upper()
+        if not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{2,31}', value):
+            raise ValueError('Invalid coupon code')
+        return value
 
 class CouponInput(Input):
     code: str = Field(min_length=3, max_length=32, pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$')
