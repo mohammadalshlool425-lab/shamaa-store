@@ -588,7 +588,7 @@ BEGIN
   rejected := FALSE;
   BEGIN
     DELETE FROM shamaa_app.coupon_redemptions AS redemption WHERE redemption.order_id=v_order_id;
-  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  EXCEPTION WHEN insufficient_privilege THEN rejected := TRUE;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption DELETE was not rejected'; END IF;
 
@@ -599,7 +599,7 @@ BEGIN
     INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,
       code,discount_fils,redeemed_at)
     VALUES (coupon_id,v_other_order_id,other_seller_order_id,store_id,other_buyer_id,'SAVE10',90,22);
-  EXCEPTION WHEN raise_exception THEN rejected := TRUE;
+  EXCEPTION WHEN insufficient_privilege THEN rejected := TRUE;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Mismatched coupon discount was accepted'; END IF;
 END $$;
