@@ -111,7 +111,7 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
     if not re.fullmatch(r'[A-Za-z0-9_-]{16,100}',idempotency_key):
         fail('invalid_input',422)
     throttle(request,'checkout',30,3600,str(user['id']))
-    request_hash = canonical_hash(body.model_dump())
+    request_hash = canonical_hash(body.model_dump(exclude_none=True))
     settings = request.app.state.settings
     with request.app.state.db.transaction() as c:
         previous = c.execute('SELECT * FROM orders WHERE buyer_id=? AND idempotency_key=?',(user['id'],idempotency_key)).fetchone()
