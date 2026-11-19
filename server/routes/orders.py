@@ -4,7 +4,7 @@ import secrets
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
 from fastapi.responses import JSONResponse
-from ..commerce import (PRODUCT_SQL, PUBLIC_WHERE, canonical_hash, cart_quote, commission, commission_rate)
+from ..commerce import (PRODUCT_SQL, PUBLIC_WHERE, canonical_hash, cart_quote, coupon_quote, commission, commission_rate)
 from ..database import insert_id, now
 from ..errors import fail
 from .. import mail, schemas
@@ -33,9 +33,9 @@ def shipment_dict(c, row):
 
 
 def order_dict(c, row):
-    d = {k:row[k] for k in ('id','number','recipient','phone','city','address','subtotal_fils','shipping_fils','total_fils','payment_method','is_demo','created_at')}
+    d = {k:row[k] for k in ('id','number','recipient','phone','city','address','subtotal_fils','shipping_fils','discount_fils','total_fils','payment_method','is_demo','created_at')}
     d['shipments'] = [shipment_dict(c,r) for r in c.execute('SELECT * FROM seller_orders WHERE order_id=? ORDER BY id',(row['id'],))]
-    d['live_total_fils'] = sum(s['subtotal_fils']+s['shipping_fils'] for s in d['shipments'] if s['status']!='cancelled')
+    d['live_total_fils'] = sum(s['subtotal_fils']+s['shipping_fils']-s['discount_fils'] for s in d['shipments'] if s['status']!='cancelled')
     return d
 
 
@@ -43,6 +43,18 @@ def order_dict(c, row):
 def get_cart(request: Request,user=Depends(require_user)):
     with request.app.state.db.read() as c:
         return cart_quote(c,user['id'])
+
+
+@router.post('/coupon-quote')
+def preview_coupon(body: schemas.CouponQuote,request: Request,user=Depends(require_user)):
+    with request.app.state.db.read() as c:
+        quote = cart_quote(c,user['id'],strict=True)
+        if not quote['groups']:
+            fail('cart_empty',409)
+        result = coupon_quote(c,user['id'],quote,body.code)
+    return {'code':result['code'],'store_id':result['store_id'],'discount_fils':result['discount_fils'],
+            'subtotal_fils':quote['subtotal_fils'],'shipping_fils':quote['shipping_fils'],
+            'total_fils':result['total_fils']}
 
 
 @router.put('/cart')
@@ -110,15 +122,17 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
         quote = cart_quote(c,user['id'],strict=True)
         if not quote['groups']:
             fail('cart_empty',409)
-        if quote['total_fils']!=body.expected_total_fils or quote['quote_hash']!=body.quote_hash:
+        coupon = coupon_quote(c,user['id'],quote,body.coupon_code) if body.coupon_code else None
+        final_total = coupon['total_fils'] if coupon else quote['total_fils']
+        if final_total!=body.expected_total_fils or quote['quote_hash']!=body.quote_hash:
             fail('cart_changed',409)
         is_demo = not settings.production or any(g['is_demo'] for g in quote['groups'])
         if is_demo and settings.production:
             fail('demo_disabled',403)
         order_id = insert_id(c, '''INSERT INTO orders(number,buyer_id,idempotency_key,request_hash,recipient,phone,city,address,
-          subtotal_fils,shipping_fils,total_fils,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+          subtotal_fils,shipping_fils,discount_fils,total_fils,is_demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
           ('pending-'+secrets.token_hex(12),user['id'],idempotency_key,request_hash,body.recipient,body.phone,body.city,body.address,
-           quote['subtotal_fils'],quote['shipping_fils'],quote['total_fils'],bool(is_demo),now()))
+           quote['subtotal_fils'],quote['shipping_fils'],coupon['discount_fils'] if coupon else 0,final_total,bool(is_demo),now()))
         number = f'SH-{time.strftime("%Y",time.gmtime())}-{order_id:07}'
         c.execute('UPDATE orders SET number=? WHERE id=?',(number,order_id))
         for group in quote['groups']:
@@ -129,9 +143,18 @@ def checkout(body: schemas.Checkout,request: Request,tasks: BackgroundTasks,
                 amount = commission(item['line_total_fils'],bps)
                 items.append((item,bps,amount))
             commission_fils = sum(amount for _,_,amount in items)
-            sub = insert_id(c, '''INSERT INTO seller_orders(order_id,store_id,subtotal_fils,shipping_fils,commission_fils,net_fils,updated_at)
-              VALUES(?,?,?,?,?,?,?)''',(order_id,group['store_id'],group['subtotal_fils'],group['shipping_fils'],commission_fils,
-              group['subtotal_fils']+group['shipping_fils']-commission_fils,now()))
+            sub = insert_id(c, '''INSERT INTO seller_orders(order_id,store_id,subtotal_fils,shipping_fils,discount_fils,commission_fils,net_fils,updated_at)
+              VALUES(?,?,?,?,?,?,?,?)''',(order_id,group['store_id'],group['subtotal_fils'],group['shipping_fils'],
+              coupon['discount_fils'] if coupon and coupon['store_id']==group['store_id'] else 0,
+              commission_fils,group['subtotal_fils']+group['shipping_fils']-(coupon['discount_fils'] if coupon and coupon['store_id']==group['store_id'] else 0)-commission_fils,now()))
+            if coupon and coupon['store_id']==group['store_id']:
+                updated = c.execute('UPDATE coupons SET used_count=used_count+1,updated_at=? WHERE id=? AND active=TRUE AND (max_uses IS NULL OR used_count<max_uses)',
+                                    (now(),coupon['coupon_id']))
+                if updated.rowcount != 1:
+                    fail('coupon_unavailable',409)
+                insert_id(c, '''INSERT INTO coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,code,discount_fils,redeemed_at)
+                  VALUES(?,?,?,?,?,?,?,?)''',
+                  (coupon['coupon_id'],order_id,sub,group['store_id'],user['id'],coupon['code'],coupon['discount_fils'],now()))
             for item,bps,amount in items:
                 if item['variant_id'] is not None:
                     result = c.execute('''UPDATE product_variants SET stock=stock-?,version=version+1,updated_at=?
