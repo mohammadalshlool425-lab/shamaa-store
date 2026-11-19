@@ -187,7 +187,7 @@ class Checkout(Input):
 
 
 class CouponInput(Input):
-    code: str = Field(min_length=3, max_length=32, pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{2,31}
+    code: str = Field(min_length=3, max_length=32, pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$')
     discount_type: Literal['percent','fixed']
     discount_value: int = Field(ge=1, le=100000000000, strict=True)
     minimum_subtotal_fils: int = Field(default=0, ge=0, le=100000000000, strict=True)
