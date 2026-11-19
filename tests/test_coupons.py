@@ -73,3 +73,66 @@ def test_buyer_cannot_manage_seller_coupons(factory):
     buyer = factory.user()
     assert buyer['client'].get('/api/seller/coupons').status_code == 403
     assert buyer['client'].post('/api/seller/coupons', json=coupon_payload()).status_code == 403
+
+
+def test_coupon_preview_and_checkout_discount_only_its_store(factory):
+    seller = factory.seller(shipping=2500)
+    other = factory.seller(shipping=3500)
+    buyer = factory.user()
+    product = factory.product(seller, price=10000)
+    other_product = factory.product(other, price=20000, color='blue')
+    created = seller['client'].post('/api/seller/coupons', json=coupon_payload(
+        discount_type='percent', discount_value=1000, maximum_discount_fils=1500))
+    assert created.status_code == 201, created.text
+    factory.cart(buyer, product, 1)
+    factory.cart(buyer, other_product, 1)
+    preview = buyer['client'].post('/api/coupon-quote', json={'code':'SAVE10'})
+    assert preview.status_code == 200, preview.text
+    quote = buyer['client'].get('/api/cart').json()
+    assert preview.json()['discount_fils'] == 1000
+    assert preview.json()['total_fils'] == quote['total_fils'] - 1000
+    response, _, _ = factory.checkout(buyer, quote=quote, expected_total_fils=quote['total_fils']-1000,
+                                      coupon_code='save10')
+    assert response.status_code == 201, response.text
+    order = response.json()['order']
+    assert order['discount_fils'] == 1000
+    by_store = {shipment['store_id']:shipment for shipment in order['shipments']}
+    assert by_store[seller['store_id']]['discount_fils'] == 1000
+    assert by_store[other['store_id']]['discount_fils'] == 0
+    with factory.db.read() as c:
+        redemption = c.execute('SELECT * FROM coupon_redemptions WHERE order_id=?',(order['id'],)).fetchone()
+        saved_coupon = c.execute('SELECT used_count FROM coupons WHERE id=?',(created.json()['coupon']['id'],)).fetchone()
+    assert redemption['discount_fils'] == 1000
+    assert saved_coupon['used_count'] == 1
+
+
+def test_coupon_checkout_rejects_coupon_from_store_not_in_cart(factory):
+    seller = factory.seller()
+    other = factory.seller()
+    buyer = factory.user()
+    product = factory.product(seller)
+    created = other['client'].post('/api/seller/coupons', json=coupon_payload())
+    assert created.status_code == 201, created.text
+    quote = factory.cart(buyer, product)
+    preview = buyer['client'].post('/api/coupon-quote', json={'code':'SAVE10'})
+    assert preview.status_code == 409
+    response, _, _ = factory.checkout(buyer, quote=quote, expected_total_fils=quote['total_fils'], coupon_code='SAVE10')
+    assert response.status_code == 409
+
+
+def test_coupon_usage_limit_is_enforced_at_checkout(factory):
+    seller = factory.seller()
+    buyer = factory.user()
+    product = factory.product(seller, price=10000)
+    created = seller['client'].post('/api/seller/coupons', json=coupon_payload(max_uses=1))
+    assert created.status_code == 201, created.text
+    factory.cart(buyer, product)
+    quote = buyer['client'].get('/api/cart').json()
+    preview = buyer['client'].post('/api/coupon-quote', json={'code':'SAVE10'})
+    assert preview.status_code == 200
+    response, _, _ = factory.checkout(buyer, quote=quote, expected_total_fils=preview.json()['total_fils'], coupon_code='SAVE10')
+    assert response.status_code == 201, response.text
+    another = factory.user()
+    factory.cart(another, product)
+    second_preview = another['client'].post('/api/coupon-quote', json={'code':'SAVE10'})
+    assert second_preview.status_code == 409
