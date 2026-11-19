@@ -68,6 +68,41 @@ def commission(amount_fils, bps):
     return (amount_fils * bps + 5000) // 10000
 
 
+def coupon_quote(c, user_id, quote, code):
+    """Validate one store coupon against a freshly calculated cart quote."""
+    import re
+    import time
+    normalized = str(code or '').strip().upper()
+    if not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{2,31}', normalized):
+        fail('coupon_invalid', 422)
+    coupon = c.execute('SELECT * FROM coupons WHERE code=? AND active=TRUE', (normalized,)).fetchone()
+    if not coupon:
+        fail('coupon_invalid', 422)
+    stamp = int(time.time())
+    if ((coupon['starts_at'] is not None and coupon['starts_at'] > stamp)
+        or (coupon['expires_at'] is not None and coupon['expires_at'] <= stamp)
+        or (coupon['max_uses'] is not None and coupon['used_count'] >= coupon['max_uses'])):
+        fail('coupon_unavailable', 409)
+    group = next((g for g in quote['groups'] if g['store_id'] == coupon['store_id']), None)
+    if not group or group['subtotal_fils'] < coupon['minimum_subtotal_fils']:
+        fail('coupon_not_applicable', 409)
+    buyer_uses = c.execute('SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id=? AND buyer_id=?',
+                           (coupon['id'], user_id)).fetchone()[0]
+    if buyer_uses >= coupon['max_uses_per_buyer']:
+        fail('coupon_limit_reached', 409)
+    if coupon['discount_type'] == 'percent':
+        discount = group['subtotal_fils'] * coupon['discount_value'] // 10000
+    else:
+        discount = min(group['subtotal_fils'], coupon['discount_value'])
+    if coupon['maximum_discount_fils'] is not None:
+        discount = min(discount, coupon['maximum_discount_fils'])
+    if discount <= 0:
+        fail('coupon_not_applicable', 409)
+    return {'coupon_id':coupon['id'], 'store_id':coupon['store_id'], 'code':normalized,
+            'discount_fils':discount, 'store_subtotal_fils':group['subtotal_fils'],
+            'total_fils':quote['total_fils']-discount}
+
+
 def cart_quote(c, user_id, strict=False):
     rows = c.execute(
         "SELECT product_rows.*, ca.quantity AS cart_quantity, ca.variant_id AS cart_variant_id, "
