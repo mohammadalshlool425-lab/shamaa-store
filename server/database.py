@@ -334,7 +334,7 @@ class Database:
                 migration = MIGRATION_DIR / '0011_coupon_order_totals.sql'
                 c.execute('PRAGMA foreign_keys=OFF')
                 try:
-                    c.executescript('BEGIN IMMEDIATE;\\n' + migration.read_text(encoding='utf-8'))
+                    c.executescript('BEGIN IMMEDIATE;\n' + migration.read_text(encoding='utf-8'))
                     violations = c.execute('PRAGMA foreign_key_check').fetchall()
                     if violations:
                         raise RuntimeError('Coupon totals migration would leave broken foreign keys.')
