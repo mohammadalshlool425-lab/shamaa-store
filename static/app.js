@@ -837,7 +837,7 @@ document.addEventListener('submit',async e=>{
    else if(form.id==='coupon-form'){
    const rawDiscount=Number(v('discount_value')),type=v('discount_type');
    if(!Number.isFinite(rawDiscount)||rawDiscount<=0)throw new Error(tr('أدخل قيمة خصم صحيحة.','Enter a valid discount value.'));
-   if(type==='percent'&&(rawDiscount>100||!/^\d{1,3}(\\.\d{1,2})?$/.test(v('discount_value'))))throw new Error(tr('النسبة يجب أن تكون بين 0.01% و100% وبمنزلتين عشريتين كحد أقصى.','Percentage must be 0.01–100%, with at most two decimal places.'));
+   if(type==='percent'&&(rawDiscount>100||!/^\d{1,3}(\.\d{1,2})?$/.test(v('discount_value'))))throw new Error(tr('النسبة يجب أن تكون بين 0.01% و100% وبمنزلتين عشريتين كحد أقصى.','Percentage must be 0.01–100%, with at most two decimal places.'));
    const toTimestamp=name=>{const raw=v(name);if(!raw)return null;const stamp=Math.floor(new Date(raw).getTime()/1000);if(!Number.isFinite(stamp))throw new Error(tr('أدخل تاريخًا صحيحًا.','Enter a valid date.'));return stamp;};
    const starts=toTimestamp('starts_at'),expires=toTimestamp('expires_at');
    if(starts!==null&&expires!==null&&expires<=starts)throw new Error(tr('تاريخ الانتهاء يجب أن يأتي بعد البداية.','Expiry must be later than the start.'));
