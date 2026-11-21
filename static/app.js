@@ -66,7 +66,7 @@ function couponForm(c=null){
  <div class="form-row"><div class="form-field"><label for="starts_at">${tr('يبدأ في (اختياري)','Starts at (optional)')}</label><input id="starts_at" name="starts_at" type="datetime-local" value="${localDateTime(c?.starts_at)}"></div>
  <div class="form-field"><label for="expires_at">${tr('ينتهي في (اختياري)','Expires at (optional)')}</label><input id="expires_at" name="expires_at" type="datetime-local" value="${localDateTime(c?.expires_at)}"></div></div>
  <div class="form-row"><div class="form-field"><label for="max_uses_per_buyer">${tr('الحد لكل مشترٍ','Uses per buyer')}</label><input id="max_uses_per_buyer" name="max_uses_per_buyer" type="number" min="1" max="100" step="1" required value="${c?.max_uses_per_buyer??1}"></div>
- <label class="check-row"><input type="checkbox" name="active" ${c?.active===false?'':'checked'}> ${tr('القسيمة مفعّلة','Coupon is active')}</label></div>
+ <label class="check-row"><input type="checkbox" name="active" ${c&&!c.active?'':'checked'}> ${tr('القسيمة مفعّلة','Coupon is active')}</label></div>
  <p class="small-text">${tr('الخصم يموله المتجر ويُطبّق على منتجات هذا المتجر فقط. النسبة حتى 100%، والمبالغ بالدينار الأردني.','The store funds the discount and it applies only to this store’s items. Percentages are capped at 100%; amounts are in JOD.')}</p>
  <div class="form-actions"><button class="btn btn-primary" type="submit">${c?tr('حفظ التعديلات','Save changes'):tr('إنشاء القسيمة','Create coupon')}</button></div></form>`;
 }
