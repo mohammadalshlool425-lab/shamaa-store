@@ -125,6 +125,28 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await login(admin,'store_admin',{destination:'/admin?tab=stores'});
  const storeCard=admin.locator('.review-card').filter({hasText:storeName});
  await storeCard.locator('button[value=approve]').click();await expect(storeCard.locator('.pill')).toHaveText('نشط');
+ // Seller coupon lifecycle: create, edit, then disable without deleting its audit history.
+ await seller.goto('/seller?tab=coupons');
+ await expect(seller.locator('.dashboard-nav')).toContainText('القسائم');
+ await seller.locator('[data-action=new-coupon]').click();
+ await seller.locator('#coupon-form #code').fill('BROWSER10');
+ await seller.locator('#coupon-form #discount_value').fill('10');
+ await seller.locator('#coupon-form #minimum_subtotal').fill('5');
+ await seller.locator('#coupon-form #max_uses').fill('25');
+ await seller.locator('#coupon-form button[type=submit]').click();
+ let couponRow=seller.locator('tbody tr').filter({hasText:'BROWSER10'});
+ await expect(couponRow).toContainText('10%');
+ await couponRow.locator('[data-action=edit-coupon]').click();
+ await seller.locator('#coupon-form #discount_value').fill('12.5');
+ await seller.locator('#coupon-form #max_uses').fill('30');
+ await seller.locator('#coupon-form button[type=submit]').click();
+ couponRow=seller.locator('tbody tr').filter({hasText:'BROWSER10'});
+ await expect(couponRow).toContainText('12.5%');
+ await couponRow.locator('[data-action=disable-coupon]').click();
+ await seller.locator('#confirm-action').click();
+ couponRow=seller.locator('tbody tr').filter({hasText:'BROWSER10'});
+ await expect(couponRow.locator('.pill.inactive')).toBeVisible();
+ await expect(couponRow.locator('[data-action=disable-coupon]')).toHaveCount(0);
  await seller.goto('/seller?tab=products');await seller.locator('[data-action=new-product]').first().click();
  await seller.locator('#title_ar').fill('مصباح الاختبار المعزول');await seller.locator('#title_en').fill('Isolated test lamp');
  await seller.locator('#description_ar').fill('وصف منتج مولد لغرض اختبار التدفق الفعلي.');
