@@ -1,3 +1,5 @@
+import json
+from typing import Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from ..commerce import PRODUCT_SQL, product_dict, store_dict
 from ..database import now
@@ -72,7 +74,29 @@ def review_store(store_id: int,body: schemas.Review,request: Request,tasks: Back
 def products(request: Request,user=Depends(admin_user)):
     with request.app.state.db.read() as c:
         rows = c.execute(PRODUCT_SQL+' ORDER BY p.id DESC LIMIT 200').fetchall()
-    return {'products':[product_dict(r,True) for r in rows]}
+        result = []
+        for row in rows:
+            item = product_dict(row,True)
+            gallery = c.execute('''SELECT pi.media_id,pi.position FROM product_images pi
+              JOIN media m ON m.id=pi.media_id WHERE pi.product_id=? ORDER BY pi.position,pi.id''',
+                                (row['id'],)).fetchall()
+            if not gallery and row['media_id']:
+                gallery = [{'media_id':row['media_id'],'position':0}]
+            item['images'] = [
+                {'media_id':image['media_id'],'position':image['position'],
+                 'url':f"/media/{image['media_id']}/480.webp"}
+                for image in gallery
+            ]
+            variants = c.execute('''SELECT sku,attributes_json,price_fils,compare_at_fils,stock,active
+              FROM product_variants WHERE product_id=? ORDER BY id''',(row['id'],)).fetchall()
+            item['variants'] = [
+                {'sku':variant['sku'],'attributes':json.loads(variant['attributes_json']),
+                 'price_fils':variant['price_fils'],'compare_at_fils':variant['compare_at_fils'],
+                 'stock':variant['stock'],'active':bool(variant['active'])}
+                for variant in variants
+            ]
+            result.append(item)
+    return {'products':result}
 
 
 @router.post('/products/{product_id}/review')
@@ -119,7 +143,7 @@ def settings(request: Request,user=Depends(admin_user)):
         result['commission_bps'] = int(result['commission_bps'])
         # Private settings only: public bootstrap deliberately omits commission overrides.
         result['category_commissions'] = [dict(r) for r in c.execute(
-            'SELECT id,name_ar,name_en,parent_id,commission_bps FROM categories ORDER BY rowid')]
+            'SELECT id,name_ar,name_en,parent_id,commission_bps FROM categories ORDER BY id')]
     return result
 
 
@@ -157,3 +181,101 @@ def ledger(request: Request,user=Depends(admin_user)):
     with request.app.state.db.read() as c:
         rows = c.execute('SELECT * FROM ledger ORDER BY id DESC LIMIT 200').fetchall()
     return {'entries':[dict(r) for r in rows]}
+
+
+
+@router.get('/reviews')
+def review_queue(request: Request,
+                 status: Literal['pending','approved','rejected'] = 'pending',
+                 user=Depends(admin_user)):
+    with request.app.state.db.read() as c:
+        rows = c.execute(
+            """SELECT r.id,r.order_item_id,r.product_id,r.seller_order_id,
+                      r.rating,r.body,r.status,r.moderation_note,r.created_at,
+                      oi.title_ar,oi.title_en,oi.variant_sku,
+                      o.number AS order_number
+                 FROM reviews r
+                 JOIN order_items oi ON oi.id=r.order_item_id
+                 JOIN seller_orders so ON so.id=r.seller_order_id
+                 JOIN orders o ON o.id=so.order_id
+                WHERE r.status=?
+                ORDER BY r.created_at DESC,r.id DESC LIMIT 200""",
+            (status,),
+        ).fetchall()
+    return {'reviews':[dict(row) for row in rows]}
+
+
+@router.post('/reviews/{review_id}/moderate')
+def moderate_review(review_id: int,body: schemas.Review,request: Request,
+                    user=Depends(admin_user)):
+    with request.app.state.db.transaction() as c:
+        review = c.execute(
+            "SELECT buyer_id,status FROM reviews WHERE id=?",
+            (review_id,),
+        ).fetchone()
+        if not review:
+            fail('not_found',404)
+        if review['status'] != 'pending':
+            fail('invalid_status',409)
+        status = 'approved' if body.approved else 'rejected'
+        moderated = now()
+        changed = c.execute(
+            """UPDATE reviews SET status=?,moderation_note=?,moderated_by=?,
+                      moderated_at=?,updated_at=? WHERE id=? AND status='pending'""",
+            (status,body.note,user['id'],moderated,moderated,review_id),
+        )
+        if changed.rowcount != 1:
+            fail('invalid_status',409)
+        audit(c,user['id'],'review_'+status,'review',review_id,body.note)
+        c.execute(
+            """INSERT INTO notifications(user_id,kind,body_ar,body_en,created_at)
+               VALUES(?,'review',?,?,?)""",
+            (review['buyer_id'],
+             'تمت مراجعة تقييمك. افتح صفحة المنتج للاطلاع على حالته.',
+             'Your review has been moderated. Check the product page for its status.',
+             moderated),
+        )
+    return {'ok':True,'status':status}
+
+
+@router.get('/review-reports')
+def review_report_queue(request: Request,user=Depends(admin_user)):
+    with request.app.state.db.read() as c:
+        rows = c.execute(
+            """SELECT rr.id,rr.review_id,rr.reporter_id,rr.reason,rr.details,
+                      rr.status,rr.resolution_note,rr.created_at,
+                      r.rating,r.body,r.status AS review_status,
+                      r.product_id,oi.title_ar,oi.title_en,o.number AS order_number
+                 FROM review_reports rr
+                 JOIN reviews r ON r.id=rr.review_id
+                 JOIN order_items oi ON oi.id=r.order_item_id
+                 JOIN seller_orders so ON so.id=r.seller_order_id
+                 JOIN orders o ON o.id=so.order_id
+                WHERE rr.status='open'
+                ORDER BY rr.created_at ASC,rr.id ASC LIMIT 200"""
+        ).fetchall()
+    return {'reports':[dict(row) for row in rows]}
+
+
+@router.post('/review-reports/{report_id}/resolve')
+def resolve_review_report(report_id: int,body: schemas.ReviewReportResolution,
+                          request: Request,user=Depends(admin_user)):
+    with request.app.state.db.transaction() as c:
+        report = c.execute(
+            "SELECT status FROM review_reports WHERE id=?",
+            (report_id,),
+        ).fetchone()
+        if not report:
+            fail('not_found',404)
+        if report['status'] != 'open':
+            fail('invalid_status',409)
+        resolved = now()
+        changed = c.execute(
+            """UPDATE review_reports SET status=?,resolution_note=?,
+                      resolved_by=?,resolved_at=? WHERE id=? AND status='open'""",
+            (body.status,body.note,user['id'],resolved,report_id),
+        )
+        if changed.rowcount != 1:
+            fail('invalid_status',409)
+        audit(c,user['id'],'review_report_'+body.status,'review_report',report_id,body.note)
+    return {'ok':True,'status':body.status}

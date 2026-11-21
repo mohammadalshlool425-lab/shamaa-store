@@ -5,6 +5,7 @@ import secrets
 import time
 from threading import BoundedSemaphore
 from cryptography.fernet import Fernet
+from contextlib import nullcontext
 from fastapi import Depends, Request
 import pyotp
 from .database import now
@@ -63,19 +64,29 @@ def verify_totp(conn, user, code, settings):
     return False
 
 
+def trusted_operation(database, operation, **context):
+    """Return a fixed internal PostgreSQL operation scope; SQLite remains unchanged."""
+    factory = getattr(database, "system_operation", None)
+    return factory(operation, **context) if factory is not None else nullcontext()
+
+
 def throttle(request, scope, limit=10, window=300, identifier=None):
     ip = request.client.host if request.client else 'local'
     key = digest(scope + ':' + (identifier if identifier is not None else ip))
     t = now()
-    with request.app.state.db.transaction() as c:
-        c.execute('DELETE FROM rate_limits WHERE window_start<?', (t - 86400,))
-        row = c.execute('SELECT * FROM rate_limits WHERE bucket=?', (key,)).fetchone()
-        if row and row['window_start'] + window > t:
-            if row['count'] >= limit:
+    with trusted_operation(request.app.state.db, "rate_limit.consume", bucket=key):
+        with request.app.state.db.transaction() as c:
+            row = c.execute('''INSERT INTO rate_limits(bucket,window_start,count) VALUES(?,?,1)
+              ON CONFLICT(bucket) DO UPDATE SET
+                window_start=CASE WHEN rate_limits.window_start + ? <= ? THEN excluded.window_start
+                                  ELSE rate_limits.window_start END,
+                count=CASE WHEN rate_limits.window_start + ? <= ? THEN 1
+                           ELSE rate_limits.count + 1 END
+              RETURNING count''', (key, t, window, t, window, t)).fetchone()
+            # The upsert serializes concurrent requests on this bucket. Raising inside
+            # the transaction rolls back rejected increments, keeping count at the limit.
+            if row['count'] > limit:
                 fail('rate_limit', 429)
-            c.execute('UPDATE rate_limits SET count=count+1 WHERE bucket=?', (key,))
-        else:
-            c.execute('INSERT OR REPLACE INTO rate_limits VALUES(?,?,1)', (key, t))
 
 
 def optional_user(request: Request):
@@ -87,8 +98,12 @@ def optional_user(request: Request):
         with request.app.state.db.read() as c:
             row = c.execute('''SELECT u.*,s.token_hash AS session_id,s.csrf_token,s.mfa_at,s.created_at AS session_created
               FROM sessions s JOIN users u ON u.id=s.user_id
-              WHERE s.token_hash=? AND s.expires_at>? AND u.active=1''', (digest(token), now())).fetchone()
+              WHERE s.token_hash=? AND s.expires_at>? AND u.active=TRUE''', (digest(token), now())).fetchone()
             user = dict(row) if row else None
+            if user:
+                bind_identity = getattr(request.app.state.db, "bind_request_user", None)
+                if bind_identity is not None:
+                    bind_identity(user["id"])
     request.state.user = user
     return user
 

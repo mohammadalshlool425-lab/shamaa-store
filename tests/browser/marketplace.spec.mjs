@@ -10,7 +10,7 @@ async function login(page,role,{destination='/account'}={}){
  const u=credentials()[role];await page.goto('/?lang=ar');await ready(page);
  await page.locator('.account-link').click();
  await page.locator('#email').fill(u.email);await page.locator('#password').fill(u.password);
- if(role==='admin'){
+ if(u.secret){
   await page.locator('#auth-form details summary').click();
   const code=execFileSync(PY,['-c','import pyotp,sys;print(pyotp.TOTP(sys.stdin.read()).now())'],{input:u.secret,encoding:'utf8'}).trim();
   await page.locator('#otp').fill(code);
@@ -20,7 +20,17 @@ async function login(page,role,{destination='/account'}={}){
  if(destination!=='/account')await page.goto(destination);
  return u;
 }
-async function assertNoOverflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
+async function assertNoOverflow(page){
+ const metrics=await page.evaluate(()=>{
+  const viewport=innerWidth;
+  const offenders=[...document.querySelectorAll('body *')].map(el=>{
+   const r=el.getBoundingClientRect(),style=getComputedStyle(el);
+   return {tag:el.tagName,selector:(el.id?'#'+el.id:'')+(typeof el.className==='string'&&el.className?'.'+el.className.trim().split(/\\s+/).join('.'):''),left:Math.round(r.left),right:Math.round(r.right),width:Math.round(r.width),position:style.position};
+  }).filter(x=>x.right>viewport+1||x.left< -1).sort((a,b)=>b.right-a.right).slice(0,8);
+  return {viewport,documentWidth:document.documentElement.scrollWidth,offenders};
+ });
+ expect(metrics.documentWidth<=metrics.viewport,JSON.stringify(metrics)).toBe(true);
+}
 async function accessible(page){
  const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']).analyze();
  expect(results.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);
@@ -32,7 +42,15 @@ test('Arabic/English storefront, real search, stores, saved items and keyboard d
  await expect(page.locator('html')).toHaveAttribute('dir','rtl');
  await expect(page.locator('.product-card')).toHaveCount(8);
  await page.locator('.product-card').first().scrollIntoViewIfNeeded();
- await page.evaluate(()=>Promise.all([...document.querySelectorAll('.product-card img')].slice(0,4).map(i=>i.decode())));
+ await page.evaluate(async()=>{
+  const images=[...document.querySelectorAll('.product-card img')].slice(0,4);
+  for(const image of images){
+   image.loading='eager';
+   if(!image.complete)await new Promise((resolve,reject)=>{image.addEventListener('load',resolve,{once:true});image.addEventListener('error',()=>reject(new Error('Could not load '+image.currentSrc)),{once:true});});
+   if(!image.naturalWidth)throw new Error('Image has no decoded pixels: '+image.currentSrc);
+   await image.decode();
+  }
+ });
  await accessible(page);
  await page.locator('.product-card [data-action=favorite]').first().click();
  await page.goto('/favorites');await expect(page.locator('.product-card')).toHaveCount(1);
@@ -60,6 +78,7 @@ test('phone layout has no overflow and the two-store guest bag becomes a persist
  await page.locator('[data-action=add-cart][data-id="1"]').click();
  await expect(page.locator('#cart-count')).toHaveText('١');
  await page.locator('[data-action=add-cart][data-id="4"]').click();
+ await expect(page.locator('#cart-count')).toHaveText('٢');
  await page.goto('/cart');await expect(page.locator('.cart-group')).toHaveCount(2);await assertNoOverflow(page);
  await page.reload();await expect(page.locator('.cart-group')).toHaveCount(2);
  await page.locator('[data-action=checkout]').click();
@@ -75,6 +94,19 @@ test('phone layout has no overflow and the two-store guest bag becomes a persist
  expect(result.order.shipments).toHaveLength(2);expect(result.order.total_fils).toBe(75000);
  await expect(page).toHaveURL(/\/orders$/);await expect(page.locator('.order-card')).toHaveCount(1);
  await page.reload();await expect(page.locator('.order-card')).toHaveCount(1);await assertNoOverflow(page);
+ await page.locator('[data-action=message-shipment]').first().click();
+ const messageBody='<script>window.__shamaa_message_xss=1</script> استفسار حول الشحنة';
+ await page.locator('#conversation-start-body').fill(messageBody);
+ const messageResponse=page.waitForResponse(r=>r.url().endsWith('/api/conversations')&&r.request().method()==='POST');
+ await page.locator('#conversation-start-form button[type=submit]').click();
+ const messageResult=await messageResponse;
+ expect(messageResult.status()).toBe(201);
+ await expect(page).toHaveURL(/\/messages\?conversation=\d+/);
+ await expect(page.locator('.message-body')).toHaveText(messageBody);
+ await expect(page.locator('#message-feed script')).toHaveCount(0);
+ expect(await page.evaluate(()=>window.__shamaa_message_xss)).toBeUndefined();
+ await assertNoOverflow(page);await accessible(page);
+ await page.goto('/orders');await expect(page.locator('.order-card')).toHaveCount(1);
  await page.locator('[data-action=cancel-order]').first().click();await page.locator('#confirm-action').click();
  await expect(page.locator('.shipment .pill.cancelled')).toHaveCount(1);
  await accessible(page);
@@ -90,7 +122,7 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await seller.locator('#city').selectOption('irbid');await seller.locator('#store-form button[type=submit]').click();
  await expect(seller.locator('.notice.warn strong')).toContainText('قيد المراجعة');
  const adminContext=await browser.newContext({locale:'ar-JO'});const admin=await adminContext.newPage();
- await login(admin,'admin',{destination:'/admin?tab=stores'});
+ await login(admin,'store_admin',{destination:'/admin?tab=stores'});
  const storeCard=admin.locator('.review-card').filter({hasText:storeName});
  await storeCard.locator('button[value=approve]').click();await expect(storeCard.locator('.pill')).toHaveText('نشط');
  await seller.goto('/seller?tab=products');await seller.locator('[data-action=new-product]').first().click();
@@ -99,14 +131,81 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await seller.locator('#description_en').fill('Generated product details for testing a real application flow.');
  await seller.locator('#sku').fill('GENERATED-LAMP');await seller.locator('#price').fill('17.125');await seller.locator('#stock').fill('4');
  await seller.locator('#product-image').setInputFiles('data/browser-tests/product.png');
+ const extraImage=await seller.evaluate(()=>{
+  const canvas=document.createElement('canvas');canvas.width=48;canvas.height=48;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#315b42';ctx.fillRect(0,0,48,48);
+  ctx.fillStyle='#e8c78d';ctx.fillRect(8,8,32,32);
+  return canvas.toDataURL('image/png').split(',')[1];
+ });
+ await seller.locator('#gallery-images').setInputFiles([{
+  name:'extra-gallery-image.png',mimeType:'image/png',buffer:Buffer.from(extraImage,'base64')
+ }]);
  await seller.locator('#product-form button[type=submit]').click();
  await expect(seller.locator('tbody .pill')).toHaveText('قيد المراجعة');
  await admin.goto('/admin?tab=products');const product=admin.locator('.review-card').filter({hasText:'Isolated test lamp'});
+ await expect(product.locator('.review-gallery a')).toHaveCount(2);
  await product.locator('button[value=approve]').click();await expect(product.locator('.pill')).toHaveText('نشط');
  await seller.reload();await expect(seller.locator('tbody .pill')).toHaveText('نشط');
  await seller.locator('[data-action=stock]').click();await seller.locator('#new-stock').fill('7');await seller.locator('#stock-form button[type=submit]').click();
  await expect(seller.locator('tbody tr td').nth(3)).toHaveText('٧');
+
+ // Configure two physical variants with independent SKUs, prices and stock.
+ await seller.locator('button[data-action=variants]').click();
+ await seller.locator('#variants-form [data-action=add-variant-row]').click();
+ await seller.locator('#variants-form [data-action=add-variant-row]').click();
+ const variantRows=seller.locator('.variant-editor-row');
+ await expect(variantRows).toHaveCount(2);
+ await variantRows.nth(0).locator('[name=variant_sku]').fill('BROWSER-LAMP-WARM');
+ await variantRows.nth(0).locator('[name=variant_attributes]').fill('اللون=دافئ; المقاس=صغير');
+ await variantRows.nth(0).locator('[name=variant_price]').fill('17.125');
+ await variantRows.nth(0).locator('[name=variant_stock]').fill('3');
+ await variantRows.nth(1).locator('[name=variant_sku]').fill('BROWSER-LAMP-COOL');
+ await variantRows.nth(1).locator('[name=variant_attributes]').fill('اللون=بارد; المقاس=صغير');
+ await variantRows.nth(1).locator('[name=variant_price]').fill('18.125');
+ await variantRows.nth(1).locator('[name=variant_stock]').fill('4');
+ const variantSave=seller.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname.includes('/variants'),{timeout:15000});
+ await seller.locator('#variants-form button[type=submit]').click();
+ const variantResult=await(await variantSave).json();
+ expect(variantResult.status).toBe('pending');
+ const sellerVariantRow=seller.locator('tbody tr').filter({hasText:'GENERATED-LAMP'});
+ await expect(sellerVariantRow.locator('.pill')).toHaveText('قيد المراجعة');
+
+ await admin.goto('/admin?tab=products');
+ const variantProduct=admin.locator('.review-card').filter({hasText:'Isolated test lamp'});
+ await expect(variantProduct).toContainText('BROWSER-LAMP-WARM');
+ await expect(variantProduct).toContainText('BROWSER-LAMP-COOL');
+ await variantProduct.locator('button[value=approve]').click();
+ await expect(variantProduct.locator('.pill')).toHaveText('نشط');
+
+ const buyerContext=await browser.newContext({locale:'ar-JO'});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'buyer',{destination:'/store/isolated-browser-store'});
+ await buyer.locator('.product-card .product-name').click();
+ await buyer.locator('#detail-variant').selectOption({index:1});
+ await expect(buyer.locator('#variant-price-info')).toContainText('١٧٫١٢٥');
+ const firstCartSave=buyer.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname==='/api/cart');
+ await buyer.locator('[data-action=detail-add]').click();
+ await firstCartSave;
+ await expect(buyer.locator('#cart-count')).toHaveText('١');
+ await buyer.locator('#detail-variant').selectOption({index:2});
+ await expect(buyer.locator('#variant-price-info')).toContainText('١٨٫١٢٥');
+ const secondCartSave=buyer.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname==='/api/cart');
+ await buyer.locator('[data-action=detail-add]').click();
+ await secondCartSave;
+ await expect(buyer.locator('#cart-count')).toHaveText('٢');
+ await buyer.goto('/cart');
+ await expect(buyer.locator('.cart-item')).toHaveCount(2);
+ await expect(buyer.locator('.cart-item').filter({hasText:'دافئ'})).toHaveCount(1);
+ await expect(buyer.locator('.cart-item').filter({hasText:'بارد'})).toHaveCount(1);
+ await accessible(buyer);
+ await buyerContext.close();
+
  await seller.goto('/store/isolated-browser-store');await expect(seller.locator('.product-card')).toHaveCount(1);
+ await seller.locator('.product-card .product-name').click();
+ await expect(seller.locator('.detail-thumbnails button')).toHaveCount(2);
+ const primarySrc=await seller.locator('#detail-image').getAttribute('src');
+ await seller.locator('.detail-thumbnails button').nth(1).click();
+ await expect(seller.locator('#detail-image')).not.toHaveAttribute('src',primarySrc);
  await accessible(seller);
  await admin.goto('/admin?tab=settings');await expect(admin.locator('#commission-percent')).toHaveValue('5');await accessible(admin);
  await admin.locator('#category-commission-id').selectOption('home');await expect(admin.locator('#category-percent')).toHaveValue('');
@@ -116,6 +215,145 @@ test('store onboarding, actual admin MFA review, image upload, product approval 
  await admin.locator('#category-commission-id').selectOption('audio');await expect(admin.locator('#category-percent')).toHaveValue('');
  await admin.locator('#category-commission-id').selectOption('home');await expect(admin.locator('#category-percent')).toHaveValue('7.25');
  await context.close();await adminContext.close();
+});
+
+test('private case history page is responsive, bilingual and accessible',async({page})=>{
+ test.setTimeout(45000);page.setDefaultTimeout(6000);page.setDefaultNavigationTimeout(10000);
+ await page.setViewportSize({width:390,height:844});
+ const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
+ await test.step('authenticate the buyer',async()=>{await login(page,'buyer');});
+ await test.step('verify participant API access',async()=>{
+  const response=await page.request.get('/api/cases',{timeout:6000});
+  const body=await response.text();
+  console.log('case API status:',response.status());
+  expect(response.status(),body.slice(0,500)).toBe(200);
+  expect(JSON.parse(body).cases).toEqual([]);
+ });
+ await test.step('render the private case page',async()=>{
+  await page.goto('/cases',{waitUntil:'domcontentloaded',timeout:10000});
+  await expect(page.locator('.messages-layout')).toBeVisible({timeout:6000});
+  await expect(page.locator('.messages-sidebar')).toContainText('سجل الشكاوى');
+  await expect(page.locator('.messages-sidebar')).toContainText('لا توجد شكاوى');
+ });
+ const privatePage=await page.request.get('/cases',{timeout:6000});
+ expect(privatePage.headers()['cache-control']).toBe('no-store');
+ await accessible(page);await assertNoOverflow(page);
+ await test.step('switch the case page to English',async()=>{
+  await page.locator('.nav-end button[data-action=language]').click();
+  await expect(page.locator('html')).toHaveAttribute('lang','en');
+  await expect(page.locator('h1')).toContainText('Cases, with a clear history.');
+ });
+ await accessible(page);await assertNoOverflow(page);
+ expect(pageErrors).toEqual([]);
+});
+
+test('buyer uploads private shipment evidence and seller can review it',async({browser})=>{
+ test.setTimeout(90000);
+ const data=credentials(),caseId=data.case_id;
+ expect(caseId).toBeGreaterThan(0);
+ const buyerContext=await browser.newContext({locale:'ar-JO'});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'case_buyer',{destination:'/cases?case='+caseId});
+ await expect(buyer.locator('#case-attachment-form')).toBeVisible();
+ await buyer.locator('#case-attachment-file').setInputFiles('data/browser-tests/evidence.png');
+ await buyer.locator('#case-attachment-form button[type=submit]').click();
+ const buyerLink=buyer.locator('.case-attachment-list a');
+ await expect(buyerLink).toHaveCount(1);
+ await expect(buyerLink).toContainText('صورة دليل رقم');
+ const openedDownload=buyer.waitForEvent('download');
+ await buyerLink.click();
+ expect((await openedDownload).suggestedFilename()).toMatch(/^case-evidence-\d+\.webp$/);
+ const detail=(await(await buyer.request.get('/api/cases/'+caseId)).json()).case;
+ expect(detail.attachments).toHaveLength(1);
+ const sellerContext=await browser.newContext({locale:'ar-JO'});
+ const seller=await sellerContext.newPage();
+ await login(seller,'case_seller',{destination:'/cases?case='+caseId});
+ await expect(seller.locator('.case-attachment-list a')).toHaveCount(1);
+ await expect(seller.locator('#case-message-form')).toBeVisible();
+ await seller.locator('#case-message-body').fill('وصلتنا صورة الدليل، وبدأنا التحقق من الشحنة.');
+ await seller.locator('#case-message-form button[type=submit]').click();
+ await expect(seller.locator('.message-feed')).toContainText('بدأنا التحقق');
+ await buyer.reload();
+ await expect(buyer.locator('.message-feed')).toContainText('بدأنا التحقق');
+ const strangerContext=await browser.newContext();
+ const stranger=await strangerContext.newPage();
+ await login(stranger,'buyer');
+ expect((await stranger.request.get(detail.attachments[0].download_url)).status()).toBe(404);
+ await buyerContext.close();await sellerContext.close();await strangerContext.close();
+});
+
+test('buyer, seller and administrator complete an item return without automatic refund',async({browser})=>{
+ test.setTimeout(120000);
+ const fixture=credentials();
+ expect(fixture.return_item_id).toBeGreaterThan(0);
+
+ const buyerContext=await browser.newContext({locale:'ar-JO',viewport:{width:390,height:844}});
+ const buyer=await buyerContext.newPage();
+ await login(buyer,'return_buyer',{destination:'/orders'});
+ const returnButton=buyer.locator('.shipment-return-actions button[data-action=open-return]').first();
+ await expect(returnButton).toBeVisible();
+ await returnButton.click();
+ await buyer.locator('#return-quantity').fill('1');
+ await buyer.locator('#return-reason').selectOption('damaged');
+ await buyer.locator('#return-description').fill('وصل المنتج متضررًا وأطلب إرجاع قطعة واحدة من الكمية المستلمة.');
+ await buyer.locator('#return-create-form button[type=submit]').click();
+ await expect(buyer).toHaveURL(/\/returns\?return=\d+$/);
+ await expect(buyer.locator('.return-card .pill')).toContainText('طلب إرجاع جديد');
+ await expect(buyer.locator('#return-seller-decision-form')).toHaveCount(0);
+ const requestId=Number(new URL(buyer.url()).searchParams.get('return'));
+ const buyerApi=await buyer.request.get('/api/returns/'+requestId);
+ console.log('return buyer fixture:',fixture.return_buyer.id,'seller fixture:',fixture.return_seller.id,'created request:',(await buyerApi.json()).return);
+
+ const sellerContext=await browser.newContext({locale:'ar-JO',viewport:{width:390,height:844}});
+ const seller=await sellerContext.newPage();
+ await login(seller,'return_seller',{destination:'/returns'});
+ const sellerApi=await seller.request.get('/api/returns');
+ const sellerPayload=await sellerApi.json();
+ console.log('return seller fixture:',fixture.return_seller.id,'seller API:',sellerApi.status(),sellerPayload.returns?.map(item=>({id:item.id,seller_id:item.seller_id,status:item.status,viewer_role:item.viewer_role,can_seller_decide:item.can_seller_decide})));
+ expect(sellerApi.status()).toBe(200);
+ expect(sellerPayload.returns?.some(item=>item.id===requestId)).toBe(true);
+ await expect(seller.locator('#return-seller-decision-form')).toBeVisible();
+ await seller.locator('#return-seller-decision-form textarea[name=note]').fill('تم قبول الإرجاع وفق وصف حالة المنتج.');
+ await seller.locator('#return-seller-decision-form button[value=approved]').click();
+ await expect(seller.locator('.return-card .pill')).toContainText('مقبول');
+
+ await buyer.reload();
+ await expect(buyer.locator('#return-shipment-form')).toBeVisible();
+ await buyer.locator('#return-shipment-form input[name=carrier]').fill('شركة توصيل محلية');
+ await buyer.locator('#return-shipment-form input[name=tracking_number]').fill('RET-BROWSER-001');
+ await buyer.locator('#return-shipment-form button[type=submit]').click();
+ await expect(buyer.locator('.return-card .pill')).toContainText('تم شحن المرتجع');
+ await expect(buyer.locator('.return-card')).toContainText('RET-BROWSER-001');
+
+ await seller.reload();
+ await expect(seller.locator('#return-received-form')).toBeVisible();
+ await seller.locator('#return-received-form textarea[name=note]').fill('تم استلام المنتج المرتجع وفحصه.');
+ await seller.locator('#return-received-form button[type=submit]').click();
+ await expect(seller.locator('.return-card .pill')).toContainText('تم استلام المرتجع');
+
+ const adminContext=await browser.newContext({locale:'ar-JO',viewport:{width:1280,height:900}});
+ const admin=await adminContext.newPage();
+ await login(admin,'admin',{destination:'/returns'});
+ await expect(admin.locator('#return-admin-decision-form')).toBeVisible();
+ await admin.locator('#return-admin-decision-form textarea[name=note]').fill('تم استلام المرتجع ومراجعة سجل العملية.');
+ // This decision is protected by a fresh password + TOTP check (10-minute window).
+ await admin.waitForTimeout(31000);
+ await admin.locator('#return-admin-decision-form [data-action=reauth]').click();
+ await admin.locator('#reauth-form input[name=password]').fill(fixture.admin.password);
+ const freshOtp=execFileSync(PY,['-c','import pyotp,sys;print(pyotp.TOTP(sys.stdin.read()).now())'],{input:fixture.admin.secret,encoding:'utf8'}).trim();
+ await admin.locator('#reauth-form input[name=otp]').fill(freshOtp);
+ const reauthResponsePromise=admin.waitForResponse(response=>response.url().endsWith('/api/auth/reauth')&&response.request().method()==='POST');
+ await admin.locator('#reauth-form button[type=submit]').click();
+ const reauthResponse=await reauthResponsePromise;
+ expect(reauthResponse.status()).toBe(200);
+ await expect(admin.locator('#dialog')).not.toHaveAttribute('open');
+ await admin.locator('#return-admin-decision-form button[value=resolved]').click();
+ await expect(admin.locator('.return-card .pill')).toContainText('تمت المعالجة');
+
+ await buyer.reload();
+ await expect(buyer.locator('.return-card .pill')).toContainText('تمت المعالجة');
+ await expect(buyer.locator('.return-card')).toContainText('لا ينشئ ردًا ماليًا');
+ await buyerContext.close();await sellerContext.close();await adminContext.close();
 });
 
 test('email verification link is real and not consumed just by opening it',async({page})=>{
@@ -136,14 +374,19 @@ test('public PWA cache works offline; private data and writes are never cached',
  await page.goto('/?lang=ar');await ready(page);
  await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});
  await page.reload();await ready(page);await page.goto('/product/1');await page.locator('.detail-info h1').waitFor();
- await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
+ await page.waitForFunction(async()=>{const c=await caches.open('shamaa-public-v1.0.8');return !!(await c.match('/api/products/1'))&&!!(await c.match('/api/bootstrap'));});
  const before=await page.request.get('/api/products/1');const stock=(await before.json()).product.stock;
+  const messagesPage=await page.request.get('/messages');
+  const casesPage=await page.request.get('/cases');
+  expect(casesPage.headers()['cache-control']).toBe('no-store');
+  expect(messagesPage.headers()['cache-control']).toBe('no-store');
  await context.setOffline(true);await page.goto('/product/1');await expect(page.locator('.detail-info h1')).toContainText('سماعات');
  await expect(page.locator('#offline-banner')).toBeVisible();
  await page.locator('[data-action=detail-add]').click();await expect(page.locator('.toast.error')).toBeVisible();
- const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.2');return(await c.keys()).map(r=>new URL(r.url).pathname);});
- expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
+ const cached=await page.evaluate(async()=>{const c=await caches.open('shamaa-public-v1.0.8');return(await c.keys()).map(r=>new URL(r.url).pathname);});
+ expect(cached.filter(p=>/^\/(account|orders|checkout|cart|seller|admin|media|messages|cases|returns|api\/cases|api\/returns)/.test(p)||p.startsWith('/api/auth'))).toEqual([]);
  await page.goto('/account');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
+  await page.goto('/messages');await expect(page.locator('body')).toContainText('صفحات الحساب والطلبات لا تُخزّن');
  await context.setOffline(false);const after=await page.request.get('/api/products/1');expect((await after.json()).product.stock).toBe(stock);
 });
 

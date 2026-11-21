@@ -27,7 +27,7 @@ def notify(c, settings, user_id, kind, ar, en, email=True):
         queue(c, settings, u['email'], 'شمعة · SHAM’A', ar if u['locale']=='ar' else en, u['locale'])
 
 
-def deliver_pending(db, settings, limit=20):
+def _deliver_pending(db, settings, limit=20):
     for _ in range(limit):
         with db.transaction() as c:
             # A crashed worker's lease can be reclaimed after five minutes.
@@ -70,3 +70,13 @@ def deliver_pending(db, settings, limit=20):
             with db.transaction() as c:
                 c.execute("UPDATE mail_outbox SET status='failed',last_error=?,available_at=? WHERE id=?",
                           (type(exc).__name__,now()+60*2**m['attempts'],m['id']))
+
+
+
+def deliver_pending(db, settings, limit=20):
+    """Run the outbox worker in an isolated, allowlisted system context."""
+    operation_scope = getattr(db, "system_operation", None)
+    if operation_scope is None:
+        return _deliver_pending(db, settings, limit)
+    with operation_scope("mail.worker"):
+        return _deliver_pending(db, settings, limit)
