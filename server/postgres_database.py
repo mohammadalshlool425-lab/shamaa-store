@@ -366,17 +366,17 @@ class PostgresDatabase:
                    WHERE tc.table_schema=? AND tc.constraint_type='CHECK'
                      AND (
                        (tc.table_name='orders'
-                        AND cc.check_clause LIKE '%total_fils%'
-                        AND cc.check_clause LIKE '%subtotal_fils%'
-                        AND cc.check_clause LIKE '%shipping_fils%'
-                        AND cc.check_clause LIKE '%discount_fils%')
+                        AND position('total_fils' in cc.check_clause) > 0
+                        AND position('subtotal_fils' in cc.check_clause) > 0
+                        AND position('shipping_fils' in cc.check_clause) > 0
+                        AND position('discount_fils' in cc.check_clause) > 0)
                        OR
                        (tc.table_name='seller_orders'
-                        AND cc.check_clause LIKE '%net_fils%'
-                        AND cc.check_clause LIKE '%subtotal_fils%'
-                        AND cc.check_clause LIKE '%shipping_fils%'
-                        AND cc.check_clause LIKE '%discount_fils%'
-                        AND cc.check_clause LIKE '%commission_fils%')
+                        AND position('net_fils' in cc.check_clause) > 0
+                        AND position('subtotal_fils' in cc.check_clause) > 0
+                        AND position('shipping_fils' in cc.check_clause) > 0
+                        AND position('discount_fils' in cc.check_clause) > 0
+                        AND position('commission_fils' in cc.check_clause) > 0)
                      )""",
                 (self.schema,),
             ).fetchone()
