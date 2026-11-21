@@ -152,3 +152,44 @@ def test_coupon_usage_limit_is_enforced_at_checkout(factory):
     factory.cart(another, product)
     second_preview = another['client'].post('/api/coupon-quote', json={'code':'SAVE10'})
     assert second_preview.status_code == 409
+
+
+def test_seller_can_update_coupon_and_reject_duplicate_update(factory):
+    seller = factory.seller()
+    first = seller['client'].post('/api/seller/coupons', json=coupon_payload(code='SAVE10'))
+    second = seller['client'].post('/api/seller/coupons', json=coupon_payload(code='SAVE20'))
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+
+    updated = seller['client'].put(
+        f"/api/seller/coupons/{first.json()['coupon']['id']}",
+        json=coupon_payload(code='SAVE15', discount_value=1500, active=False),
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['coupon']['code'] == 'SAVE15'
+    assert updated.json()['coupon']['active'] in (False, 0)
+
+    duplicate = seller['client'].put(
+        f"/api/seller/coupons/{second.json()['coupon']['id']}",
+        json=coupon_payload(code='SAVE15'),
+    )
+    assert duplicate.status_code == 409
+
+
+def test_pending_store_cannot_create_or_update_coupons(factory):
+    seller = factory.seller()
+    created = seller['client'].post('/api/seller/coupons', json=coupon_payload())
+    assert created.status_code == 201, created.text
+    with factory.db.transaction() as connection:
+        connection.execute("UPDATE stores SET status='pending' WHERE id=?", (seller['store_id'],))
+
+    create = seller['client'].post(
+        '/api/seller/coupons',
+        json=coupon_payload(code='PENDING10'),
+    )
+    update = seller['client'].put(
+        f"/api/seller/coupons/{created.json()['coupon']['id']}",
+        json=coupon_payload(code='SAVE11'),
+    )
+    assert create.status_code == 403
+    assert update.status_code == 403

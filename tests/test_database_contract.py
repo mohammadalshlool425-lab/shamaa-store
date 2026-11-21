@@ -276,19 +276,38 @@ def test_coupon_migration_is_applied_and_keeps_redemptions_immutable(tmp_path):
     db = Database(tmp_path / "coupons.sqlite3")
     db.initialize()
     with db.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
         order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(orders)")}
         seller_order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(seller_orders)")}
         coupon_columns = {row["name"] for row in connection.execute("PRAGMA table_info(coupons)")}
         redemption_columns = {row["name"] for row in connection.execute("PRAGMA table_info(coupon_redemptions)")}
         assert "discount_fils" in order_columns
         assert "discount_fils" in seller_order_columns
+        order_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+        ).fetchone()["sql"].replace(" ", "")
+        seller_order_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='seller_orders'"
+        ).fetchone()["sql"].replace(" ", "")
+        assert "total_fils=subtotal_fils+shipping_fils-discount_fils" in order_sql
+        assert "net_fils=subtotal_fils+shipping_fils-discount_fils-commission_fils" in seller_order_sql
         assert {
             "id", "store_id", "code", "discount_type", "discount_value",
             "minimum_subtotal_fils", "maximum_discount_fils", "starts_at",
             "expires_at", "max_uses", "max_uses_per_buyer", "used_count",
             "active", "created_at", "updated_at",
         } <= coupon_columns
+        triggers = {
+            row["name"] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+            )
+        }
+        assert {
+            "messages_sender_participant",
+            "review_purchase_eligibility",
+            "return_request_purchase_guard",
+            "coupon_redemption_guard",
+        } <= triggers
         assert {
             "id", "coupon_id", "order_id", "seller_order_id", "store_id",
             "buyer_id", "code", "discount_fils", "redeemed_at",
