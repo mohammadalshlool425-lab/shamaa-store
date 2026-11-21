@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 
@@ -104,6 +106,20 @@ def test_coupon_preview_and_checkout_discount_only_its_store(factory):
         saved_coupon = c.execute('SELECT used_count FROM coupons WHERE id=?',(created.json()['coupon']['id'],)).fetchone()
     assert redemption['discount_fils'] == 1000
     assert saved_coupon['used_count'] == 1
+    assert order['total_fils'] == order['subtotal_fils'] + order['shipping_fils'] - order['discount_fils']
+    assert by_store[seller['store_id']]['net_fils'] == (
+        by_store[seller['store_id']]['subtotal_fils']
+        + by_store[seller['store_id']]['shipping_fils']
+        - by_store[seller['store_id']]['discount_fils']
+        - by_store[seller['store_id']]['commission_fils']
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        with factory.db.transaction() as c:
+            c.execute('UPDATE orders SET total_fils=total_fils+1 WHERE id=?', (order['id'],))
+    with pytest.raises(sqlite3.IntegrityError):
+        with factory.db.transaction() as c:
+            c.execute('UPDATE seller_orders SET net_fils=net_fils+1 WHERE order_id=? AND store_id=?',
+                      (order['id'], seller['store_id']))
 
 
 def test_coupon_checkout_rejects_coupon_from_store_not_in_cart(factory):

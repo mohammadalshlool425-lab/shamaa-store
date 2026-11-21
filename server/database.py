@@ -10,7 +10,7 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name('schema.sql')
 MIGRATION_DIR = Path(__file__).with_name('migrations')
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 
 
 class HybridRow(Mapping[str, Any]):
@@ -330,6 +330,23 @@ class Database:
                         c.rollback()
                     raise
                 version = 10
+            if version == 10:
+                migration = MIGRATION_DIR / '0011_coupon_order_totals.sql'
+                c.execute('PRAGMA foreign_keys=OFF')
+                try:
+                    c.executescript('BEGIN IMMEDIATE;\\n' + migration.read_text(encoding='utf-8'))
+                    violations = c.execute('PRAGMA foreign_key_check').fetchall()
+                    if violations:
+                        raise RuntimeError('Coupon totals migration would leave broken foreign keys.')
+                    c.execute('PRAGMA user_version=11')
+                    c.commit()
+                except BaseException:
+                    if c.in_transaction:
+                        c.rollback()
+                    raise
+                finally:
+                    c.execute('PRAGMA foreign_keys=ON')
+                version = 11
             if version != LATEST_SCHEMA_VERSION:
                 raise RuntimeError('Database schema is incomplete; apply all numbered migrations.')
         Path(self.path).chmod(0o600)

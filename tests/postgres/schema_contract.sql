@@ -155,9 +155,9 @@ BEGIN
       ('carts','user_id'),('carts','product_id'),('carts','quantity'),
       ('orders','id'),('orders','number'),('orders','buyer_id'),('orders','idempotency_key'),('orders','request_hash'),
       ('orders','recipient'),('orders','phone'),('orders','city'),('orders','address'),('orders','subtotal_fils'),
-      ('orders','shipping_fils'),('orders','total_fils'),('orders','payment_method'),('orders','is_demo'),('orders','created_at'),
+      ('orders','shipping_fils'),('orders','discount_fils'),('orders','total_fils'),('orders','payment_method'),('orders','is_demo'),('orders','created_at'),
       ('seller_orders','id'),('seller_orders','order_id'),('seller_orders','store_id'),('seller_orders','status'),
-      ('seller_orders','subtotal_fils'),('seller_orders','shipping_fils'),('seller_orders','commission_fils'),
+      ('seller_orders','subtotal_fils'),('seller_orders','shipping_fils'),('seller_orders','discount_fils'),('seller_orders','commission_fils'),
       ('seller_orders','net_fils'),('seller_orders','updated_at'),
       ('order_items','id'),('order_items','seller_order_id'),('order_items','product_id'),('order_items','title_ar'),
       ('order_items','title_en'),('order_items','unit_price_fils'),('order_items','quantity'),('order_items','commission_bps'),
@@ -572,8 +572,8 @@ BEGIN
   VALUES (store_id,'SAVE10','percent',1000,2,1,1,20,20)
   RETURNING id INTO coupon_id;
 
-  UPDATE shamaa_app.orders SET discount_fils=100 WHERE id=v_order_id;
-  UPDATE shamaa_app.seller_orders SET discount_fils=100 WHERE id=seller_order_id;
+  UPDATE shamaa_app.orders SET discount_fils=100,total_fils=900 WHERE id=v_order_id;
+  UPDATE shamaa_app.seller_orders SET discount_fils=100,net_fils=900 WHERE id=seller_order_id;
   INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,
     code,discount_fils,redeemed_at)
   VALUES (coupon_id,v_order_id,seller_order_id,store_id,buyer_id,'SAVE10',100,21);
@@ -592,8 +592,8 @@ BEGIN
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'Coupon redemption DELETE was not rejected'; END IF;
 
-  UPDATE shamaa_app.orders SET discount_fils=90 WHERE id=v_other_order_id;
-  UPDATE shamaa_app.seller_orders SET discount_fils=80 WHERE id=other_seller_order_id;
+  UPDATE shamaa_app.orders SET discount_fils=90,total_fils=910 WHERE id=v_other_order_id;
+  UPDATE shamaa_app.seller_orders SET discount_fils=80,net_fils=920 WHERE id=other_seller_order_id;
   rejected := FALSE;
   BEGIN
     INSERT INTO shamaa_app.coupon_redemptions(coupon_id,order_id,seller_order_id,store_id,buyer_id,

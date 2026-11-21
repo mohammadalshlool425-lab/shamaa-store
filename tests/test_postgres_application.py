@@ -275,3 +275,80 @@ def test_postgres_demo_seed_is_rejected_before_any_database_write():
 
     with pytest.raises(RuntimeError, match="separate development setup path"):
         initialize_catalog(MigrationManagedDatabase(), SimpleNamespace(demo=True))
+
+
+
+def test_postgres_coupon_checkout_uses_discount_aware_order_totals(tmp_path):
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("Coupon checkout PostgreSQL test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.application import create_app
+    from server.config import Settings
+    from server.postgres_database import PostgresDatabase
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from conftest import Factory
+
+    settings = Settings(
+        db_path=tmp_path / "unused.sqlite3",
+        data_dir=tmp_path / "coupon-private-data",
+        public_url="http://localhost:8000",
+        allowed_hosts=["localhost", "127.0.0.1", "testserver"],
+        demo=False,
+        email_mode="file",
+    )
+    factory = Factory(create_app(settings=settings, database=PostgresDatabase(conninfo)))
+    seller = factory.seller()
+    buyer = factory.user()
+    product = factory.product(seller, price=10000, stock=3)
+    code = f"PG{uuid4().hex[:8].upper()}"
+    created = seller["client"].post("/api/seller/coupons", json={
+        "code": code,
+        "discount_type": "percent",
+        "discount_value": 1000,
+        "minimum_subtotal_fils": 0,
+        "maximum_discount_fils": 2000,
+        "starts_at": None,
+        "expires_at": None,
+        "max_uses": 1,
+        "max_uses_per_buyer": 1,
+        "active": True,
+    })
+    assert created.status_code == 201, created.text
+
+    quote = factory.cart(buyer, product, quantity=1)
+    preview = buyer["client"].post("/api/coupon-quote", json={"code": code.lower()})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["discount_fils"] == 1000
+
+    response, _, _ = factory.checkout(
+        buyer,
+        quote=quote,
+        expected_total_fils=preview.json()["total_fils"],
+        coupon_code=code.lower(),
+    )
+    assert response.status_code == 201, response.text
+    order = response.json()["order"]
+    shipment = order["shipments"][0]
+    assert order["discount_fils"] == 1000
+    assert order["total_fils"] == (
+        order["subtotal_fils"] + order["shipping_fils"] - order["discount_fils"]
+    )
+    assert shipment["discount_fils"] == 1000
+    assert shipment["net_fils"] == (
+        shipment["subtotal_fils"] + shipment["shipping_fils"]
+        - shipment["discount_fils"] - shipment["commission_fils"]
+    )
+
+    with factory.db.read() as connection:
+        redemption = connection.execute(
+            "SELECT discount_fils FROM coupon_redemptions WHERE order_id=?",
+            (order["id"],),
+        ).fetchone()
+        usage = connection.execute(
+            "SELECT used_count FROM coupons WHERE code=?",
+            (code,),
+        ).fetchone()
+    assert redemption["discount_fils"] == 1000
+    assert usage["used_count"] == 1
