@@ -299,6 +299,7 @@ def test_postgres_coupon_checkout_uses_discount_aware_order_totals(tmp_path):
         email_mode="file",
     )
     factory = Factory(create_app(settings=settings, database=PostgresDatabase(conninfo)))
+    factory.counter = int(uuid4().hex[:8], 16)
     seller = factory.seller()
     buyer = factory.user()
     product = factory.product(seller, price=10000, stock=3)
