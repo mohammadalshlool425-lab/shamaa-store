@@ -442,7 +442,7 @@ def create_coupon(body: schemas.CouponInput,request: Request,user=Depends(seller
               store['id'],data['code'],data['discount_type'],data['discount_value'],
               data['minimum_subtotal_fils'],data['maximum_discount_fils'],data['starts_at'],
               data['expires_at'],data['max_uses'],data['max_uses_per_buyer'],
-              int(data['active']),stamp,stamp))
+              data['active'],stamp,stamp))
             audit(c,user['id'],'coupon_created','coupon',coupon_id)
             row = c.execute('SELECT * FROM coupons WHERE id=? AND store_id=?',(coupon_id,store['id'])).fetchone()
     except DatabaseIntegrityError:
@@ -468,7 +468,7 @@ def update_coupon(coupon_id: int,body: schemas.CouponInput,request: Request,user
               WHERE id=? AND store_id=?''',(
               data['code'],data['discount_type'],data['discount_value'],data['minimum_subtotal_fils'],
               data['maximum_discount_fils'],data['starts_at'],data['expires_at'],data['max_uses'],
-              data['max_uses_per_buyer'],int(data['active']),now(),coupon_id,store['id']))
+              data['max_uses_per_buyer'],data['active'],now(),coupon_id,store['id']))
             audit(c,user['id'],'coupon_updated','coupon',coupon_id)
             row = c.execute('SELECT * FROM coupons WHERE id=? AND store_id=?',(coupon_id,store['id'])).fetchone()
     except DatabaseIntegrityError:

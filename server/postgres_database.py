@@ -257,7 +257,7 @@ class PostgresDatabase:
         return _UserScopedPostgresDatabase(self, user_id)
 
     def schema_version(self) -> int:
-        """Return 10 when the foundation, commerce, cases, returns and coupons schema exist."""
+        """Return 11 when coupon-aware totals and all required schema objects exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
@@ -356,6 +356,30 @@ class PostgresDatabase:
                    )""",
                 (self.schema,),
             ).fetchone()
+            totals = connection.execute(
+                """SELECT COUNT(*)
+                   FROM information_schema.table_constraints tc
+                   JOIN information_schema.check_constraints cc
+                     ON cc.constraint_catalog=tc.constraint_catalog
+                    AND cc.constraint_schema=tc.constraint_schema
+                    AND cc.constraint_name=tc.constraint_name
+                   WHERE tc.table_schema=? AND tc.constraint_type='CHECK'
+                     AND (
+                       (tc.table_name='orders'
+                        AND cc.check_clause LIKE '%total_fils%'
+                        AND cc.check_clause LIKE '%subtotal_fils%'
+                        AND cc.check_clause LIKE '%shipping_fils%'
+                        AND cc.check_clause LIKE '%discount_fils%')
+                       OR
+                       (tc.table_name='seller_orders'
+                        AND cc.check_clause LIKE '%net_fils%'
+                        AND cc.check_clause LIKE '%subtotal_fils%'
+                        AND cc.check_clause LIKE '%shipping_fils%'
+                        AND cc.check_clause LIKE '%discount_fils%'
+                        AND cc.check_clause LIKE '%commission_fils%')
+                     )""",
+                (self.schema,),
+            ).fetchone()
             coupons = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.columns
                    WHERE table_schema=? AND (
@@ -384,15 +408,16 @@ class PostgresDatabase:
                     and cases and int(cases[0]) == 20
                     and attachments and int(attachments[0]) == 9
                     and returns and int(returns[0]) == 25
-                    and coupons and int(coupons[0]) == 26)
-        return 10 if complete else 0
+                    and coupons and int(coupons[0]) == 26
+                    and totals and int(totals[0]) == 2)
+        return 11 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 10:
+        if self.schema_version() != 11:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply structural Supabase migrations 0001-0010 and reference-data migration 0011 before starting the app."
+                "apply structural Supabase migrations 0001-0012, including reference data and coupon-aware totals, before starting the app."
             )
 
 

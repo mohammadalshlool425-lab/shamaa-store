@@ -90,7 +90,7 @@ def test_application_accepts_database_protocol_implementation(tmp_path):
     app = create_app(settings, database=adapter)
 
     assert adapter.initialized is True
-    assert adapter.schema_version() == 10
+    assert adapter.schema_version() == 11
     assert app.state.db is adapter
     with TestClient(app) as client:
         response = client.get("/healthz")
