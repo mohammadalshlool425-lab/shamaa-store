@@ -108,9 +108,15 @@ def test_reset_does_not_reveal_account_existence(factory):
 def test_mfa_required_and_codes_cannot_be_replayed(factory):
     admin=factory.user('admin');client=factory.client()
     assert client.post('/api/auth/login',json={'email':admin['email'],'password':admin['password']}).status_code==401
-    reused=pyotp.TOTP(admin['secret']).now()
+    # Pin the replay counter to an explicit TOTP step so a 30-second boundary
+    # crossing cannot turn a fresh code into a valid one midway through the test.
+    counter=now()//30
+    with factory.db.transaction() as c:
+        c.execute('UPDATE users SET mfa_last_step=? WHERE id=?',(counter,admin['id']))
+    totp=pyotp.TOTP(admin['secret'])
+    reused=totp.at(counter*30)
     assert client.post('/api/auth/login',json={'email':admin['email'],'password':admin['password'],'otp':reused}).status_code==401
-    code=pyotp.TOTP(admin['secret']).at(now()+30)
+    code=totp.at((counter+1)*30)
     assert client.post('/api/auth/login',json={'email':admin['email'],'password':admin['password'],'otp':code}).status_code==200
 
 
