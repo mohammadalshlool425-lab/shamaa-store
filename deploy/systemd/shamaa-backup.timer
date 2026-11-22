@@ -1,0 +1,12 @@
+# NOT enabled automatically. The operator must test restore and offsite replication.
+[Unit]
+Description=Daily SHAM'A encrypted backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=shamaa-backup.service
+
+[Install]
+WantedBy=timers.target

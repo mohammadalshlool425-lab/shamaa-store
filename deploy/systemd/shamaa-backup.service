@@ -1,0 +1,21 @@
+# backup.env contains ONLY SHAMAA_BACKUP_KEY; protect it and keep an independent
+# recovery copy off the server. No credentials in arguments, Git or journals.
+[Unit]
+Description=SHAM'A encrypted SQLite and media backup
+
+[Service]
+Type=oneshot
+User=shamaa
+Group=shamaa
+WorkingDirectory=/opt/shamaa/current
+EnvironmentFile=/etc/shamaa/production.env
+EnvironmentFile=/etc/shamaa/backup.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/shamaa/current/.venv/bin/python -m server.cli backup-rotate --directory /var/backups/shamaa --keep-days 14
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shamaa /var/backups/shamaa
