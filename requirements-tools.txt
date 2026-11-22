@@ -1,3 +1,0 @@
-# Developer/CI utilities, not required to serve the marketplace.
-pip-audit==2.10.1
-pip-tools==7.6.2
