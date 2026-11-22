@@ -227,6 +227,10 @@ def test_seller_ledger_is_store_scoped_and_read_only(factory):
     assert second_data['commission_due_fils'] == 1000
     assert len(first_data['entries']) == len(second_data['entries']) == 1
     assert first_data['entries'][0]['order_number'] == order['number']
+    assert first_data['entries'][0]['store_id'] == first['store_id']
     assert first_data['entries'][0]['amount_fils'] == 500
+    assert second_data['entries'][0]['store_id'] == second['store_id']
     assert second_data['entries'][0]['amount_fils'] == 1000
+    assert 'withdrawable_balance_fils' not in first_data
     assert buyer['client'].get('/api/seller/ledger').status_code == 403
+    assert first['client'].post('/api/seller/ledger').status_code == 405
