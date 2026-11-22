@@ -415,6 +415,23 @@ def upload_image(request: Request,file: UploadFile=File(...),user=Depends(seller
     return {'id':media_id,'url':f'/media/{media_id}/480.webp','duplicate':False}
 
 
+@router.get('/ledger')
+def seller_ledger(request: Request,user=Depends(seller_user)):
+    """Return only this seller's immutable commission-due entries; never a withdrawable balance."""
+    with request.app.state.db.read() as c:
+        store = own_store(c,user)
+        rows = c.execute('''SELECT l.id,l.seller_order_id,l.kind,l.amount_fils,l.created_at,
+                                   o.number AS order_number,so.status AS shipment_status
+                              FROM ledger l
+                              JOIN seller_orders so ON so.id=l.seller_order_id AND so.store_id=l.store_id
+                              JOIN orders o ON o.id=so.order_id
+                             WHERE l.store_id=?
+                             ORDER BY l.id DESC LIMIT 200''',(store['id'],)).fetchall()
+        total = c.execute('SELECT COALESCE(SUM(amount_fils),0) FROM ledger WHERE store_id=?',
+                          (store['id'],)).fetchone()[0]
+    return {'entries':[dict(row) for row in rows],'commission_due_fils':total}
+
+
 @router.get('/coupons')
 def list_coupons(request: Request,user=Depends(seller_user)):
     with request.app.state.db.read() as c:

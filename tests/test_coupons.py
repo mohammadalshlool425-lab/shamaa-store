@@ -193,3 +193,40 @@ def test_pending_store_cannot_create_or_update_coupons(factory):
     )
     assert create.status_code == 403
     assert update.status_code == 403
+
+
+def test_seller_ledger_is_store_scoped_and_read_only(factory):
+    first = factory.seller()
+    second = factory.seller()
+    buyer = factory.user()
+    first_product = factory.product(first, price=10000)
+    second_product = factory.product(second, price=20000, color='blue')
+    factory.cart(buyer, first_product, 1)
+    factory.cart(buyer, second_product, 1)
+    response, _, _ = factory.checkout(buyer)
+    assert response.status_code == 201, response.text
+    order = response.json()['order']
+    shipments = {item['store_id']: item for item in order['shipments']}
+
+    with factory.db.transaction() as c:
+        for store_id, amount in ((first['store_id'], 500), (second['store_id'], 1000)):
+            shipment = shipments[store_id]
+            c.execute(
+                "INSERT INTO ledger(seller_order_id,store_id,kind,amount_fils,created_at) "
+                "VALUES(?,?,'cod_commission_due',?,?)",
+                (shipment['id'], store_id, amount, 1700000000),
+            )
+
+    first_response = first['client'].get('/api/seller/ledger')
+    second_response = second['client'].get('/api/seller/ledger')
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first_data = first_response.json()
+    second_data = second_response.json()
+    assert first_data['commission_due_fils'] == 500
+    assert second_data['commission_due_fils'] == 1000
+    assert len(first_data['entries']) == len(second_data['entries']) == 1
+    assert first_data['entries'][0]['order_number'] == order['number']
+    assert first_data['entries'][0]['amount_fils'] == 500
+    assert second_data['entries'][0]['amount_fils'] == 1000
+    assert buyer['client'].get('/api/seller/ledger').status_code == 403
