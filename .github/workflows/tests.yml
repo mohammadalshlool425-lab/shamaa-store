@@ -107,6 +107,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0011_seed_reference_categories.sql
       - name: Apply discount-aware order total constraints
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0012_coupon_order_totals.sql
+      - name: Apply seller commission ledger detail migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/0013_seller_ledger_details.sql
       - name: Verify schema, RLS, append-only guards and core constraints
         run: psql -v ON_ERROR_STOP=1 -f tests/postgres/schema_contract.sql
       - name: Verify deny-all RLS with a non-owner NOBYPASSRLS role
