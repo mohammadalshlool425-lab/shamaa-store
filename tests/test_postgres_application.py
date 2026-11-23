@@ -235,6 +235,29 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
                  shipment["id"], expected_basis, "[]", now()),
             )
 
+    with factory.db.read() as c:
+        ledger_id = c.execute(
+            "SELECT id FROM ledger WHERE seller_order_id=? AND kind='cod_commission_due'",
+            (shipment["id"],),
+        ).fetchone()["id"]
+
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with factory.db.transaction() as c:
+            c.execute("UPDATE ledger SET amount_fils=amount_fils+1 WHERE id=?", (ledger_id,))
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with factory.db.transaction() as c:
+            c.execute("DELETE FROM ledger WHERE id=?", (ledger_id,))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with factory.db.transaction() as c:
+            c.execute(
+                """INSERT INTO ledger(
+                       seller_order_id,store_id,kind,amount_fils,source,reference_type,
+                       reference_id,basis_fils,snapshot_json,created_at
+                   ) VALUES(?,?,'cod_commission_due',?,'cod_delivery','seller_order',?,?,?,?)""",
+                (shipment["id"], shipment["store_id"], -1,
+                 shipment["id"], expected_basis, "[]", now()),
+            )
+
     opened = buyer["client"].post("/api/returns", json={
         "order_item_id": item_id,
         "quantity": 1,
