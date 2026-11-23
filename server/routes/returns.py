@@ -360,7 +360,6 @@ def admin_list_returns(
 @admin_router.get("/returns/{request_id}")
 def admin_get_return(request_id: int, request: Request, user=Depends(admin_user)):
     with request.app.state.db.read() as c:
-        _lock_return_request(c, request_id)
         row = _return_row(c,request_id)
         if not row:
             fail("not_found",404)
@@ -374,6 +373,7 @@ def admin_decide_return(
 ):
     throttle(request,"return_admin_decision",limit=30,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
+        _lock_return_request(c, request_id)
         row = _return_row(c,request_id)
         if not row:
             fail("not_found",404)
