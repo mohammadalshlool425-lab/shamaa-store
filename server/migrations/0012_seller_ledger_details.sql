@@ -28,6 +28,11 @@ UPDATE ledger
            FROM order_items oi WHERE oi.seller_order_id=ledger.seller_order_id
        ),'[]');
 
+CREATE TRIGGER immutable_ledger_update BEFORE UPDATE ON ledger
+BEGIN SELECT RAISE(ABORT,'append-only'); END;
+CREATE TRIGGER immutable_ledger_delete BEFORE DELETE ON ledger
+BEGIN SELECT RAISE(ABORT,'append-only'); END;
+
 CREATE INDEX ledger_store_order ON ledger(store_id,id DESC);
 
 CREATE TRIGGER ledger_delivery_reference_guard
