@@ -276,7 +276,7 @@ def test_coupon_migration_is_applied_and_keeps_redemptions_immutable(tmp_path):
     db = Database(tmp_path / "coupons.sqlite3")
     db.initialize()
     with db.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == LATEST_SCHEMA_VERSION
         order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(orders)")}
         seller_order_columns = {row["name"] for row in connection.execute("PRAGMA table_info(seller_orders)")}
         coupon_columns = {row["name"] for row in connection.execute("PRAGMA table_info(coupons)")}
