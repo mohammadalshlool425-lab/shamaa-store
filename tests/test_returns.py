@@ -90,6 +90,17 @@ def test_return_lifecycle_seller_accepts_buyer_ships_and_seller_confirms(market)
     buyer = buyer_user["client"]
     seller = market["a"]["client"]
     shipment, item = _delivered_item(factory, market["a"], market["buyer"], market["p"], 3)
+    # A return's operational resolution must not silently restock inventory.
+    with factory.db.read() as c:
+        product_id = c.execute(
+            "SELECT product_id FROM order_items WHERE id=?", (item["id"],)
+        ).fetchone()["product_id"]
+        stock_before_return = c.execute(
+            "SELECT stock FROM products WHERE id=?", (product_id,)
+        ).fetchone()["stock"]
+        movements_before_return = c.execute(
+            "SELECT COUNT(*) FROM inventory_movements WHERE product_id=?", (product_id,)
+        ).fetchone()[0]
     opened = buyer.post("/api/returns", json={
         "order_item_id": item["id"], "quantity": 1, "reason": "not_as_described",
         "description": "وصل المنتج ولا يطابق الوصف المنشور وأرغب بإرجاع قطعة واحدة.",
@@ -145,6 +156,12 @@ def test_return_lifecycle_seller_accepts_buyer_ships_and_seller_confirms(market)
             "SELECT status FROM seller_orders WHERE id=?",
             (shipment["id"],),
         ).fetchone()["status"] == "delivered"
+        assert c.execute(
+            "SELECT stock FROM products WHERE id=?", (product_id,)
+        ).fetchone()["stock"] == stock_before_return
+        assert c.execute(
+            "SELECT COUNT(*) FROM inventory_movements WHERE product_id=?", (product_id,)
+        ).fetchone()[0] == movements_before_return
 
 
 def test_return_window_quantity_and_ownership_rules(market, monkeypatch):
