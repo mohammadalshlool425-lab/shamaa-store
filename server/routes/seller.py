@@ -420,7 +420,8 @@ def seller_ledger(request: Request,user=Depends(seller_user)):
     """Return only this seller's immutable commission-due entries; never a withdrawable balance."""
     with request.app.state.db.read() as c:
         store = own_store(c,user)
-        rows = c.execute('''SELECT l.id,l.seller_order_id,l.store_id,l.kind,l.amount_fils,l.created_at,
+        rows = c.execute('''SELECT l.id,l.seller_order_id,l.store_id,l.kind,l.amount_fils,
+                                   l.source,l.reference_type,l.reference_id,l.basis_fils,l.snapshot_json,l.created_at,
                                    o.number AS order_number,so.status AS shipment_status
                               FROM ledger l
                               JOIN seller_orders so ON so.id=l.seller_order_id AND so.store_id=l.store_id
@@ -429,7 +430,12 @@ def seller_ledger(request: Request,user=Depends(seller_user)):
                              ORDER BY l.id DESC LIMIT 200''',(store['id'],)).fetchall()
         total = c.execute("SELECT COALESCE(SUM(amount_fils),0) FROM ledger WHERE store_id=? AND kind='cod_commission_due'",
                           (store['id'],)).fetchone()[0]
-    return {'entries':[dict(row) for row in rows],'commission_due_fils':total}
+    entries = []
+    for row in rows:
+        entry = dict(row)
+        entry['commission_snapshot'] = json.loads(entry.pop('snapshot_json'))
+        entries.append(entry)
+    return {'entries':entries,'commission_due_fils':total}
 
 
 @router.get('/coupons')
