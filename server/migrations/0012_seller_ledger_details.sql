@@ -10,6 +10,8 @@ ALTER TABLE ledger ADD COLUMN basis_fils INTEGER NOT NULL DEFAULT 0
   CHECK (basis_fils>=0);
 ALTER TABLE ledger ADD COLUMN snapshot_json TEXT NOT NULL DEFAULT '[]';
 
+DROP TRIGGER IF EXISTS immutable_ledger_update;
+
 UPDATE ledger
    SET reference_id=seller_order_id,
        basis_fils=COALESCE((
