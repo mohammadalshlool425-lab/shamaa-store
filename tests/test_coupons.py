@@ -242,3 +242,38 @@ def test_seller_ledger_is_store_scoped_and_read_only(factory):
     # The app's write-method/CSRF guard may conceal unsupported writes as 404;
     # either response confirms that this read-only endpoint cannot be mutated.
     assert post_response.status_code in (404, 405)
+
+    entry_id = first_data['entries'][0]['id']
+    with pytest.raises(sqlite3.IntegrityError, match='append-only'):
+        with factory.db.transaction() as connection:
+            connection.execute(
+                "UPDATE ledger SET amount_fils=amount_fils+1 WHERE id=?",
+                (entry_id,),
+            )
+    with pytest.raises(sqlite3.IntegrityError, match='append-only'):
+        with factory.db.transaction() as connection:
+            connection.execute("DELETE FROM ledger WHERE id=?", (entry_id,))
+
+    # Integer fils and the database CHECK constraint reject negative amounts,
+    # independently of the seller-facing read-only API.
+    with pytest.raises(sqlite3.IntegrityError):
+        with factory.db.transaction() as connection:
+            connection.execute(
+                """INSERT INTO ledger(
+                       seller_order_id,store_id,kind,amount_fils,source,reference_type,
+                       reference_id,basis_fils,snapshot_json,created_at
+                   ) VALUES(?,?,'cod_commission_due',?,'cod_delivery','seller_order',?,?,?,?)""",
+                (
+                    shipments[first['store_id']]['id'],
+                    first['store_id'],
+                    -1,
+                    shipments[first['store_id']]['id'],
+                    0,
+                    '[]',
+                    1,
+                ),
+            )
+
+    unchanged = first['client'].get('/api/seller/ledger').json()
+    assert unchanged['entries'][0]['id'] == entry_id
+    assert unchanged['entries'][0]['amount_fils'] == first_data['entries'][0]['amount_fils']
