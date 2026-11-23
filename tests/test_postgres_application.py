@@ -174,6 +174,17 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
             (shipment["id"],),
         ).fetchone()[0]
 
+    ledger_response = seller["client"].get("/api/seller/ledger")
+    assert ledger_response.status_code == 200, ledger_response.text
+    ledger_payload = ledger_response.json()
+    assert len(ledger_payload["entries"]) == 1
+    ledger_entry = ledger_payload["entries"][0]
+    assert ledger_entry["source"] == "cod_delivery"
+    assert ledger_entry["reference_type"] == "seller_order"
+    assert ledger_entry["reference_id"] == shipment["id"]
+    assert ledger_entry["amount_fils"] == shipment["commission_fils"]
+    assert len(ledger_entry["commission_snapshot"]) == len(shipment["items"])
+
     opened = buyer["client"].post("/api/returns", json={
         "order_item_id": item_id,
         "quantity": 1,
