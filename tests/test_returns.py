@@ -391,6 +391,6 @@ def test_concurrent_seller_return_decisions_commit_one_transition_and_one_side_e
 
     assert state in ("approved", "rejected")
     assert len(decisions) == 1
-    assert buyer_notifications == 2  # opened + exactly one seller decision
+    assert buyer_notifications == 1  # exactly one seller decision notification
     assert audit_count == 2  # opened + exactly one seller decision
 
