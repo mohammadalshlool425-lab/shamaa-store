@@ -121,7 +121,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Seller ledger delivery/reference guard is missing';
   END IF;
-END $;
+END $$;
 
 -- Validate critical monetary and identity constraints with rollback-only fixtures.
 BEGIN;
