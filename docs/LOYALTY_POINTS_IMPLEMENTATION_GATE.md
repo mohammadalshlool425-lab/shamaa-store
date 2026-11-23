@@ -87,3 +87,8 @@ No default monetary conversion, promotional promise, or policy value is inferred
 ## 8. COD collection evidence review
 
 See [COD_COLLECTION_EVIDENCE_GAP.md](COD_COLLECTION_EVIDENCE_GAP.md). The current workflow records shipment delivery and a commission-due ledger entry, but does not record an independent cash-collection confirmation. A delivered event or commission-due entry must never trigger a loyalty grant. The grant implementation gate remains closed until the owner approves the collection evidence, confirmer role, and correction process.
+
+## 9. Payment evidence scope confirmation
+
+The follow-up review of checkout schema and the foundation migration confirms that the current order model permits only `cod`; there is no payment-provider transaction or verified settlement event in the checkout path. Consequently, no loyalty earning source is currently authoritative: COD needs a separately approved cash-collection event, while any future electronic method needs provider-verified settlement evidence. See [COD_COLLECTION_EVIDENCE_GAP.md](COD_COLLECTION_EVIDENCE_GAP.md). This is a documentation-only finding; implementation remains gated.
+
