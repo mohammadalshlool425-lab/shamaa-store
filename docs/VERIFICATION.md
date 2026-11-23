@@ -198,3 +198,22 @@ npm run check
 - قاعدة PostgreSQL مؤقتة داخل CI، وليست مشروع Supabase الحي. نجاح عقود RLS لا يثبت اكتمال سياسات دور runtime الإنتاجي؛ تبقى قاعدة الإنتاج خارج نطاق هذه العملية.
 - لم تُنفذ migration 0013 على Supabase الحية، ولم تُضف صلاحيات تشغيلية، ولم يُفعّل دفع أو تحصيل أو صرف أو برنامج نقاط.
 - PR #3 بقي مفتوحًا وغير مدمج عند التحقق. دمج `main` والنشر وتغيير قاعدة الإنتاج قرارات للمالك وحده.
+
+
+## 10. تحقق CI من رأس PR بعد تحديث التوثيق — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، PR #3 إلى `main`.
+- الالتزام: `72839300af992481e99bd297eb6bbcf010235ef7`.
+- النتيجة: [GitHub Actions run 45252293234 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45252293234).
+
+### الوظائف والخطوات
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: تثبيت الاعتماديات، اختبارات الخادم المعزولة وبوابة التغطية، وتدقيق اعتماديات الخادم والمتصفح.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: تطبيق migrations من 0001 حتى 0013 على PostgreSQL CI المؤقت، ثم فحوص المخطط وRLS deny-all وحراس append-only واختبارات bootstrap/audit وadapter وFastAPI.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium ناجحة.
+
+### الحدود والحالة
+
+- هذه النتيجة تخص الالتزام أعلاه؛ لا تثبت تشغيل Supabase الحية أو نشر التطبيق.
+- لا migration إنتاجية، ولا grants أو سياسات runtime جديدة، ولا مدفوعات أو صرف أو منح/استبدال نقاط.
+- عند إعادة قراءة PR #3 بعد التشغيل كان مفتوحًا وغير مدمج، وأعاد GitHub `mergeable=true`. قابلية الدمج التقنية ليست موافقة على الدمج؛ القرار للمالك.
