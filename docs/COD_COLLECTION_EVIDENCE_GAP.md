@@ -52,3 +52,15 @@ The exact evidence type, confirmer role, and exception/reversal authority are op
 - Reopen this gate only after the owner approves the collection process and the resulting authorization model can be tested end-to-end.
 
 This review is documentation only. It adds no database objects, grants, endpoints, or production changes.
+
+## Payment-source boundary checked in the same review
+
+The checkout schema and database foundation were also inspected to avoid assuming that an online payment source already exists:
+
+- The checkout request schema has no client-selectable payment-method field.
+- The foundation migration constrains `orders.payment_method` to `cod` with a database CHECK constraint and default.
+- The inspected checkout route creates the order without a payment-provider reference, provider transaction identifier, authorization/capture state, or verified webhook event.
+- Therefore the current repository has no implemented online-payment confirmation source either. A future payment integration would need its own provider-verified, server-side event contract; a browser redirect or client-supplied “paid” flag must not be accepted as proof.
+
+This narrows the present loyalty gate: **there is currently no authoritative payment-settlement event for any order type**. For COD, delivery remains distinct from cash collection. For any future electronic method, provider settlement must be independently verified and idempotent before it can be considered an earning event. No payment method, checkout behavior, or financial record was changed by this review.
+
