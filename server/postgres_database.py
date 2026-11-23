@@ -398,6 +398,14 @@ class PostgresDatabase:
                    )""",
                 (self.schema,),
             ).fetchone()
+            ledger_details = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=? AND table_name='ledger'
+                     AND column_name IN (
+                       'source','reference_type','reference_id','basis_fils','snapshot_json'
+                     )""",
+                (self.schema,),
+            ).fetchone()
         complete = (tables and int(tables[0]) == len(SCHEMA_TABLES)
                     and columns and int(columns[0]) == 4
                     and gallery and int(gallery[0]) == 4
@@ -409,15 +417,16 @@ class PostgresDatabase:
                     and attachments and int(attachments[0]) == 9
                     and returns and int(returns[0]) == 25
                     and coupons and int(coupons[0]) == 26
-                    and totals and int(totals[0]) == 2)
-        return 11 if complete else 0
+                    and totals and int(totals[0]) == 2
+                    and ledger_details and int(ledger_details[0]) == 5)
+        return 12 if complete else 0
 
     def initialize(self) -> None:
         """Validate the pre-applied schema; never mutate production schema."""
-        if self.schema_version() != 11:
+        if self.schema_version() != 12:
             raise RuntimeError(
                 f"PostgreSQL schema {self.schema!r} is missing or incomplete; "
-                "apply structural Supabase migrations 0001-0012, including reference data and coupon-aware totals, before starting the app."
+                "apply structural Supabase migrations 0001-0013, including reference data, coupon-aware totals and seller ledger details, before starting the app."
             )
 
 
