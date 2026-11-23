@@ -230,6 +230,12 @@ def change_status(c,request,user,sub,status,expected,note,buyer=False):
     old = sub['status']
     if old!=expected or status not in NEXT[old] or (buyer and not (old in ('new','confirmed') and status=='cancelled')):
         fail('invalid_status',409)
+    # Claim the state transition before applying side effects. On PostgreSQL,
+    # concurrent requests can both read the old row; the conditional UPDATE
+    # serializes the transition so only its winner may restore inventory.
+    changed = c.execute('UPDATE seller_orders SET status=?,updated_at=? WHERE id=? AND status=?',(status,now(),sub['id'],old))
+    if changed.rowcount != 1:
+        fail('invalid_status',409)
     if status=='cancelled':
         for item in c.execute('SELECT product_id,variant_id,quantity FROM order_items WHERE seller_order_id=?',(sub['id'],)).fetchall():
             if item['variant_id'] is not None:
@@ -244,9 +250,6 @@ def change_status(c,request,user,sub,status,expected,note,buyer=False):
                 reason = 'cancel'
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
                       (item['product_id'],user['id'],item['quantity'],reason,sub['id'],now()))
-    changed = c.execute('UPDATE seller_orders SET status=?,updated_at=? WHERE id=? AND status=?',(status,now(),sub['id'],old))
-    if changed.rowcount != 1:
-        fail('invalid_status',409)
     c.execute('INSERT INTO order_events(seller_order_id,actor_id,from_status,to_status,note,created_at) VALUES(?,?,?,?,?,?)',
               (sub['id'],user['id'],old,status,note,now()))
     if status=='delivered':
