@@ -134,3 +134,21 @@ This matrix records direct SQL table use found in route modules. Indirect joins 
 5. **Public catalog:** public listing endpoints select wide rows in some places. Before granting public table SELECT, replace with least-privilege views/projections or carefully scoped columns; do not expose user/session/private media fields.
 6. **Financial separation:** seller ledger SELECT must be store-owner scoped; admin ledger access must be separate; no RLS policy should turn `cod_commission_due` into collected cash or withdrawable balance.
 7. **Migration/owner split:** web runtime credentials must not be used by migration tooling; production schema changes remain a separately approved operation.
+
+## 9. CI RLS evidence: distinguish test contracts from production policies
+
+A focused review of migrations `0001` through `0013` and the PostgreSQL contract scripts confirms the following:
+
+- The migrations enable **both** `ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` across the 32 application tables. Later feature migrations repeat this for each newly introduced table. The migration set does not install application-facing row policies or grant the runtime role table access.
+- `tests/postgres/rls_deny_all_contract.sql` creates a temporary `NOLOGIN NOSUPERUSER NOBYPASSRLS` probe role, grants it SELECT for the test, and verifies zero visible rows across all 32 tables. It also verifies that setting `app.current_user_id` or `app.system_operation` alone cannot bypass the deny-all baseline. The role and grants are removed afterward.
+- `tests/postgres/session_hash_bootstrap_contract.sql` creates temporary policies inside a transaction and rolls them back. It tests cookie-digest-only session lookup, active-user visibility, expiry/revocation behavior, and resistance to a forged `app.current_user_id`. These are contract fixtures, not policies installed by the application migrations.
+- `tests/postgres/audit_append_contract.sql` likewise installs a temporary actor-matched INSERT policy inside a transaction. It tests that an actor can append only an event attributed to that actor and cannot read audit rows through INSERT permission. The fixture is rolled back and its temporary role/grants are removed.
+
+### Interpretation of the successful CI run
+
+The successful PostgreSQL CI job proves that the deny-all baseline and the temporary bootstrap/audit policy contracts behave as asserted in the isolated CI database. It does **not** prove that the application has a complete production policy set, that the FastAPI runtime role has been provisioned, or that buyer/seller/admin routes work under a production-equivalent restricted role. In particular, the session and audit policies exercised by CI are deliberately not committed as production migrations.
+
+### Next security gate
+
+Before describing Supabase runtime access as implemented, add a reviewed, versioned policy-and-grant migration (or an explicitly documented equivalent provisioning procedure) for the dedicated runtime role. Then execute positive and negative route-level tests under that role for buyer A/B, seller A/B, public catalog projections, admin vs recent-admin, mail worker, and actor-attributed audit writes. Keep the deny-all tests as a separate fail-closed baseline. No live-project migration or credential change is part of this work.
+
