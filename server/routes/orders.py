@@ -244,7 +244,9 @@ def change_status(c,request,user,sub,status,expected,note,buyer=False):
                 reason = 'cancel'
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
                       (item['product_id'],user['id'],item['quantity'],reason,sub['id'],now()))
-    c.execute('UPDATE seller_orders SET status=?,updated_at=? WHERE id=?',(status,now(),sub['id']))
+    changed = c.execute('UPDATE seller_orders SET status=?,updated_at=? WHERE id=? AND status=?',(status,now(),sub['id'],old))
+    if changed.rowcount != 1:
+        fail('invalid_status',409)
     c.execute('INSERT INTO order_events(seller_order_id,actor_id,from_status,to_status,note,created_at) VALUES(?,?,?,?,?,?)',
               (sub['id'],user['id'],old,status,note,now()))
     if status=='delivered':
