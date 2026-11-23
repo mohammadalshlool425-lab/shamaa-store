@@ -56,6 +56,15 @@ BEGIN
               FROM shamaa_app.order_items oi WHERE oi.seller_order_id=so.id
           ),0)
      )
+     OR NEW.snapshot_json::jsonb IS DISTINCT FROM COALESCE((
+       SELECT jsonb_agg(jsonb_build_object(
+         'order_item_id',oi.id,'product_id',oi.product_id,
+         'title_ar',oi.title_ar,'title_en',oi.title_en,
+         'quantity',oi.quantity,'unit_price_fils',oi.unit_price_fils,
+         'commission_bps',oi.commission_bps,'commission_fils',oi.commission_fils
+       ) ORDER BY oi.id)
+         FROM shamaa_app.order_items oi WHERE oi.seller_order_id=NEW.seller_order_id
+     ),'[]'::jsonb)
      OR NOT EXISTS (
        SELECT 1 FROM shamaa_app.order_events oe
         WHERE oe.seller_order_id=NEW.seller_order_id AND oe.to_status='delivered'
