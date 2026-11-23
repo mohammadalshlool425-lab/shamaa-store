@@ -247,7 +247,9 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
         with factory.db.transaction() as c:
             c.execute("DELETE FROM ledger WHERE id=?", (ledger_id,))
-    with pytest.raises(psycopg.errors.CheckViolation):
+    from server.database import DatabaseIntegrityError
+
+    with pytest.raises(DatabaseIntegrityError):
         with factory.db.transaction() as c:
             c.execute(
                 """INSERT INTO ledger(
