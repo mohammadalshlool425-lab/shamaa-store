@@ -244,13 +244,23 @@ def change_status(c,request,user,sub,status,expected,note,buyer=False):
                 reason = 'cancel'
             c.execute('INSERT INTO inventory_movements(product_id,actor_id,delta,reason,seller_order_id,created_at) VALUES(?,?,?,?,?,?)',
                       (item['product_id'],user['id'],item['quantity'],reason,sub['id'],now()))
-    if status=='delivered':
-        # COD: a commission debt is accrued. This is NOT a payment or a seller payout.
-        c.execute("INSERT INTO ledger(seller_order_id,store_id,kind,amount_fils,created_at) VALUES(?,?,'cod_commission_due',?,?)",
-                  (sub['id'],sub['store_id'],sub['commission_fils'],now()))
     c.execute('UPDATE seller_orders SET status=?,updated_at=? WHERE id=?',(status,now(),sub['id']))
     c.execute('INSERT INTO order_events(seller_order_id,actor_id,from_status,to_status,note,created_at) VALUES(?,?,?,?,?,?)',
               (sub['id'],user['id'],old,status,note,now()))
+    if status=='delivered':
+        # COD: record an immutable commission debt only after the delivered event exists.
+        # This is not proof of cash collection and never creates a seller payout.
+        items = c.execute('''SELECT id AS order_item_id,product_id,title_ar,title_en,quantity,
+                                    unit_price_fils,commission_bps,commission_fils
+                               FROM order_items WHERE seller_order_id=? ORDER BY id''',(sub['id'],)).fetchall()
+        snapshot = json.dumps([dict(item) for item in items],ensure_ascii=False,separators=(',',':'))
+        basis_fils = sum(item['unit_price_fils'] * item['quantity'] for item in items)
+        c.execute("""INSERT INTO ledger(
+                       seller_order_id,store_id,kind,amount_fils,source,reference_type,
+                       reference_id,basis_fils,snapshot_json,created_at
+                     ) VALUES(?,?,'cod_commission_due',?,'cod_delivery','seller_order',?,?,?,?)
+                     ON CONFLICT(seller_order_id,kind) DO NOTHING""",
+                  (sub['id'],sub['store_id'],sub['commission_fils'],sub['id'],basis_fils,snapshot,now()))
     audit(c,user['id'],'order_status','seller_order',sub['id'],f'{old}->{status}')
     order = c.execute('SELECT buyer_id,number FROM orders WHERE id=?',(sub['order_id'],)).fetchone()
     owner_id = c.execute('SELECT owner_id FROM stores WHERE id=?',(sub['store_id'],)).fetchone()[0]
