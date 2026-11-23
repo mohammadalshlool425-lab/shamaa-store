@@ -217,3 +217,23 @@ npm run check
 - هذه النتيجة تخص الالتزام أعلاه؛ لا تثبت تشغيل Supabase الحية أو نشر التطبيق.
 - لا migration إنتاجية، ولا grants أو سياسات runtime جديدة، ولا مدفوعات أو صرف أو منح/استبدال نقاط.
 - عند إعادة قراءة PR #3 بعد التشغيل كان مفتوحًا وغير مدمج، وأعاد GitHub `mergeable=true`. قابلية الدمج التقنية ليست موافقة على الدمج؛ القرار للمالك.
+
+## 11. تحقق CI نهائي لرأس PR بعد بوابة إثبات قبض COD — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، وPR #3 إلى `main`.
+- الالتزام: `a7a4417cdd434d6e9804f33861eafdf7a3263bd0`.
+- النتيجة: [GitHub Actions run 45254907573 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45254907573).
+
+### الوظائف الثلاث
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: اكتملت اختبارات الخادم المعزولة وبوابة التغطية وتدقيق الاعتماديات.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: طُبقت migrations من 0001 حتى 0013 على قاعدة CI المؤقتة؛ نجحت عقود المخطط وRLS deny-all وقيود append-only واختبارات adapter وFastAPI على PostgreSQL.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium اكتملت بنجاح.
+
+### الحدود
+
+- النتيجة تخص الالتزام المذكور فقط، ولا تثبت نشر التطبيق أو اتصال FastAPI الإنتاجي بمشروع Supabase.
+- لا تزال فجوة إثبات قبض COD موثقة؛ لا يُعد حدث `delivered` دليل قبض نقد.
+- لم تُطبق أي migration على Supabase الحية، ولم تُضف سياسات runtime إنتاجية أو صلاحيات جديدة.
+- PR #3 ما يزال مفتوحًا وغير مدمج؛ لا دمج إلى `main` ولا نشر دون قرار المالك.
+
