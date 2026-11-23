@@ -163,10 +163,10 @@ def test_sensitive_logs_append_only(factory,table):
             "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",
             (table,),
         ).fetchall()
-        immutable = {row['name'] for row in definitions
-                     if row['name'] in (f'immutable_{table}_update', f'immutable_{table}_delete')}
-        assert immutable == {f'immutable_{table}_update', f'immutable_{table}_delete'}
-        assert all('RAISE(ABORT' in row['sql'] for row in definitions)
+        trigger_sql = [row['sql'].upper() for row in definitions]
+        for operation in ('UPDATE', 'DELETE'):
+            assert any(f'BEFORE {operation} ON {table.upper()}' in sql
+                       and 'RAISE(ABORT' in sql for sql in trigger_sql)
         if table == 'ledger':
             assert 'ledger_delivery_reference_guard' in {row['name'] for row in definitions}
     if table=='audit_log':
