@@ -173,13 +173,28 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     assert sorted(response.status_code for response in confirmation_results) == [200, 409]
 
     previous = "confirmed"
-    for status in ("preparing", "shipped", "delivered"):
+    for status in ("preparing", "shipped"):
         changed = seller["client"].patch(
             f"/api/seller/orders/{shipment['id']}/status",
             json={"status": status, "expected_status": previous},
         )
         assert changed.status_code == 200, changed.text
         previous = status
+
+    delivery_barrier = Barrier(2)
+
+    def deliver_shipment():
+        delivery_barrier.wait(timeout=10)
+        return seller["client"].patch(
+            f"/api/seller/orders/{shipment['id']}/status",
+            json={"status": "delivered", "expected_status": "shipped"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(deliver_shipment)
+        second = pool.submit(deliver_shipment)
+        delivery_results = [first.result(timeout=30), second.result(timeout=30)]
+    assert sorted(response.status_code for response in delivery_results) == [200, 409]
 
     with factory.db.read() as c:
         expected_snapshot = [
