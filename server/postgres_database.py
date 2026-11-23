@@ -257,7 +257,7 @@ class PostgresDatabase:
         return _UserScopedPostgresDatabase(self, user_id)
 
     def schema_version(self) -> int:
-        """Return 11 when coupon-aware totals and all required schema objects exist."""
+        """Return 12 when coupon-aware totals and all required schema objects exist."""
         with self.read() as connection:
             tables = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
