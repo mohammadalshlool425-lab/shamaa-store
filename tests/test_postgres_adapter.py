@@ -1,5 +1,7 @@
 """Live PostgreSQL adapter contract tests; skipped outside the PostgreSQL CI job."""
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -245,6 +247,45 @@ def test_postgres_rate_limit_bucket_is_transaction_local_and_cleared():
         row = connection.execute(
             "SELECT current_setting('app.system_operation', TRUE), "
             "current_setting('app.rate_limit_bucket', TRUE)"
+        ).fetchone()
+        assert row[0] is None
+        assert row[1] is None
+
+
+
+def test_postgres_request_identity_isolated_between_concurrent_threads():
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("PostgreSQL concurrent request identity test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(conninfo)
+    barrier = Barrier(2)
+
+    def read_identity(user_id, session_hash):
+        with db.request_scope(session_hash) as bind_user:
+            bind_user(user_id)
+            # Force both request contexts to overlap before either reads settings.
+            barrier.wait(timeout=10)
+            with db.read() as connection:
+                row = connection.execute(
+                    "SELECT current_setting('app.session_token_hash', TRUE), "
+                    "current_setting('app.current_user_id', TRUE)"
+                ).fetchone()
+                return row[0], row[1]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(read_identity, 6101, "a" * 64)
+        second = pool.submit(read_identity, 6202, "b" * 64)
+        assert first.result(timeout=20) == ("a" * 64, "6101")
+        assert second.result(timeout=20) == ("b" * 64, "6202")
+
+    # Both thread contexts must be gone after their request scopes exit.
+    with db.read() as connection:
+        row = connection.execute(
+            "SELECT current_setting('app.session_token_hash', TRUE), "
+            "current_setting('app.current_user_id', TRUE)"
         ).fetchone()
         assert row[0] is None
         assert row[1] is None
