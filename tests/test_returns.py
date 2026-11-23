@@ -1,4 +1,6 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -342,4 +344,53 @@ def test_admin_cannot_resolve_return_before_seller_confirms_receipt(market):
     )
     assert response.status_code == 409
     assert response.json()["code"] == "invalid_status"
+
+def test_concurrent_seller_return_decisions_commit_one_transition_and_one_side_effect(market):
+    factory = market["factory"]
+    buyer = market["buyer"]
+    shipment, item = _delivered_item(factory, market["a"], buyer, market["p"], 1)
+    opened = buyer["client"].post("/api/returns", json={
+        "order_item_id": item["id"], "quantity": 1, "reason": "damaged",
+        "description": "وصل المنتج متضررًا وأحتاج إلى تسجيل طلب إرجاع رسمي.",
+    })
+    assert opened.status_code == 201, opened.text
+    request_id = opened.json()["return"]["id"]
+    seller = market["a"]["client"]
+    barrier = Barrier(2)
+
+    def decide(status, note):
+        barrier.wait(timeout=10)
+        return seller.post(
+            f"/api/returns/{request_id}/seller-decision",
+            json={"status": status, "note": note},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        approved = pool.submit(decide, "approved", "تمت الموافقة على طلب الإرجاع.")
+        rejected = pool.submit(decide, "rejected", "تم رفض طلب الإرجاع بعد مراجعة الحالة.")
+        responses = [approved.result(timeout=30), rejected.result(timeout=30)]
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with factory.db.read() as c:
+        state = c.execute(
+            "SELECT status FROM return_requests WHERE id=?", (request_id,)
+        ).fetchone()["status"]
+        decisions = c.execute(
+            """SELECT event_type FROM return_request_events
+                 WHERE request_id=? AND event_type IN ('seller_approved','seller_rejected')""",
+            (request_id,),
+        ).fetchall()
+        buyer_notifications = c.execute(
+            "SELECT COUNT(*) FROM notifications WHERE user_id=? AND kind='return'",
+            (buyer["id"],),
+        ).fetchone()[0]
+        audit_count = c.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE entity_type='return_request' AND entity_id=?",
+            (str(request_id),),
+        ).fetchone()[0]
+
+    assert state in ("approved", "rejected")
+    assert len(decisions) == 1
+    assert buyer_notifications == 2  # opened + exactly one seller decision
+    assert audit_count == 2  # opened + exactly one seller decision
 
