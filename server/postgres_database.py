@@ -69,6 +69,13 @@ class PostgresConnection:
         except (psycopg.IntegrityError, psycopg.OperationalError) as exc:
             _raise_database_error(exc)
 
+    def lock_return_request(self, request_id: int) -> None:
+        """Serialize a return workflow transition before reading its current state."""
+        self.execute(
+            "SELECT id FROM return_requests WHERE id=? FOR UPDATE",
+            (request_id,),
+        ).fetchone()
+
 
 class PostgresDatabase:
     """One short-lived Psycopg connection per operation; no implicit migrations.
