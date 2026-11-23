@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import secrets
 import json
 import pytest
@@ -582,3 +583,42 @@ def test_variant_configuration_rejects_stale_product_version_and_base_stock_edit
         json={"stock": 8, "expected_version": first.json()["version"]},
     )
     assert stock_response.status_code == 422
+
+def test_concurrent_buyer_shipment_cancellation_restores_stock_once(market):
+    order, _, _ = create_order(market)
+    client = market["buyer"]["client"]
+    shipment = next(
+        item for item in order["shipments"]
+        if item["store_id"] == market["a"]["store_id"]
+    )
+    path = f'/api/orders/{order["id"]}/shipments/{shipment["id"]}/cancel'
+    barrier = Barrier(2)
+
+    def cancel():
+        barrier.wait(timeout=10)
+        return client.post(path)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(cancel)
+        second = pool.submit(cancel)
+        responses = [first.result(timeout=30), second.result(timeout=30)]
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with market["factory"].db.read() as c:
+        stock = c.execute(
+            "SELECT stock FROM products WHERE id=?", (market["p"]["id"],)
+        ).fetchone()[0]
+        movements = c.execute(
+            "SELECT COUNT(*) FROM inventory_movements WHERE seller_order_id=? AND reason='cancel'",
+            (shipment["id"],),
+        ).fetchone()[0]
+        cancellations = c.execute(
+            """SELECT COUNT(*) FROM order_events
+                 WHERE seller_order_id=? AND to_status='cancelled'""",
+            (shipment["id"],),
+        ).fetchone()[0]
+
+    assert stock == 8
+    assert movements == 1
+    assert cancellations == 1
+
