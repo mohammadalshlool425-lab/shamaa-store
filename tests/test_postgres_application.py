@@ -165,10 +165,15 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
         previous = status
 
     with factory.db.read() as c:
-        item_id = c.execute(
-            "SELECT id FROM order_items WHERE seller_order_id=?",
-            (shipment["id"],),
-        ).fetchone()["id"]
+        expected_snapshot = [
+            dict(row) for row in c.execute(
+                """SELECT id AS order_item_id,product_id,title_ar,title_en,quantity,
+                          unit_price_fils,commission_bps,commission_fils
+                     FROM order_items WHERE seller_order_id=? ORDER BY id""",
+                (shipment["id"],),
+            ).fetchall()
+        ]
+        item_id = expected_snapshot[0]["order_item_id"]
         original_ledger_count = c.execute(
             "SELECT COUNT(*) FROM ledger WHERE seller_order_id=?",
             (shipment["id"],),
@@ -183,7 +188,9 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     assert ledger_entry["reference_type"] == "seller_order"
     assert ledger_entry["reference_id"] == shipment["id"]
     assert ledger_entry["amount_fils"] == shipment["commission_fils"]
-    assert len(ledger_entry["commission_snapshot"]) == len(shipment["items"])
+    expected_basis = sum(item["unit_price_fils"] * item["quantity"] for item in expected_snapshot)
+    assert ledger_entry["basis_fils"] == expected_basis
+    assert ledger_entry["commission_snapshot"] == expected_snapshot
 
     opened = buyer["client"].post("/api/returns", json={
         "order_item_id": item_id,
