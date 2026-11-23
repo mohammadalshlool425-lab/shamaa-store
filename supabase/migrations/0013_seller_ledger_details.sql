@@ -13,6 +13,8 @@ ALTER TABLE shamaa_app.ledger
   ADD COLUMN snapshot_json TEXT NOT NULL DEFAULT '[]'
     CHECK (jsonb_typeof(snapshot_json::jsonb)='array');
 
+DROP TRIGGER immutable_ledger_update ON shamaa_app.ledger;
+
 UPDATE shamaa_app.ledger l
    SET reference_id=l.seller_order_id,
        basis_fils=COALESCE((
