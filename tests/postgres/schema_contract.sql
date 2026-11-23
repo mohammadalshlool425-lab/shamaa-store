@@ -107,7 +107,21 @@ BEGIN
   IF return_guard_count <> 10 THEN
     RAISE EXCEPTION 'Expected ten return-request guards; got %', return_guard_count;
   END IF;
-END $$;
+  IF (SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='shamaa_app' AND table_name='ledger'
+         AND column_name IN ('source','reference_type','reference_id','basis_fils','snapshot_json')) <> 5 THEN
+    RAISE EXCEPTION 'Seller ledger detail columns are incomplete';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='shamaa_app' AND c.relname='ledger'
+      AND t.tgname='ledger_delivery_reference_guard' AND NOT t.tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Seller ledger delivery/reference guard is missing';
+  END IF;
+END $;
 
 -- Validate critical monetary and identity constraints with rollback-only fixtures.
 BEGIN;
