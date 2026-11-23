@@ -185,6 +185,16 @@ def test_status_machine_delivery_ledger_and_no_postdelivery_cancel(market):
         assert entries[0]['basis_fils']==sum(item['unit_price_fils']*item['quantity'] for item in s['items'])
         snapshot=json.loads(entries[0]['snapshot_json'])
         assert snapshot[0]['commission_bps']==s['items'][0]['commission_bps']
+        with pytest.raises(Exception,match='delivered shipment snapshot'):
+            c.execute(
+                """INSERT INTO ledger(
+                       seller_order_id,store_id,kind,amount_fils,source,reference_type,
+                       reference_id,basis_fils,snapshot_json,created_at
+                   ) VALUES(?,?,'cod_commission_due',?,'cod_delivery','seller_order',?,?,?,?)""",
+                (s['id'],s['store_id'],s['commission_fils'],s['id'],
+                 sum(item['unit_price_fils']*item['quantity'] for item in s['items']),
+                 '[]',1),
+            )
         assert snapshot[0]['commission_fils']==s['items'][0]['commission_fils']
         assert c.execute('SELECT COUNT(*) FROM order_events WHERE seller_order_id=?',(s['id'],)).fetchone()[0]==5
 
