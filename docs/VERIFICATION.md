@@ -169,3 +169,13 @@ npm run check
 - تغييرات CI التصحيحية المهمة: تمرير `is_demo` كقيمة boolean إلى PostgreSQL، استخدام حساب MFA منفصل لكل سيناريو إداري، وعدم استهلاك تجهيز الاختبار لرمز TOTP الأول. ثبت أن reauth يعيد HTTP 200؛ صحح اختبار المتصفح ليتحقق من إغلاق عنصر الحوار بدل اشتراط إزالة محتواه من DOM.
 - الحالة: **مكتملة في بيئات CI المعزولة فقط**. Pull Request #3 مفتوح وغير مدمج. لا دمج إلى main، ولا تطبيق migration 0009 على Supabase الحي، ولا ربط FastAPI production بقاعدة Supabase. تظل سياسات PostgreSQL fail-closed؛ لا يعني نجاح CI جاهزية نشر عامة أو اعتمادًا قانونيًا.
 
+
+
+## 8. دفتر عمولات البائعين — CI run 45227344013 (2026-11-23)
+
+- الالتزام: `006c0e042f319485597c3f4a2595aad134d86551`.
+- النتيجة النهائية: [SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45227344013).
+- Server, permissions, stock and encrypted restore: SUCCESS، بما يشمل اختبار حدود دفتر العمولات واستخدام `DatabaseIntegrityError` من طبقة adapter.
+- PostgreSQL 17 schema and security contract: SUCCESS؛ طُبقت ترحيلات المخطط حتى 0013 على PostgreSQL CI معزول، واجتازت حراس الدفتر وعقود RLS والاختبارات التطبيقية.
+- Bilingual mobile checkout, seller/admin, axe and offline: SUCCESS؛ 9 سيناريوهات Chromium ناجحة.
+- هذا إثبات CI على قاعدة مؤقتة فقط، وليس تنفيذًا على مشروع Supabase الحي أو إثباتًا لوجود سياسات runtime إنتاجية. PR #3 ما يزال مفتوحًا وغير مدمج.
