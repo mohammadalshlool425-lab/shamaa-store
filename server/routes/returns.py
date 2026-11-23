@@ -269,8 +269,7 @@ def seller_decision(
 def cancel_return(request_id: int, request: Request, user=Depends(verified_user)):
     throttle(request,"return_cancel",limit=10,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
-        _lock_return_request(c, request_id)
-        row = _participant_return(c, request_id, user)
+        row = _locked_participant_return(c, request_id, user)
         if row["buyer_id"] != user["id"] or row["status"] not in ("requested","approved"):
             fail("return_closed", 409)
         created = now()
@@ -322,8 +321,7 @@ def confirm_return_received(
 ):
     throttle(request,"return_receive",limit=20,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
-        _lock_return_request(c, request_id)
-        row = _participant_return(c,request_id,user)
+        row = _locked_participant_return(c, request_id, user)
         if row["seller_id"] != user["id"] or row["status"] != "return_shipped":
             fail("return_closed",409)
         created = now()
