@@ -31,6 +31,9 @@ UPDATE shamaa_app.ledger l
            FROM shamaa_app.order_items oi WHERE oi.seller_order_id=l.seller_order_id
        ),'[]');
 
+CREATE TRIGGER immutable_ledger_update BEFORE UPDATE OR DELETE ON shamaa_app.ledger
+  FOR EACH ROW EXECUTE FUNCTION shamaa_app.reject_immutable_change();
+
 ALTER TABLE shamaa_app.ledger
   ADD CONSTRAINT ledger_reference_matches_shipment
     CHECK (reference_id=seller_order_id);
