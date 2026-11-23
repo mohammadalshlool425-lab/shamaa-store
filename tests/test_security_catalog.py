@@ -159,9 +159,16 @@ def test_sensitive_logs_append_only(factory,table):
     # BEFORE triggers execute even for a row-less modification? SQLite only executes per row,
     # so verify trigger existence and exercise audit below with an actual row.
     with factory.db.read() as c:
-        definitions=c.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(table,)).fetchall()
-        assert len(definitions)==2
-        assert all('RAISE(ABORT' in r[0] for r in definitions)
+        definitions=c.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",
+            (table,),
+        ).fetchall()
+        immutable = {row['name'] for row in definitions
+                     if row['name'] in (f'immutable_{table}_update', f'immutable_{table}_delete')}
+        assert immutable == {f'immutable_{table}_update', f'immutable_{table}_delete'}
+        assert all('RAISE(ABORT' in row['sql'] for row in definitions)
+        if table == 'ledger':
+            assert 'ledger_delivery_reference_guard' in {row['name'] for row in definitions}
     if table=='audit_log':
         user=factory.user()
         with pytest.raises(sqlite3.IntegrityError):
