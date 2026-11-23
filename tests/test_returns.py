@@ -385,7 +385,7 @@ def test_concurrent_seller_return_decisions_commit_one_transition_and_one_side_e
             (buyer["id"],),
         ).fetchone()[0]
         audit_count = c.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE entity_type='return_request' AND entity_id=?",
+            "SELECT COUNT(*) FROM audit_log WHERE entity='return_request' AND entity_id=?",
             (str(request_id),),
         ).fetchone()[0]
 
