@@ -4,6 +4,8 @@ The CI database owner is a superuser, so these tests validate application SQL
 compatibility only. They do NOT validate RLS isolation or runtime-role grants.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -155,8 +157,23 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     assert checkout.status_code == 201, checkout.text
     shipment = checkout.json()["order"]["shipments"][0]
 
-    previous = "new"
-    for status in ("confirmed", "preparing", "shipped", "delivered"):
+    status_barrier = Barrier(2)
+
+    def confirm_shipment():
+        status_barrier.wait(timeout=10)
+        return seller["client"].patch(
+            f"/api/seller/orders/{shipment['id']}/status",
+            json={"status": "confirmed", "expected_status": "new"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(confirm_shipment)
+        second = pool.submit(confirm_shipment)
+        confirmation_results = [first.result(timeout=30), second.result(timeout=30)]
+    assert sorted(response.status_code for response in confirmation_results) == [200, 409]
+
+    previous = "confirmed"
+    for status in ("preparing", "shipped", "delivered"):
         changed = seller["client"].patch(
             f"/api/seller/orders/{shipment['id']}/status",
             json={"status": status, "expected_status": previous},
@@ -212,11 +229,22 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     assert opened.status_code == 201, opened.text
     return_id = opened.json()["return"]["id"]
 
-    approved = seller["client"].post(
-        f"/api/returns/{return_id}/seller-decision",
-        json={"status": "approved", "note": "تم قبول الإرجاع بعد مراجعة الوصف."},
-    )
-    assert approved.status_code == 200, approved.text
+    return_barrier = Barrier(2)
+
+    def approve_return():
+        return_barrier.wait(timeout=10)
+        return seller["client"].post(
+            f"/api/returns/{return_id}/seller-decision",
+            json={"status": "approved", "note": "تم قبول الإرجاع بعد مراجعة الوصف."},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(approve_return)
+        second = pool.submit(approve_return)
+        approval_results = [first.result(timeout=30), second.result(timeout=30)]
+    assert sorted(response.status_code for response in approval_results) == [200, 409]
+    approved = next(response for response in approval_results if response.status_code == 200)
+    assert approved.json()["return"]["status"] == "approved"
     shipped = buyer["client"].post(
         f"/api/returns/{return_id}/shipment",
         json={"carrier": "CI return carrier", "tracking_number": "PG-RETURN-001"},
