@@ -19,6 +19,9 @@ def test_psycopg_adapter_executes_portable_contract_against_postgresql():
     assert db.schema_version() == 12
     assert db.catalog_seeded_by_migrations is True
     db.initialize()
+    # The workflow lock helper must issue SELECT FOR UPDATE only in a transaction.
+    with db.transaction() as connection:
+        connection.lock_return_request(-1)  # Missing ids are a safe no-op.
     # Category reference rows must already exist from migration 0011; adapter
     # startup itself does not insert or otherwise mutate the catalog.
     with db.read() as connection:
