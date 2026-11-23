@@ -217,3 +217,11 @@
 - بالتالي لا يوجد حاليًا مصدر تسوية دفع موثوق لأي نوع طلب: COD يحتاج حدث قبض مستقلًا، وأي دفع إلكتروني مستقبلي يحتاج تحققًا خادميًا من المزود ومفتاح تكرار/مرجعًا فريدًا.
 - تم تحديث [COD_COLLECTION_EVIDENCE_GAP.md](COD_COLLECTION_EVIDENCE_GAP.md) و[LOYALTY_POINTS_IMPLEMENTATION_GATE.md](LOYALTY_POINTS_IMPLEMENTATION_GATE.md). الدفعة 10 تظل تحضيرًا هندسيًا فقط، دون grants أو redemption أو تغيير checkout.
 
+## تحقق CI بعد إصلاح إلغاء الشحنة المتزامن — 2026-11-24
+
+- الفرع: `agent/supabase-integration`، وPR #3 إلى `main`.
+- الالتزام المختبر: `b3eb64eeb1a2d2f1d1543dd7ed8056000de3a7ad`.
+- النتيجة: [GitHub Actions run 45275781274 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45275781274).
+- نجحت وظائف الخادم والصلاحيات والمخزون والاستعادة المشفرة، وPostgreSQL 17 schema/security contract، وChromium (9/9).
+- اختبار PostgreSQL للتزامن يؤكد أن طلبَي إلغاء الشحنة نفسيهما لا ينتجان إلا انتقالًا واحدًا إلى cancelled، وحركة استعادة مخزون واحدة، واستجابة منافسة مرفوضة بـ409.
+- هذا إثبات CI على قاعدة مؤقتة وفرع التطوير فقط. PR #3 مفتوح وغير مدمج؛ لا نشر ولا تطبيق migrations على Supabase الحية.
