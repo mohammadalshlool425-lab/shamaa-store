@@ -89,8 +89,18 @@ def test_seller_ledger_is_store_scoped_and_exposes_commission_snapshot(market):
     assert entry['reference_type']=='seller_order'
     assert entry['reference_id']==shipment['id']
     assert entry['amount_fils']==shipment['commission_fils']
-    assert entry['basis_fils']==sum(item['unit_price_fils']*item['quantity'] for item in shipment['items'])
-    assert len(entry['commission_snapshot'])==len(shipment['items'])
+    with market['factory'].db.read() as c:
+        expected_snapshot = [
+            dict(row) for row in c.execute(
+                '''SELECT id AS order_item_id,product_id,title_ar,title_en,quantity,
+                          unit_price_fils,commission_bps,commission_fils
+                     FROM order_items WHERE seller_order_id=? ORDER BY id''',
+                (shipment['id'],),
+            ).fetchall()
+        ]
+    expected_basis = sum(item['unit_price_fils'] * item['quantity'] for item in expected_snapshot)
+    assert entry['basis_fils'] == expected_basis
+    assert entry['commission_snapshot'] == expected_snapshot
     assert ledger['commission_due_fils']==entry['amount_fils']
     assert seller_b.get('/api/seller/ledger').json()=={'entries':[],'commission_due_fils':0}
     assert not {'withdrawable_balance_fils','cash_collected_fils','payout_fils'} & set(ledger)
