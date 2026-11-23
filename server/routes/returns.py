@@ -73,6 +73,14 @@ def _return_payload(c, row, user, include_private=False):
     return result
 
 
+def _lock_return_request(c, request_id):
+    # PostgreSQL needs an explicit row lock; SQLite's BEGIN IMMEDIATE already
+    # serializes writers for the duration of the transaction.
+    lock = getattr(c, "lock_return_request", None)
+    if lock is not None:
+        lock(request_id)
+
+
 def _participant_return(c, request_id, user):
     row = _return_row(c, request_id)
     if not row or user["id"] not in (row["buyer_id"], row["seller_id"]):
@@ -212,6 +220,7 @@ def seller_decision(
     if body.status == "rejected" and len(body.note) < 5:
         fail("invalid_input", 422)
     with request.app.state.db.transaction() as c:
+        _lock_return_request(c, request_id)
         row = _participant_return(c, request_id, user)
         if row["seller_id"] != user["id"]:
             fail("not_found", 404)
@@ -253,6 +262,7 @@ def seller_decision(
 def cancel_return(request_id: int, request: Request, user=Depends(verified_user)):
     throttle(request,"return_cancel",limit=10,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
+        _lock_return_request(c, request_id)
         row = _participant_return(c, request_id, user)
         if row["buyer_id"] != user["id"] or row["status"] not in ("requested","approved"):
             fail("return_closed", 409)
@@ -279,6 +289,7 @@ def ship_return(
 ):
     throttle(request,"return_ship",limit=10,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
+        _lock_return_request(c, request_id)
         row = _participant_return(c,request_id,user)
         if row["buyer_id"] != user["id"] or row["status"] != "approved":
             fail("return_closed",409)
@@ -305,6 +316,7 @@ def confirm_return_received(
 ):
     throttle(request,"return_receive",limit=20,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
+        _lock_return_request(c, request_id)
         row = _participant_return(c,request_id,user)
         if row["seller_id"] != user["id"] or row["status"] != "return_shipped":
             fail("return_closed",409)
@@ -348,6 +360,7 @@ def admin_list_returns(
 @admin_router.get("/returns/{request_id}")
 def admin_get_return(request_id: int, request: Request, user=Depends(admin_user)):
     with request.app.state.db.read() as c:
+        _lock_return_request(c, request_id)
         row = _return_row(c,request_id)
         if not row:
             fail("not_found",404)
