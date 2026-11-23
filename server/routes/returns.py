@@ -88,6 +88,14 @@ def _participant_return(c, request_id, user):
     return row
 
 
+def _locked_participant_return(c, request_id, user):
+    # Authorize before taking a lock on a caller-selected identifier, then
+    # re-read after acquiring it so the workflow gate uses the committed state.
+    _participant_return(c, request_id, user)
+    _lock_return_request(c, request_id)
+    return _participant_return(c, request_id, user)
+
+
 def _add_event(c, request_id, actor_id, actor_role, event_type, body, created):
     return insert_id(
         c,
@@ -220,8 +228,7 @@ def seller_decision(
     if body.status == "rejected" and len(body.note) < 5:
         fail("invalid_input", 422)
     with request.app.state.db.transaction() as c:
-        _lock_return_request(c, request_id)
-        row = _participant_return(c, request_id, user)
+        row = _locked_participant_return(c, request_id, user)
         if row["seller_id"] != user["id"]:
             fail("not_found", 404)
         if row["status"] != "requested":
@@ -289,8 +296,7 @@ def ship_return(
 ):
     throttle(request,"return_ship",limit=10,window=3600,identifier=str(user["id"]))
     with request.app.state.db.transaction() as c:
-        _lock_return_request(c, request_id)
-        row = _participant_return(c,request_id,user)
+        row = _locked_participant_return(c, request_id, user)
         if row["buyer_id"] != user["id"] or row["status"] != "approved":
             fail("return_closed",409)
         created = now()
