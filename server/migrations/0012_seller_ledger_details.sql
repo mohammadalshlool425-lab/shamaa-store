@@ -48,6 +48,18 @@ WHEN NEW.reference_id<>NEW.seller_order_id
           FROM order_items oi WHERE oi.seller_order_id=so.id
       ),0)
  )
+ OR json(NEW.snapshot_json) <> json(COALESCE((
+   SELECT json_group_array(json_object(
+     'order_item_id',items.id,'product_id',items.product_id,
+     'title_ar',items.title_ar,'title_en',items.title_en,
+     'quantity',items.quantity,'unit_price_fils',items.unit_price_fils,
+     'commission_bps',items.commission_bps,'commission_fils',items.commission_fils
+   ))
+     FROM (
+       SELECT id,product_id,title_ar,title_en,quantity,unit_price_fils,commission_bps,commission_fils
+         FROM order_items WHERE seller_order_id=NEW.seller_order_id ORDER BY id
+     ) AS items
+ ),'[]'))
  OR NOT EXISTS (
    SELECT 1 FROM order_events oe
     WHERE oe.seller_order_id=NEW.seller_order_id AND oe.to_status='delivered'
