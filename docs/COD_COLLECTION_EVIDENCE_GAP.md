@@ -64,3 +64,18 @@ The checkout schema and database foundation were also inspected to avoid assumin
 
 This narrows the present loyalty gate: **there is currently no authoritative payment-settlement event for any order type**. For COD, delivery remains distinct from cash collection. For any future electronic method, provider settlement must be independently verified and idempotent before it can be considered an earning event. No payment method, checkout behavior, or financial record was changed by this review.
 
+
+
+## Return and refund boundary checked in the same review
+
+The item-return workflow was inspected in `server/routes/returns.py` and `tests/test_returns.py`:
+
+- A return can be opened only for a delivered order item within the configured 14-day operational window. Seller approval, buyer shipment, seller receipt, and an MFA-rechecked administrator decision are separate workflow steps.
+- The return state machine and append-only event history record operational decisions. The final `resolved` state is not a payment refund, cash receipt, or settlement event.
+- The return endpoints do not create a refund transaction, payment-provider reversal, cash repayment record, inventory restock, or commission-ledger reversal.
+- Existing acceptance tests verify that after a return is resolved, the seller-order ledger still contains only the original COD commission-due entry and the original shipment remains `delivered`. This is deliberate separation, not evidence that a refund has been paid.
+- Consequently, a resolved return must not itself trigger loyalty reversal, customer refund confirmation, or seller commission adjustment. Those actions require distinct, authorized, idempotent financial events with their own evidence and reconciliation.
+
+**Open financial workflow gap:** the repository currently records return disposition but does not implement the financial consequences of an approved refund. Before building that workflow, the owner must decide the refund payer/source, who authorizes it, evidence of money returned, partial-refund calculation, treatment of delivery fees and discounts, inventory disposition, and how/when the seller commission is reversed or reconciled. Engineering must not infer these policies from the return status.
+
+This was a read-only code and test review. No return, inventory, ledger, payment, or production behavior was changed.
