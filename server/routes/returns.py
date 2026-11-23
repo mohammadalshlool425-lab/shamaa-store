@@ -222,18 +222,22 @@ def seller_decision(
         note = body.note or "وافق البائع على طلب الإرجاع. Seller approved the return."
         event_id = _add_event(c, request_id, user["id"], "seller", event_type, note, created)
         if body.status == "approved":
-            c.execute(
+            changed = c.execute(
                 """UPDATE return_requests SET status='approved',seller_note=?,updated_at=?
                      WHERE id=? AND status='requested'""",
                 (body.note,created,request_id),
             )
+            if changed.rowcount != 1:
+                fail("return_closed", 409)
         else:
-            c.execute(
+            changed = c.execute(
                 """UPDATE return_requests SET status='rejected',seller_note=?,closed_at=?,
                           closed_by=?,decision_note=?,updated_at=?
                      WHERE id=? AND status='requested'""",
                 (body.note,created,user["id"],body.note,created,request_id),
             )
+            if changed.rowcount != 1:
+                fail("return_closed", 409)
         _notify(
             c,[row["buyer_id"]],
             "ردّ البائع على طلب الإرجاع. راجع الحالة والتفاصيل في حسابك.",
@@ -255,11 +259,13 @@ def cancel_return(request_id: int, request: Request, user=Depends(verified_user)
         created = now()
         note = "ألغى المشتري طلب الإرجاع قبل شحن المنتج المرتجع. Buyer cancelled before return shipment."
         event_id = _add_event(c,request_id,user["id"],"buyer","buyer_cancelled",note,created)
-        c.execute(
+        changed = c.execute(
             """UPDATE return_requests SET status='cancelled',closed_at=?,closed_by=?,
-                      decision_note=?,updated_at=? WHERE id=?""",
+                      decision_note=?,updated_at=? WHERE id=? AND status IN ('requested','approved')""",
             (created,user["id"],note,created,request_id),
         )
+        if changed.rowcount != 1:
+            fail("return_closed", 409)
         _notify(c,[row["seller_id"]],"ألغى المشتري طلب الإرجاع.","The buyer cancelled the return request.",created)
         audit(c,user["id"],"return_cancelled","return_request",request_id,f"event={event_id}")
         result = _return_payload(c,_return_row(c,request_id),user)
@@ -279,11 +285,13 @@ def ship_return(
         created = now()
         note = f"carrier={body.carrier};tracking={body.tracking_number}"
         event_id = _add_event(c,request_id,user["id"],"buyer","buyer_return_shipped",note,created)
-        c.execute(
+        changed = c.execute(
             """UPDATE return_requests SET status='return_shipped',return_carrier=?,
                       return_tracking_number=?,updated_at=? WHERE id=? AND status='approved'""",
             (body.carrier,body.tracking_number,created,request_id),
         )
+        if changed.rowcount != 1:
+            fail("return_closed", 409)
         _notify(c,[row["seller_id"]],"أرسل المشتري المرتجع وسجّل بيانات التتبع.","The buyer shipped the return and provided tracking details.",created)
         audit(c,user["id"],"return_shipped","return_request",request_id,f"event={event_id}")
         result = _return_payload(c,_return_row(c,request_id),user)
@@ -302,11 +310,13 @@ def confirm_return_received(
             fail("return_closed",409)
         created = now()
         event_id = _add_event(c,request_id,user["id"],"seller","seller_received",body.note,created)
-        c.execute(
+        changed = c.execute(
             """UPDATE return_requests SET status='received',updated_at=?
                  WHERE id=? AND status='return_shipped'""",
             (created,request_id),
         )
+        if changed.rowcount != 1:
+            fail("return_closed", 409)
         _notify(c,[row["buyer_id"]],"أكد البائع استلام المنتج المرتجع. تنتظر العملية المراجعة النهائية.","The seller confirmed receipt of the returned item. Final review is pending.",created)
         audit(c,user["id"],"return_received","return_request",request_id,f"event={event_id}")
         result = _return_payload(c,_return_row(c,request_id),user)
@@ -361,11 +371,13 @@ def admin_decide_return(
         created = now()
         event_type = "admin_resolved" if body.status=="resolved" else "admin_rejected"
         event_id = _add_event(c,request_id,user["id"],"admin",event_type,body.note,created)
-        c.execute(
+        changed = c.execute(
             """UPDATE return_requests SET status=?,closed_at=?,closed_by=?,
-                      decision_note=?,updated_at=? WHERE id=?""",
-            (body.status,created,user["id"],body.note,created,request_id),
+                      decision_note=?,updated_at=? WHERE id=? AND status=?""",
+            (body.status,created,user["id"],body.note,created,request_id,row["status"]),
         )
+        if changed.rowcount != 1:
+            fail("return_closed", 409)
         _notify(
             c,[row["buyer_id"],row["seller_id"]],
             "اتخذت الإدارة قرارًا نهائيًا بشأن طلب الإرجاع. راجع السجل.",
