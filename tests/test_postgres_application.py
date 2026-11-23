@@ -192,6 +192,17 @@ def test_postgres_return_lifecycle_and_database_receipt_guard(tmp_path):
     assert ledger_entry["basis_fils"] == expected_basis
     assert ledger_entry["commission_snapshot"] == expected_snapshot
 
+    with pytest.raises(Exception, match="delivered shipment snapshot"):
+        with factory.db.transaction() as c:
+            c.execute(
+                """INSERT INTO ledger(
+                       seller_order_id,store_id,kind,amount_fils,source,reference_type,
+                       reference_id,basis_fils,snapshot_json,created_at
+                   ) VALUES(%s,%s,'cod_commission_due',%s,'cod_delivery','seller_order',%s,%s,%s,%s)""",
+                (shipment["id"], shipment["store_id"], shipment["commission_fils"],
+                 shipment["id"], expected_basis, "[]", now()),
+            )
+
     opened = buyer["client"].post("/api/returns", json={
         "order_item_id": item_id,
         "quantity": 1,
