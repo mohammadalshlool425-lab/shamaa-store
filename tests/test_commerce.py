@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import secrets
+import json
 import pytest
 from server.commerce import commission
 from conftest import png_bytes
@@ -63,6 +64,36 @@ def test_seller_only_sees_own_shipment(market):
     b_sub=next(s for s in order['shipments'] if s['store_id']==market['b']['store_id'])
     r=market['a']['client'].patch(f'/api/seller/orders/{b_sub["id"]}/status',json={'status':'confirmed','expected_status':'new'})
     assert r.status_code==404
+
+
+def test_seller_ledger_is_store_scoped_and_exposes_commission_snapshot(market):
+    order,_,_=create_order(market)
+    shipment=next(s for s in order['shipments'] if s['store_id']==market['a']['store_id'])
+    seller_a=market['a']['client']
+    seller_b=market['b']['client']
+    assert seller_a.get('/api/seller/ledger').json()['entries']==[]
+    assert seller_b.get('/api/seller/ledger').json()['entries']==[]
+    previous='new'
+    for status in ('confirmed','preparing','shipped','delivered'):
+        response=seller_a.patch(
+            f'/api/seller/orders/{shipment["id"]}/status',
+            json={'status':status,'expected_status':previous},
+        )
+        assert response.status_code==200,response.text
+        previous=status
+    ledger=seller_a.get('/api/seller/ledger').json()
+    assert len(ledger['entries'])==1
+    entry=ledger['entries'][0]
+    assert entry['store_id']==market['a']['store_id']
+    assert entry['source']=='cod_delivery'
+    assert entry['reference_type']=='seller_order'
+    assert entry['reference_id']==shipment['id']
+    assert entry['amount_fils']==shipment['commission_fils']
+    assert entry['basis_fils']==sum(item['unit_price_fils']*item['quantity'] for item in shipment['items'])
+    assert len(entry['commission_snapshot'])==len(shipment['items'])
+    assert ledger['commission_due_fils']==entry['amount_fils']
+    assert seller_b.get('/api/seller/ledger').json()=={'entries':[],'commission_due_fils':0}
+    assert not {'withdrawable_balance_fils','cash_collected_fils','payout_fils'} & set(ledger)
 
 
 @pytest.mark.parametrize('change',['price','shipping','stock'])
@@ -138,6 +169,13 @@ def test_status_machine_delivery_ledger_and_no_postdelivery_cancel(market):
         entries=c.execute('SELECT * FROM ledger WHERE seller_order_id=?',(s['id'],)).fetchall()
         assert len(entries)==1 and entries[0]['amount_fils']==s['commission_fils']
         assert entries[0]['kind']=='cod_commission_due'
+        assert entries[0]['source']=='cod_delivery'
+        assert entries[0]['reference_type']=='seller_order'
+        assert entries[0]['reference_id']==s['id']
+        assert entries[0]['basis_fils']==sum(item['unit_price_fils']*item['quantity'] for item in s['items'])
+        snapshot=json.loads(entries[0]['snapshot_json'])
+        assert snapshot[0]['commission_bps']==s['items'][0]['commission_bps']
+        assert snapshot[0]['commission_fils']==s['items'][0]['commission_fils']
         assert c.execute('SELECT COUNT(*) FROM order_events WHERE seller_order_id=?',(s['id'],)).fetchone()[0]==5
 
 
