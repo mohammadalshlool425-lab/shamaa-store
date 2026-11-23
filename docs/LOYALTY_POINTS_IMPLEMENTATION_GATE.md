@@ -82,3 +82,8 @@ No default monetary conversion, promotional promise, or policy value is inferred
 ## 7. Current disposition
 
 **No code, schema, endpoint, UI, or feature flag has been added by this preparation step.** The safe next work is to complete the non-financial event-source and authorization review, then request only the policy decisions needed to cross the implementation gate. The existing project plan and production safety boundaries remain unchanged.
+
+
+## 8. COD collection evidence review
+
+See [COD_COLLECTION_EVIDENCE_GAP.md](COD_COLLECTION_EVIDENCE_GAP.md). The current workflow records shipment delivery and a commission-due ledger entry, but does not record an independent cash-collection confirmation. A delivered event or commission-due entry must never trigger a loyalty grant. The grant implementation gate remains closed until the owner approves the collection evidence, confirmer role, and correction process.
