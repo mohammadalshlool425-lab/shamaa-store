@@ -1,5 +1,4 @@
 import secrets
-from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 from PIL import Image
