@@ -450,3 +450,66 @@ def test_postgres_coupon_checkout_uses_discount_aware_order_totals(tmp_path):
         ).fetchone()
     assert redemption["discount_fils"] == 1000
     assert usage["used_count"] == 1
+
+
+def test_postgres_concurrent_buyer_cancellation_restores_stock_once(tmp_path):
+    conninfo = os.getenv("SHAMAA_TEST_DATABASE_URL")
+    if not conninfo:
+        pytest.skip("Shipment cancellation PostgreSQL test requires SHAMAA_TEST_DATABASE_URL")
+
+    from server.application import create_app
+    from server.config import Settings
+    from server.postgres_database import PostgresDatabase
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from conftest import Factory
+
+    settings = Settings(
+        db_path=tmp_path / "unused.sqlite3",
+        data_dir=tmp_path / "cancel-private-data",
+        public_url="http://localhost:8000",
+        allowed_hosts=["localhost", "127.0.0.1", "testserver"],
+        demo=False,
+        email_mode="file",
+    )
+    factory = Factory(create_app(settings=settings, database=PostgresDatabase(conninfo)))
+    factory.counter = int(uuid4().hex[:8], 16)
+    seller = factory.seller()
+    buyer = factory.user()
+    product = factory.product(seller, stock=3)
+    quote = factory.cart(buyer, product, quantity=2)
+    checkout, _, _ = factory.checkout(buyer, quote=quote)
+    assert checkout.status_code == 201, checkout.text
+    order = checkout.json()["order"]
+    shipment = order["shipments"][0]
+    path = f"/api/orders/{order['id']}/shipments/{shipment['id']}/cancel"
+    barrier = Barrier(2)
+
+    def cancel_shipment():
+        barrier.wait(timeout=10)
+        return buyer["client"].post(path)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(cancel_shipment)
+        second = pool.submit(cancel_shipment)
+        responses = [first.result(timeout=30), second.result(timeout=30)]
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with factory.db.read() as connection:
+        stock = connection.execute(
+            "SELECT stock FROM products WHERE id=?", (product["id"],)
+        ).fetchone()["stock"]
+        movements = connection.execute(
+            """SELECT COUNT(*) FROM inventory_movements
+                 WHERE seller_order_id=? AND reason='cancel'""",
+            (shipment["id"],),
+        ).fetchone()[0]
+        cancellations = connection.execute(
+            """SELECT COUNT(*) FROM order_events
+                 WHERE seller_order_id=? AND to_status='cancelled'""",
+            (shipment["id"],),
+        ).fetchone()[0]
+
+    assert stock == 3
+    assert movements == 1
+    assert cancellations == 1
