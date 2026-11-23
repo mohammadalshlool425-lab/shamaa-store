@@ -9,7 +9,7 @@ Reviewed on 2026-11-23 against `agent/supabase-integration` at the then-current 
 - `create_app()` currently constructs `Database(s.db_path)` when no database is injected. `Settings.db_path` comes from `SHAMAA_DB`; the inspected application factory does not select `PostgresDatabase` from a PostgreSQL URL.
 - `PostgresDatabase` validates an already-installed schema and deliberately does not create roles, grants, policies, or migrations.
 - The adapter has request-scoped session-hash/user-id context and transaction-local `set_config(..., TRUE)`. `optional_user()` binds the verified session's user id when the adapter exposes `bind_request_user`.
-- Fixed system-operation names are declared for auth bootstrap, rate limits, mail worker, and audit append. `trusted_operation()` is currently used by the rate-limit path; every other operation needs a call-site audit before any corresponding policy is written.
+- Fixed system-operation names are declared for auth bootstrap, rate limits, mail worker, and audit append. Static call-site review found `trusted_operation()` in auth registration/login/email verification/password reset and rate-limit handling. No call site for `mail.worker` or `audit.append` was found in the reviewed application modules; their workers/writers and exact SQL privileges remain unimplemented or unverified. The password-reset and token paths still require statement-level review before policy design.
 - Therefore the FastAPI/PostgreSQL path is **not yet a complete runtime integration**. Passing CI's adapter and smoke tests is not evidence that production FastAPI is connected to Supabase.
 
 No SQL policies, role grants, runtime connection settings, or production migrations are authorized by this inventory.
