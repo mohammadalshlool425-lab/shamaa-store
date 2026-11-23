@@ -179,3 +179,22 @@ npm run check
 - PostgreSQL 17 schema and security contract: SUCCESS؛ طُبقت ترحيلات المخطط حتى 0013 على PostgreSQL CI معزول، واجتازت حراس الدفتر وعقود RLS والاختبارات التطبيقية.
 - Bilingual mobile checkout, seller/admin, axe and offline: SUCCESS؛ 9 سيناريوهات Chromium ناجحة.
 - هذا إثبات CI على قاعدة مؤقتة فقط، وليس تنفيذًا على مشروع Supabase الحي أو إثباتًا لوجود سياسات runtime إنتاجية. PR #3 ما يزال مفتوحًا وغير مدمج.
+
+## 9. إعادة تحقق شاملة بعد دفتر العمولات — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، وPR #3 إلى `main`.
+- الالتزام الذي اختُبر: `ef18abd4411cea7c81e06a012fe8dfdc1ab4c983`.
+- النتيجة: [GitHub Actions run 45232655572 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45232655572).
+
+### الوظائف الثلاث
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: اجتازت خطوات تثبيت الاعتماديات، اختبارات الخادم المعزولة وبوابة التغطية، وتدقيق اعتماديات الخادم والمتصفح.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: طُبقت migrations من 0001 حتى 0013 في قاعدة CI مؤقتة؛ نجحت عقود المخطط وقيود دفتر العمولات وRLS deny-all واختبارات bootstrap/audit المؤقتة واختبارات adapter وFastAPI على PostgreSQL.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium اجتازت التشغيل دون فشل.
+
+### حدود الإثبات
+
+- هذه إعادة تحقق على PR head المذكور فقط؛ لا تعني دمج PR أو نشر الموقع.
+- قاعدة PostgreSQL مؤقتة داخل CI، وليست مشروع Supabase الحي. نجاح عقود RLS لا يثبت اكتمال سياسات دور runtime الإنتاجي؛ تبقى قاعدة الإنتاج خارج نطاق هذه العملية.
+- لم تُنفذ migration 0013 على Supabase الحية، ولم تُضف صلاحيات تشغيلية، ولم يُفعّل دفع أو تحصيل أو صرف أو برنامج نقاط.
+- PR #3 بقي مفتوحًا وغير مدمج عند التحقق. دمج `main` والنشر وتغيير قاعدة الإنتاج قرارات للمالك وحده.
