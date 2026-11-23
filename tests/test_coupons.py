@@ -208,14 +208,19 @@ def test_seller_ledger_is_store_scoped_and_read_only(factory):
     order = response.json()['order']
     shipments = {item['store_id']: item for item in order['shipments']}
 
-    with factory.db.transaction() as c:
-        for store_id, amount in ((first['store_id'], 500), (second['store_id'], 1000)):
-            shipment = shipments[store_id]
-            c.execute(
-                "INSERT INTO ledger(seller_order_id,store_id,kind,amount_fils,created_at) "
-                "VALUES(?,?,'cod_commission_due',?,?)",
-                (shipment['id'], store_id, amount, 1700000000),
+    # Deliver both shipments through the real status workflow. The application
+    # must create each immutable commission-due entry from the delivered snapshot.
+    for seller in (first, second):
+        shipment = shipments[seller['store_id']]
+        path = f"/api/seller/orders/{shipment['id']}/status"
+        previous = 'new'
+        for status in ('confirmed', 'preparing', 'shipped', 'delivered'):
+            delivered = seller['client'].patch(
+                path,
+                json={'status': status, 'expected_status': previous, 'note': 'Ledger scope test'},
             )
+            assert delivered.status_code == 200, delivered.text
+            previous = status
 
     first_response = first['client'].get('/api/seller/ledger')
     second_response = second['client'].get('/api/seller/ledger')
@@ -223,14 +228,14 @@ def test_seller_ledger_is_store_scoped_and_read_only(factory):
     assert second_response.status_code == 200
     first_data = first_response.json()
     second_data = second_response.json()
-    assert first_data['commission_due_fils'] == 500
-    assert second_data['commission_due_fils'] == 1000
+    assert first_data['commission_due_fils'] == shipments[first['store_id']]['commission_fils']
+    assert second_data['commission_due_fils'] == shipments[second['store_id']]['commission_fils']
     assert len(first_data['entries']) == len(second_data['entries']) == 1
     assert first_data['entries'][0]['order_number'] == order['number']
     assert first_data['entries'][0]['store_id'] == first['store_id']
-    assert first_data['entries'][0]['amount_fils'] == 500
+    assert first_data['entries'][0]['amount_fils'] == shipments[first['store_id']]['commission_fils']
     assert second_data['entries'][0]['store_id'] == second['store_id']
-    assert second_data['entries'][0]['amount_fils'] == 1000
+    assert second_data['entries'][0]['amount_fils'] == shipments[second['store_id']]['commission_fils']
     assert 'withdrawable_balance_fils' not in first_data
     assert buyer['client'].get('/api/seller/ledger').status_code == 403
     post_response = first['client'].post('/api/seller/ledger')
