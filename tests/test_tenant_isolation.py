@@ -1,4 +1,6 @@
 import secrets
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from io import BytesIO
 
 from PIL import Image
@@ -159,3 +161,46 @@ def test_return_detail_and_transitions_are_buyer_and_store_scoped(market):
         row["id"] != return_id
         for row in other_buyer.get("/api/returns").json()["returns"]
     )
+
+
+
+def test_concurrent_shipment_delivery_creates_one_commission_due_entry(market):
+    factory = market["factory"]
+    order = _multi_vendor_order(market)
+    shipment = next(
+        item for item in order["shipments"]
+        if item["store_id"] == market["a"]["store_id"]
+    )
+    _advance_shipment(market["a"], shipment, final_status="shipped")
+    barrier = Barrier(2)
+
+    def deliver():
+        barrier.wait(timeout=10)
+        return market["a"]["client"].patch(
+            f"/api/seller/orders/{shipment['id']}/status",
+            json={"status": "delivered", "expected_status": "shipped"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(deliver)
+        second = pool.submit(deliver)
+        responses = [first.result(timeout=30), second.result(timeout=30)]
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with factory.db.read() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM ledger WHERE seller_order_id=? AND kind='cod_commission_due'",
+            (shipment["id"],),
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM order_events WHERE seller_order_id=? AND to_status='delivered'",
+            (shipment["id"],),
+        ).fetchone()[0] == 1
+
+    seller_ledger = market["a"]["client"].get("/api/seller/ledger")
+    assert seller_ledger.status_code == 200
+    assert len(seller_ledger.json()["entries"]) == 1
+    assert seller_ledger.json()["entries"][0]["amount_fils"] == shipment["commission_fils"]
+    assert market["b"]["client"].get("/api/seller/ledger").json() == {
+        "entries": [], "commission_due_fils": 0
+    }
