@@ -268,9 +268,16 @@ def test_return_resolution_requires_recent_admin_mfa(market):
         json={"status": "resolved", "note": "قرار اختبار دون إعادة تحقق حديثة."},
     )
     assert denied.status_code == 403, denied.text
-    detail = admin["client"].get(f"/api/admin/returns/{return_id}")
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["return"]["status"] == "received"
+    # The decision endpoint requires recent MFA; ordinary admin reads only
+    # require an active MFA session. Verify the workflow state directly so this
+    # test isolates the decision gate instead of coupling to the read endpoint.
+    with market["factory"].db.read() as connection:
+        state = connection.execute(
+            "SELECT status FROM return_requests WHERE id=?",
+            (return_id,),
+        ).fetchone()
+    assert state is not None
+    assert state["status"] == "received"
 
 
 def test_return_resolution_does_not_create_refund_or_change_commission_ledger(market):
