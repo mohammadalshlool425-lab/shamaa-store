@@ -1,6 +1,6 @@
 # سجل التحقق وحدوده
 
-**آخر تحقق: 2026-10-28، UTC.** النتائج التالية نُفّذت محليًا في بيئة العمل، وليست شارة CI أو تقرير نشر لخادم إنتاج. لا تعني أن بقية المراحل اكتملت.
+**آخر تحقق CI متكامل: 2026-11-10، UTC — التشغيل 42913402376.** تبقى نتائج المعاينة المحلية القديمة مؤرخة أدناه بتاريخها؛ لا تمثل هذه النتائج نشرًا إنتاجيًا أو اعتمادًا أمنيًا/قانونيًا شاملًا.
 
 ## البيئة
 
@@ -92,6 +92,60 @@ npm run check
 
 تدقيق حزم سليم اليوم لا يعني خلو التطبيق أو نظام التشغيل أو المضيف من ثغرات، ولا يثبت سلامة كل مورد/موافقة تجارية. يلزم تكراره مع التحديثات.
 
+## 5. تشغيل GitHub Actions المتكامل — 2026-11-10
+
+- المستودع: `mohammadalshlool425-lab/shamaa-store`.
+- الفرع: `agent/supabase-integration`.
+- الالتزام: `902cea9316dcfeb8e762e596fa932d3fc85f7abd`.
+- النتيجة النهائية: [CI run 42907624194 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/42907624194).
+
+### وظائف التشغيل
+
+1. **PostgreSQL 17.11 schema and security contract — نجاح**
+   - طُبقت migrations `0001` إلى `0004` على PostgreSQL 17.11.
+   - نجح مخطط الجداول وعقد القيود السلبية؛ اختبارات adapter: 2 passed، واختبار تشغيل التطبيق على PostgreSQL: 1 passed.
+   - بقيت الجداول fail-closed مع FORCE RLS؛ لا سياسات عامة أو فتح Data API.
+
+2. **Server, permissions, stock and encrypted restore — نجاح**
+   - مجموعة الخادم: 109 passed، 3 skipped، وتحذير واحد.
+   - التغطية: 90.33%، واجتازت الحد الإلزامي 90%.
+   - تدقيق الاعتماديات: لا ثغرات معروفة أبلغ عنها pip-audit، و0 vulnerabilities في npm audit.
+   - الاختبارات التي تحتاج `SHAMAA_TEST_DATABASE_URL` تُشغّل في وظيفة PostgreSQL المخصصة، لذلك لا يعني تخطيها في وظيفة الخادم أنها اجتازت دون تشغيل.
+
+3. **Bilingual mobile checkout, seller/admin, axe and offline — نجاح**
+   - 6 سيناريوهات Chromium ناجحة من 6، بلا فشل.
+   - شملت AR/EN، الهاتف والشراء النقدي من متاجر متعددة، موافقة متجر ومنتج مع MFA للإدارة، رفع الصور ومعرضها، المخزون ومتغيرات المنتج، تأكيد البريد، PWA/offline، وقياسات الإتاحة/التجاوب المختبرة.
+   - اختبار المتغيرات أثبت ظهور السعر المحلي، وفصل الخيارين في السلة، ومراجعة تعديل المنتج قبل النشر.
+
+هذه بوابة CI للفرع والالتزام المذكورين فقط. لا تعني نشر التطبيق، أو تحويل قاعدة التشغيل الفعلية، أو تمكين الدفع/الشحن الخارجي، أو اجتياز مراجعة اختراق أو اعتماد قانوني.
+
+## 6. رسائل المشتري والبائع وواجهة المحادثات — 2026-11-10
+
+- المستودع: `mohammadalshlool425-lab/shamaa-store`.
+- الفرع: `agent/supabase-integration`.
+- الالتزام: `eeec305ed6924ab23f827bdb3b9395e8851c384a`.
+- النتيجة: [GitHub Actions 42913402376 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/42913402376).
+
+### وظائف التشغيل
+
+1. **Server, permissions, stock and encrypted restore — نجاح**
+   - 114 passed، 3 skipped (تحتاج PostgreSQL المخصص)، وتحذير واحد.
+   - تغطية 90.50%، أعلى من حد 90%.
+   - `pip-audit`: لا ثغرات معروفة؛ `npm audit`: 0 vulnerabilities.
+
+2. **PostgreSQL 17 schema/security contract — نجاح**
+   - تطبيق migration `0005_conversations_messages.sql` بعد المراحل السابقة.
+   - 23 جدولًا مع ENABLE وFORCE RLS، وعدم وجود سياسات وصول عامة أو منح PUBLIC.
+   - اختبارات adapter: 2 passed؛ اختبار تشغيل التطبيق على PostgreSQL: 1 passed.
+
+3. **Bilingual mobile checkout, seller/admin, axe and offline — نجاح**
+   - 6 passed (1.2m)، صفر فشل.
+   - سيناريو الطلب متعدد المتاجر يفتح محادثة من الشحنة ويرسل نصًا يحتوي وسم HTML؛ تحقّق المتصفح من عدم إنشاء عنصر script وعدم تنفيذ النص.
+   - فحص axe اجتاز بعد ضبط ألوان الرسائل/المحادثة المحددة لتباين 5.77:1.
+   - فحص الهاتف والاتجاهين AR/EN وPWA/offline ضمن حدود السيناريوهات الحالية.
+
+هذه النتيجة تثبت اجتياز CI للفرع والالتزام المذكورين. لا تعني نشر التطبيق أو تشغيل قاعدة إنتاج PostgreSQL؛ جدولا الرسائل في PostgreSQL بقيا fail-closed مع RLS مفروض ودون policies أو Data API grants.
+
 ## ما لم يُختبر/يُفعّل خارجيًا
 
 - نشر إنتاج، DNS أو شهادة HTTPS أو تجديدها، وضبط Nginx/systemd على مضيف خارجي.
@@ -102,3 +156,84 @@ npm run check
 - اختبار حمل/RPO/RTO/اختراق مستقل/شهادة إتاحة/عمل كل متصفح وهاتف.
 
 **الخلاصة:** الأساس التقني للمرحلة الأولى قابل للتشغيل واختُبرت التدفقات المذكورة. توجد بوابة إطلاق إنتاج منفصلة في [PHASES.md](PHASES.md) و[OPERATIONS.md](OPERATIONS.md)؛ لم تُجتز نيابة عن المالك.
+
+
+## 7. المرتجعات المرتبطة ببنود الشراء — 2026-11-12 (مكتملة بالاختبارات المعزولة)
+
+- أضيفت SQLite وSupabase PostgreSQL migrations 0009، وأصبح schema version 9. يثبت عقد PostgreSQL 17 وجود 30 جدولًا تحت ENABLE+FORCE RLS، دون سياسات وصول عامة أو منح PUBLIC، مع 25 عمودًا للمرتجعات والأحداث وحراس الحالة.
+- اختبارات الخادم تغطي أهلية التسليم، نافذة 14 يومًا التشغيلية، الكمية الجزئية والمجمعة، منع تكرار الطلب النشط، عزل الحسابات، موافقة البائع، شحن المرتجع، تأكيد الاستلام، رفض/حل الإدارة، عدم إنشاء ledger تلقائي، append-only وتجميد الحالة النهائية.
+- اختبار PostgreSQL 17 ينشئ طلبًا وشحنة ومرتجعًا عبر FastAPI على PostgreSQL نفسه؛ يثبت رفض الإغلاق قبل الاستلام حتى عند محاولة SQL مباشرة، ثم يكمل الاستلام والقرار ويتأكد من ثبات ledger وبقاء شحنة البيع الأصلية delivered.
+- واجهة المتصفح تغطي المشتري والبائع والإدارة؛ اختبار المرتجع يفتح طلبًا جزئيًا، يقبل البائع، يسجل المشتري التتبع، يؤكد البائع الاستلام، ثم تعيد الإدارة التحقق بكلمة المرور وTOTP حديث وتغلق الطلب. يرى المشتري الحالة النهائية. لا يحدث استرداد مالي آلي.
+- فحص الخصوصية: صفحة /returns تعيد no-store وnoindex، وrobots.txt يستثنيها، وصفحات/API المرتجعات غير مخزنة في PWA cache (v1.0.8).
+- **CI قبول PR:** التشغيل [43113400590 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/43113400590) على SHA `69a97dfa26ace8ac49e3584743e36c0ef0f51a48`. نجحت وظائف الخادم والتغطية وتدقيق الاعتماديات، وPostgreSQL 17 schema/security contract، وChromium (9/9) في الوظائف الثلاث على الالتزام نفسه.
+- تغييرات CI التصحيحية المهمة: تمرير `is_demo` كقيمة boolean إلى PostgreSQL، استخدام حساب MFA منفصل لكل سيناريو إداري، وعدم استهلاك تجهيز الاختبار لرمز TOTP الأول. ثبت أن reauth يعيد HTTP 200؛ صحح اختبار المتصفح ليتحقق من إغلاق عنصر الحوار بدل اشتراط إزالة محتواه من DOM.
+- الحالة: **مكتملة في بيئات CI المعزولة فقط**. Pull Request #3 مفتوح وغير مدمج. لا دمج إلى main، ولا تطبيق migration 0009 على Supabase الحي، ولا ربط FastAPI production بقاعدة Supabase. تظل سياسات PostgreSQL fail-closed؛ لا يعني نجاح CI جاهزية نشر عامة أو اعتمادًا قانونيًا.
+
+
+
+## 8. دفتر عمولات البائعين — CI run 45227344013 (2026-11-23)
+
+- الالتزام: `006c0e042f319485597c3f4a2595aad134d86551`.
+- النتيجة النهائية: [SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45227344013).
+- Server, permissions, stock and encrypted restore: SUCCESS، بما يشمل اختبار حدود دفتر العمولات واستخدام `DatabaseIntegrityError` من طبقة adapter.
+- PostgreSQL 17 schema and security contract: SUCCESS؛ طُبقت ترحيلات المخطط حتى 0013 على PostgreSQL CI معزول، واجتازت حراس الدفتر وعقود RLS والاختبارات التطبيقية.
+- Bilingual mobile checkout, seller/admin, axe and offline: SUCCESS؛ 9 سيناريوهات Chromium ناجحة.
+- هذا إثبات CI على قاعدة مؤقتة فقط، وليس تنفيذًا على مشروع Supabase الحي أو إثباتًا لوجود سياسات runtime إنتاجية. PR #3 ما يزال مفتوحًا وغير مدمج.
+
+## 9. إعادة تحقق شاملة بعد دفتر العمولات — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، وPR #3 إلى `main`.
+- الالتزام الذي اختُبر: `ef18abd4411cea7c81e06a012fe8dfdc1ab4c983`.
+- النتيجة: [GitHub Actions run 45232655572 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45232655572).
+
+### الوظائف الثلاث
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: اجتازت خطوات تثبيت الاعتماديات، اختبارات الخادم المعزولة وبوابة التغطية، وتدقيق اعتماديات الخادم والمتصفح.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: طُبقت migrations من 0001 حتى 0013 في قاعدة CI مؤقتة؛ نجحت عقود المخطط وقيود دفتر العمولات وRLS deny-all واختبارات bootstrap/audit المؤقتة واختبارات adapter وFastAPI على PostgreSQL.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium اجتازت التشغيل دون فشل.
+
+### حدود الإثبات
+
+- هذه إعادة تحقق على PR head المذكور فقط؛ لا تعني دمج PR أو نشر الموقع.
+- قاعدة PostgreSQL مؤقتة داخل CI، وليست مشروع Supabase الحي. نجاح عقود RLS لا يثبت اكتمال سياسات دور runtime الإنتاجي؛ تبقى قاعدة الإنتاج خارج نطاق هذه العملية.
+- لم تُنفذ migration 0013 على Supabase الحية، ولم تُضف صلاحيات تشغيلية، ولم يُفعّل دفع أو تحصيل أو صرف أو برنامج نقاط.
+- PR #3 بقي مفتوحًا وغير مدمج عند التحقق. دمج `main` والنشر وتغيير قاعدة الإنتاج قرارات للمالك وحده.
+
+
+## 10. تحقق CI من رأس PR بعد تحديث التوثيق — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، PR #3 إلى `main`.
+- الالتزام: `72839300af992481e99bd297eb6bbcf010235ef7`.
+- النتيجة: [GitHub Actions run 45252293234 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45252293234).
+
+### الوظائف والخطوات
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: تثبيت الاعتماديات، اختبارات الخادم المعزولة وبوابة التغطية، وتدقيق اعتماديات الخادم والمتصفح.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: تطبيق migrations من 0001 حتى 0013 على PostgreSQL CI المؤقت، ثم فحوص المخطط وRLS deny-all وحراس append-only واختبارات bootstrap/audit وadapter وFastAPI.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium ناجحة.
+
+### الحدود والحالة
+
+- هذه النتيجة تخص الالتزام أعلاه؛ لا تثبت تشغيل Supabase الحية أو نشر التطبيق.
+- لا migration إنتاجية، ولا grants أو سياسات runtime جديدة، ولا مدفوعات أو صرف أو منح/استبدال نقاط.
+- عند إعادة قراءة PR #3 بعد التشغيل كان مفتوحًا وغير مدمج، وأعاد GitHub `mergeable=true`. قابلية الدمج التقنية ليست موافقة على الدمج؛ القرار للمالك.
+
+## 11. تحقق CI نهائي لرأس PR بعد بوابة إثبات قبض COD — 2026-11-23
+
+- الفرع: `agent/supabase-integration`، وPR #3 إلى `main`.
+- الالتزام: `a7a4417cdd434d6e9804f33861eafdf7a3263bd0`.
+- النتيجة: [GitHub Actions run 45254907573 — SUCCESS](https://github.com/mohammadalshlool425-lab/shamaa-store/actions/runs/45254907573).
+
+### الوظائف الثلاث
+
+1. **Server, permissions, stock and encrypted restore — SUCCESS**: اكتملت اختبارات الخادم المعزولة وبوابة التغطية وتدقيق الاعتماديات.
+2. **PostgreSQL 17 schema and security contract — SUCCESS**: طُبقت migrations من 0001 حتى 0013 على قاعدة CI المؤقتة؛ نجحت عقود المخطط وRLS deny-all وقيود append-only واختبارات adapter وFastAPI على PostgreSQL.
+3. **Bilingual mobile checkout, seller/admin, axe and offline — SUCCESS**: تسعة سيناريوهات Chromium اكتملت بنجاح.
+
+### الحدود
+
+- النتيجة تخص الالتزام المذكور فقط، ولا تثبت نشر التطبيق أو اتصال FastAPI الإنتاجي بمشروع Supabase.
+- لا تزال فجوة إثبات قبض COD موثقة؛ لا يُعد حدث `delivered` دليل قبض نقد.
+- لم تُطبق أي migration على Supabase الحية، ولم تُضف سياسات runtime إنتاجية أو صلاحيات جديدة.
+- PR #3 ما يزال مفتوحًا وغير مدمج؛ لا دمج إلى `main` ولا نشر دون قرار المالك.
+

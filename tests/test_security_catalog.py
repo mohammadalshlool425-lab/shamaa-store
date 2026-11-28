@@ -159,9 +159,16 @@ def test_sensitive_logs_append_only(factory,table):
     # BEFORE triggers execute even for a row-less modification? SQLite only executes per row,
     # so verify trigger existence and exercise audit below with an actual row.
     with factory.db.read() as c:
-        definitions=c.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(table,)).fetchall()
-        assert len(definitions)==2
-        assert all('RAISE(ABORT' in r[0] for r in definitions)
+        definitions=c.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",
+            (table,),
+        ).fetchall()
+        trigger_sql = [row['sql'].upper() for row in definitions]
+        for operation in ('UPDATE', 'DELETE'):
+            assert any(f'BEFORE {operation} ON {table.upper()}' in sql
+                       and 'RAISE(ABORT' in sql for sql in trigger_sql)
+        if table == 'ledger':
+            assert 'ledger_delivery_reference_guard' in {row['name'] for row in definitions}
     if table=='audit_log':
         user=factory.user()
         with pytest.raises(sqlite3.IntegrityError):
@@ -184,11 +191,13 @@ def test_seo_pwa_and_not_found_status(factory):
     assert client.get('/product/999').status_code==404
     assert client.get('/api/does-not-exist').status_code==404
     assert client.get('/api/does-not-exist').headers['content-type'].startswith('application/json')
-    for path in ['/','/search','/help','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
+    for path in ['/','/search','/help','/cases','/returns','/sw.js','/manifest.webmanifest','/sitemap.xml','/robots.txt']:
         assert client.get(path).status_code==200
     assert client.get('/sw.js').headers['service-worker-allowed']=='/'
     assert 'Disallow: /' in client.get('/robots.txt').text
     assert 'noindex' in client.get('/account').text
+    assert client.get('/cases').headers['cache-control']=='no-store'
+    assert client.get('/returns').headers['cache-control']=='no-store'
     assert '/api/' not in client.get('/sitemap.xml').text
 
 
@@ -210,6 +219,11 @@ def test_secure_cookie_in_production_and_no_demo_catalog(factory):
     r=client.post('/api/auth/login',headers={'X-Requested-With':'shamaa'},json={'email':user['email'],'password':user['password']})
     assert r.status_code==200 and '; secure' in r.headers['set-cookie'].lower()
     assert r.headers['strict-transport-security'].startswith('max-age=')
+    returns=client.get('/returns')
+    assert returns.status_code==200
+    assert returns.headers['cache-control']=='no-store'
+    assert returns.headers['x-robots-tag']=='noindex, nofollow'
+    assert '/returns' in client.get('/robots.txt').text
 
 
 def test_memory_hard_password_work_is_bounded_without_weakening_hash_parameters(monkeypatch):

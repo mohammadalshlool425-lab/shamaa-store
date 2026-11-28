@@ -1,0 +1,187 @@
+"""Unit tests for PostgreSQL adapter boundaries that do not require a live database."""
+from types import SimpleNamespace
+
+import psycopg
+import pytest
+
+from server.database import DatabaseIntegrityError, DatabaseOperationalError
+from server.postgres_database import (
+    PostgresConnection,
+    PostgresDatabase,
+    _hybrid_row_factory,
+    _raise_database_error,
+)
+
+
+@pytest.mark.parametrize(
+    ("conninfo", "schema", "timeout"),
+    [
+        ("sqlite:///not-postgres", "shamaa_app", 10),
+        ("postgresql://localhost/db", "shamaa_app; DROP SCHEMA public", 10),
+        ("postgresql://localhost/db", "shamaa_app", 0),
+        ("postgresql://localhost/db", "shamaa_app", 61),
+    ],
+)
+def test_postgres_adapter_rejects_unsafe_connection_configuration(conninfo, schema, timeout):
+    with pytest.raises(ValueError):
+        PostgresDatabase(conninfo, schema=schema, connect_timeout=timeout)
+
+
+def test_postgres_adapter_translates_driver_exceptions_to_shared_contract():
+    with pytest.raises(DatabaseIntegrityError):
+        _raise_database_error(psycopg.IntegrityError("duplicate"))
+    with pytest.raises(DatabaseOperationalError):
+        _raise_database_error(psycopg.OperationalError("connection lost"))
+    original = ValueError("unmapped")
+    with pytest.raises(ValueError) as caught:
+        _raise_database_error(original)
+    assert caught.value is original
+
+
+def test_postgres_hybrid_row_factory_preserves_named_and_positional_access():
+    cursor = SimpleNamespace(
+        description=(SimpleNamespace(name="id"), SimpleNamespace(name="value"))
+    )
+    make_row = _hybrid_row_factory(cursor)
+    row = make_row((7, "ready"))
+    assert row["id"] == 7
+    assert row[1] == "ready"
+    assert dict(row) == {"id": 7, "value": "ready"}
+
+
+def test_postgres_connection_translates_qmark_parameters():
+    class FakeConnection:
+        def __init__(self):
+            self.call = None
+
+        def execute(self, sql, parameters):
+            self.call = (sql, parameters)
+            return "cursor"
+
+    driver = FakeConnection()
+    connection = PostgresConnection(driver)
+    assert connection.execute("SELECT ? AS value", [23]) == "cursor"
+    assert driver.call == ("SELECT %s AS value", (23,))
+
+
+
+@pytest.mark.parametrize("user_id", [0, -1, True, False, "7", None])
+def test_postgres_user_scope_rejects_untrusted_or_invalid_identity(user_id):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="positive integer"):
+        database.for_user(user_id)
+
+
+def test_postgres_user_scope_accepts_positive_integer_identity():
+    database = PostgresDatabase("postgresql://localhost/db")
+    scoped = database.for_user(17)
+    assert scoped.user_id == 17
+
+
+
+@pytest.mark.parametrize("session_hash", ["not-a-digest", "A" * 64, "a" * 63, 123, True])
+def test_postgres_request_scope_rejects_invalid_session_digest(session_hash):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="SHA-256 digest"):
+        with database.request_scope(session_hash):
+            pass
+
+
+def test_postgres_request_scope_requires_verified_session_before_binding_user():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope(None):
+        with pytest.raises(RuntimeError, match="verified session"):
+            database.bind_request_user(17)
+        with pytest.raises(ValueError, match="positive integer"):
+            with database.request_scope("a" * 64) as bind_user:
+                bind_user(True)
+
+
+def test_postgres_request_scope_binds_only_positive_integer_user_ids():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope("a" * 64) as bind_user:
+        bind_user(17)
+        assert database._request_identity.get() == {
+            "session_token_hash": "a" * 64,
+            "user_id": 17,
+        }
+
+
+
+def test_postgres_system_operation_temporarily_clears_and_restores_request_identity():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.request_scope("a" * 64) as bind_user:
+        bind_user(17)
+        original = database._request_identity.get()
+        with database.system_operation("mail.worker"):
+            assert database._request_identity.get() is None
+            assert database._system_operation.get() == "mail.worker"
+        assert database._request_identity.get() == original
+        assert database._system_operation.get() is None
+        with pytest.raises(RuntimeError, match="worker failure"):
+            with database.system_operation("mail.worker"):
+                assert database._request_identity.get() is None
+                raise RuntimeError("worker failure")
+        assert database._request_identity.get() == original
+        assert database._system_operation.get() is None
+    assert database._request_identity.get() is None
+
+@pytest.mark.parametrize("operation", ["", "auth.admin", "mail.worker ", None, 7, True])
+def test_postgres_system_operation_rejects_unlisted_or_non_string_labels(operation):
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(ValueError, match="Unsupported PostgreSQL system operation"):
+        with database.system_operation(operation):
+            pass
+
+
+def test_postgres_system_operation_rejects_privilege_switch_inside_nested_scope():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with database.system_operation("auth.login"):
+        with pytest.raises(RuntimeError, match="Cannot nest different"):
+            with database.system_operation("mail.worker"):
+                pass
+        assert database._system_operation.get() == "auth.login"
+
+
+def test_postgres_system_operation_context_isolated_between_database_instances():
+    first = PostgresDatabase("postgresql://localhost/db")
+    second = PostgresDatabase("postgresql://localhost/db")
+    with first.system_operation("auth.register"):
+        assert first._system_operation.get() == "auth.register"
+        assert second._system_operation.get() is None
+    assert first._system_operation.get() is None
+    assert second._system_operation.get() is None
+
+
+
+def test_postgres_rate_limit_operation_binds_one_hashed_bucket_and_restores_it():
+    database = PostgresDatabase("postgresql://localhost/db")
+    bucket = "a" * 64
+    with pytest.raises(ValueError, match="lowercase SHA-256 digest"):
+        with database.system_operation("rate_limit.consume", bucket="not-a-digest"):
+            pass
+    with pytest.raises(ValueError, match="lowercase SHA-256 digest"):
+        with database.system_operation("auth.login", bucket=bucket):
+            pass
+
+    with database.system_operation("rate_limit.consume", bucket=bucket):
+        assert database._system_operation.get() == "rate_limit.consume"
+        assert database._rate_limit_bucket.get() == bucket
+        with database.system_operation("rate_limit.consume"):
+            assert database._rate_limit_bucket.get() == bucket
+        with pytest.raises(RuntimeError, match="different rate-limit buckets"):
+            with database.system_operation("rate_limit.consume", bucket="b" * 64):
+                pass
+        assert database._rate_limit_bucket.get() == bucket
+
+    assert database._system_operation.get() is None
+    assert database._rate_limit_bucket.get() is None
+
+
+def test_postgres_rate_limit_bucket_context_restores_after_exception():
+    database = PostgresDatabase("postgresql://localhost/db")
+    with pytest.raises(RuntimeError, match="bucket failure"):
+        with database.system_operation("rate_limit.consume", bucket="c" * 64):
+            raise RuntimeError("bucket failure")
+    assert database._system_operation.get() is None
+    assert database._rate_limit_bucket.get() is None

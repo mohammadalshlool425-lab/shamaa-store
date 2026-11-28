@@ -1,12 +1,11 @@
 import secrets
-import sqlite3
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
-from ..database import now
+from ..database import DatabaseIntegrityError, insert_id, now
 from ..errors import fail
 from .. import mail, schemas
 from ..security import (COOKIE, DUMMY_HASH, audit, digest, hash_password, optional_user, public_user,
-                        require_user, throttle, verify_password, verify_totp)
+                        require_user, throttle, trusted_operation, verify_password, verify_totp)
 
 router = APIRouter(prefix='/api/auth', tags=['Accounts'])
 
@@ -52,17 +51,18 @@ def schedule(tasks, request):
 def register(body: schemas.Register, request: Request, tasks: BackgroundTasks):
     throttle(request,'register',5,3600)
     hashed = hash_password(body.password)
-    try:
-        with request.app.state.db.transaction() as c:
-            cur = c.execute('INSERT INTO users(name,email,password_hash,locale,created_at) VALUES(?,?,?,?,?)',
-                            (body.name, str(body.email).lower(),hashed,body.locale,now()))
-            u = c.execute('SELECT * FROM users WHERE id=?',(cur.lastrowid,)).fetchone()
-            email_token(c,request,u,'verify')
-            audit(c,u['id'],'register','user',u['id'])
-            response = start_session(c,request,u)
-            response.status_code = 201
-    except sqlite3.IntegrityError:
-        fail('email_exists',409)
+    with trusted_operation(request.app.state.db, "auth.register"):
+        try:
+            with request.app.state.db.transaction() as c:
+                user_id = insert_id(c, 'INSERT INTO users(name,email,password_hash,locale,created_at) VALUES(?,?,?,?,?)',
+                                    (body.name, str(body.email).lower(),hashed,body.locale,now()))
+                u = c.execute('SELECT * FROM users WHERE id=?',(user_id,)).fetchone()
+                email_token(c,request,u,'verify')
+                audit(c,u['id'],'register','user',u['id'])
+                response = start_session(c,request,u)
+                response.status_code = 201
+        except DatabaseIntegrityError:
+            fail('email_exists',409)
     schedule(tasks,request)
     return response
 
@@ -71,21 +71,23 @@ def register(body: schemas.Register, request: Request, tasks: BackgroundTasks):
 def login(body: schemas.Login, request: Request, tasks: BackgroundTasks):
     throttle(request,'login_ip',30,900)
     throttle(request,'login_email',8,900, str(body.email).lower())
-    with request.app.state.db.read() as c:
-        row = c.execute('SELECT * FROM users WHERE email=?',(str(body.email).lower(),)).fetchone()
-        u = dict(row) if row else None
+    with trusted_operation(request.app.state.db, "auth.login"):
+        with request.app.state.db.read() as c:
+            row = c.execute('SELECT * FROM users WHERE email=?',(str(body.email).lower(),)).fetchone()
+            u = dict(row) if row else None
     valid = verify_password(body.password, u['password_hash'] if u else DUMMY_HASH)
     if not valid or not u or not u['active']:
         fail('invalid_login',401)
-    with request.app.state.db.transaction() as c:
-        # Re-read after the expensive hash, so suspension/password reset cannot race login.
-        fresh = c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
-        if not fresh['active'] or fresh['password_hash'] != u['password_hash']:
-            fail('invalid_login',401)
-        if u['role']=='admin' and not verify_totp(c,fresh,body.otp,request.app.state.settings):
-            fail('invalid_login',401)
-        response = start_session(c,request,fresh)
-        audit(c,u['id'],'login','user',u['id'])
+    with trusted_operation(request.app.state.db, "auth.login"):
+        with request.app.state.db.transaction() as c:
+            # Re-read after the expensive hash, so suspension/password reset cannot race login.
+            fresh = c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
+            if not fresh['active'] or fresh['password_hash'] != u['password_hash']:
+                fail('invalid_login',401)
+            if u['role']=='admin' and not verify_totp(c,fresh,body.otp,request.app.state.settings):
+                fail('invalid_login',401)
+            response = start_session(c,request,fresh)
+            audit(c,u['id'],'login','user',u['id'])
     schedule(tasks,request)
     return response
 
@@ -107,13 +109,14 @@ def logout(request: Request, user=Depends(require_user)):
 @router.post('/verify')
 def verify(body: schemas.TokenInput, request: Request):
     throttle(request,'verify',20,300)
-    with request.app.state.db.transaction() as c:
-        token = c.execute("SELECT * FROM auth_tokens WHERE token_hash=? AND purpose='verify' AND used_at IS NULL AND expires_at>?",(digest(body.token),now())).fetchone()
-        if not token:
-            fail('invalid_token',400)
-        c.execute('UPDATE users SET email_verified_at=? WHERE id=?',(now(),token['user_id']))
-        c.execute('UPDATE auth_tokens SET used_at=? WHERE token_hash=?',(now(),token['token_hash']))
-        audit(c,token['user_id'],'email_verified','user',token['user_id'])
+    with trusted_operation(request.app.state.db, "auth.verify_email"):
+        with request.app.state.db.transaction() as c:
+            token = c.execute("SELECT * FROM auth_tokens WHERE token_hash=? AND purpose='verify' AND used_at IS NULL AND expires_at>?",(digest(body.token),now())).fetchone()
+            if not token:
+                fail('invalid_token',400)
+            c.execute('UPDATE users SET email_verified_at=? WHERE id=?',(now(),token['user_id']))
+            c.execute('UPDATE auth_tokens SET used_at=? WHERE token_hash=?',(now(),token['token_hash']))
+            audit(c,token['user_id'],'email_verified','user',token['user_id'])
     return {'ok':True}
 
 
@@ -131,10 +134,11 @@ def resend(request: Request, tasks: BackgroundTasks, user=Depends(require_user))
 def forgot(body: schemas.EmailInput, request: Request, tasks: BackgroundTasks):
     throttle(request,'forgot',5,3600)
     throttle(request,'forgot_email',3,3600,str(body.email).lower())
-    with request.app.state.db.transaction() as c:
-        u = c.execute('SELECT * FROM users WHERE email=? AND active=1',(str(body.email).lower(),)).fetchone()
-        if u:
-            email_token(c,request,u,'reset')
+    with trusted_operation(request.app.state.db, "auth.forgot_password"):
+        with request.app.state.db.transaction() as c:
+            u = c.execute('SELECT * FROM users WHERE email=? AND active=TRUE',(str(body.email).lower(),)).fetchone()
+            if u:
+                email_token(c,request,u,'reset')
     schedule(tasks,request)
     return {'ok':True}  # deliberately does not reveal whether an account exists
 
@@ -143,14 +147,15 @@ def forgot(body: schemas.EmailInput, request: Request, tasks: BackgroundTasks):
 def reset(body: schemas.Reset, request: Request):
     throttle(request,'reset',10,3600)
     hashed = hash_password(body.password)
-    with request.app.state.db.transaction() as c:
-        token = c.execute("SELECT * FROM auth_tokens WHERE token_hash=? AND purpose='reset' AND used_at IS NULL AND expires_at>?",(digest(body.token),now())).fetchone()
-        if not token:
-            fail('invalid_token',400)
-        c.execute('UPDATE users SET password_hash=? WHERE id=?',(hashed,token['user_id']))
-        c.execute('UPDATE auth_tokens SET used_at=? WHERE token_hash=?',(now(),token['token_hash']))
-        c.execute('DELETE FROM sessions WHERE user_id=?',(token['user_id'],))
-        audit(c,token['user_id'],'password_reset','user',token['user_id'])
+    with trusted_operation(request.app.state.db, "auth.reset_password"):
+        with request.app.state.db.transaction() as c:
+            token = c.execute("SELECT * FROM auth_tokens WHERE token_hash=? AND purpose='reset' AND used_at IS NULL AND expires_at>?",(digest(body.token),now())).fetchone()
+            if not token:
+                fail('invalid_token',400)
+            c.execute('UPDATE users SET password_hash=? WHERE id=?',(hashed,token['user_id']))
+            c.execute('UPDATE auth_tokens SET used_at=? WHERE token_hash=?',(now(),token['token_hash']))
+            c.execute('DELETE FROM sessions WHERE user_id=?',(token['user_id'],))
+            audit(c,token['user_id'],'password_reset','user',token['user_id'])
     r = JSONResponse({'ok':True})
     r.delete_cookie(COOKIE,path='/')
     return r
