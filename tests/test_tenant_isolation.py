@@ -260,7 +260,7 @@ def test_return_resolution_requires_recent_admin_mfa(market):
     with market["factory"].db.transaction() as connection:
         connection.execute(
             "UPDATE sessions SET mfa_at=? WHERE user_id=?",
-            (0, admin["id"]),
+            (1, admin["id"]),
         )
 
     denied = admin["client"].post(
