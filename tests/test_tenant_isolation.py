@@ -1,3 +1,4 @@
+import pytest
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -204,3 +205,141 @@ def test_concurrent_shipment_delivery_creates_one_commission_due_entry(market):
     assert market["b"]["client"].get("/api/seller/ledger").json() == {
         "entries": [], "commission_due_fils": 0
     }
+
+
+def _received_return_for_financial_gate(market):
+    factory = market["factory"]
+    buyer_user = market["buyer"]
+    buyer = buyer_user["client"]
+    factory.cart(buyer_user, market["p"], 1)
+    response, _, _ = factory.checkout(buyer_user)
+    assert response.status_code == 201, response.text
+    shipment = next(
+        item for item in response.json()["order"]["shipments"]
+        if item["store_id"] == market["a"]["store_id"]
+    )
+    _advance_shipment(market["a"], shipment, final_status="delivered")
+    with factory.db.read() as connection:
+        item_id = connection.execute(
+            "SELECT id FROM order_items WHERE seller_order_id=?",
+            (shipment["id"],),
+        ).fetchone()["id"]
+
+    opened = buyer.post("/api/returns", json={
+        "order_item_id": item_id,
+        "quantity": 1,
+        "reason": "damaged",
+        "description": "وصل المنتج متضررًا وأحتاج إلى إتمام اختبار التسوية المالية.",
+    })
+    assert opened.status_code == 201, opened.text
+    return_id = opened.json()["return"]["id"]
+
+    approved = market["a"]["client"].post(
+        f"/api/returns/{return_id}/seller-decision",
+        json={"status": "approved", "note": "تمت الموافقة على الإرجاع للاختبار."},
+    )
+    assert approved.status_code == 200, approved.text
+    shipped = buyer.post(
+        f"/api/returns/{return_id}/shipment",
+        json={"carrier": "Test carrier", "tracking_number": "TEST-RETURN-001"},
+    )
+    assert shipped.status_code == 200, shipped.text
+    received = market["a"]["client"].post(
+        f"/api/returns/{return_id}/received",
+        json={"note": "تم استلام المرتجع في بيئة الاختبار."},
+    )
+    assert received.status_code == 200, received.text
+    return return_id, shipment
+
+
+def test_return_resolution_requires_recent_admin_mfa(market):
+    return_id, _ = _received_return_for_financial_gate(market)
+    admin = market["factory"].user("admin")
+
+    # Expire only this isolated test session's re-authentication timestamp.
+    with market["factory"].db.transaction() as connection:
+        connection.execute(
+            "UPDATE sessions SET mfa_at=? WHERE user_id=?",
+            (0, admin["id"]),
+        )
+
+    denied = admin["client"].post(
+        f"/api/admin/returns/{return_id}/decision",
+        json={"status": "resolved", "note": "قرار اختبار دون إعادة تحقق حديثة."},
+    )
+    assert denied.status_code == 403, denied.text
+    detail = admin["client"].get(f"/api/admin/returns/{return_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["return"]["status"] == "received"
+
+
+def test_return_resolution_does_not_create_refund_or_change_commission_ledger(market):
+    return_id, shipment = _received_return_for_financial_gate(market)
+    factory = market["factory"]
+    admin = factory.user("admin")
+
+    with factory.db.read() as connection:
+        before = [
+            dict(row) for row in connection.execute(
+                "SELECT seller_order_id,store_id,kind,amount_fils,reference_id "
+                "FROM ledger WHERE seller_order_id=? ORDER BY id",
+                (shipment["id"],),
+            ).fetchall()
+        ]
+
+    resolved = admin["client"].post(
+        f"/api/admin/returns/{return_id}/decision",
+        json={"status": "resolved", "note": "إغلاق المرتجع في اختبار عدم إنشاء استرداد تلقائي."},
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["return"]["status"] == "resolved"
+
+    with factory.db.read() as connection:
+        after = [
+            dict(row) for row in connection.execute(
+                "SELECT seller_order_id,store_id,kind,amount_fils,reference_id "
+                "FROM ledger WHERE seller_order_id=? ORDER BY id",
+                (shipment["id"],),
+            ).fetchall()
+        ]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE entity='return_request' AND entity_id=? AND action='return_resolved'",
+            (str(return_id),),
+        ).fetchone()[0] == 1
+
+    # Return workflow closure is not proof of a money transfer or commission reversal.
+    assert after == before
+    assert len(after) == 1
+    assert after[0]["kind"] == "cod_commission_due"
+
+
+def test_commission_ledger_rejects_update_and_delete(market):
+    factory = market["factory"]
+    order = _multi_vendor_order(market)
+    shipment = next(
+        item for item in order["shipments"]
+        if item["store_id"] == market["a"]["store_id"]
+    )
+    _advance_shipment(market["a"], shipment, final_status="delivered")
+
+    with factory.db.transaction() as connection:
+        entry = connection.execute(
+            "SELECT id,amount_fils FROM ledger WHERE seller_order_id=?",
+            (shipment["id"],),
+        ).fetchone()
+        assert entry is not None
+        with pytest.raises(Exception):
+            connection.execute(
+                "UPDATE ledger SET amount_fils=amount_fils+1 WHERE id=?",
+                (entry["id"],),
+            )
+        with pytest.raises(Exception):
+            connection.execute("DELETE FROM ledger WHERE id=?", (entry["id"],))
+
+    with factory.db.read() as connection:
+        unchanged = connection.execute(
+            "SELECT amount_fils FROM ledger WHERE id=?",
+            (entry["id"],),
+        ).fetchone()
+        assert unchanged["amount_fils"] == entry["amount_fils"]
