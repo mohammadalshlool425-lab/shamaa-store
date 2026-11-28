@@ -79,3 +79,32 @@ The item-return workflow was inspected in `server/routes/returns.py` and `tests/
 **Open financial workflow gap:** the repository currently records return disposition but does not implement the financial consequences of an approved refund. Before building that workflow, the owner must decide the refund payer/source, who authorizes it, evidence of money returned, partial-refund calculation, treatment of delivery fees and discounts, inventory disposition, and how/when the seller commission is reversed or reconciled. Engineering must not infer these policies from the return status.
 
 This was a read-only code and test review. No return, inventory, ledger, payment, or production behavior was changed.
+
+## Owner-approved authorization boundary (development design)
+
+The project owner has approved this narrow workflow boundary:
+
+1. The seller may submit collection evidence only for a shipment belonging to that seller's store.
+2. A separately authorized administrator reviews the submission.
+3. The administrator must pass the existing recent-MFA gate (`recent_admin`, maximum age 10 minutes) before approving or rejecting it.
+4. The decision, actor, timestamp, and reason must be recorded in append-only audit history.
+
+This approval does **not** decide the commercial/operational evidence policy. The following remain unresolved and block implementation of a live collection endpoint or any financial posting:
+
+- Which evidence formats and references are acceptable (for example, carrier remittance reference, signed receipt, or another documented source).
+- Whether the seller is the correct submitter in every fulfilment model, or whether a carrier/operations role is needed.
+- Whether partial collection is supported and how the amount is verified.
+- Who may correct or reverse an approved collection, and what evidence that correction requires.
+- How delivery fees, discounts, cancellations, disputes, and split shipments affect the expected collection amount.
+
+### Required technical invariants once those decisions are approved
+
+- Derive shipment, store, seller, order, currency, and expected amount from database snapshots; never accept these as authoritative request fields.
+- Store money as integer fils and reject any submitted amount that exceeds the server-derived outstanding amount.
+- Keep evidence files in a dedicated private directory/bucket, with strict size/type validation, opaque storage keys, participant/admin authorization on every download, and no-store headers.
+- Enforce one pending/approved collection transition per shipment through a transaction, row lock or equivalent, unique constraints, and idempotency.
+- Approval creates a distinct immutable `cod_cash_collected` event; it does not rewrite `cod_commission_due` and does not itself mean seller payout or platform settlement.
+- Rejection requires a reason and leaves the collection amount unchanged. Corrections are compensating events, never UPDATE/DELETE.
+- Do not issue loyalty points until the collection event is approved and the separate loyalty earning policy is approved.
+
+No route, schema, migration, financial ledger event, or production behavior is introduced by this design note.
